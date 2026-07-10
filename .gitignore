@@ -1,0 +1,31 @@
+# Build output
+dist/
+build/
+app/bin/
+app/data/
+app/*.log
+app/.gocache/
+app/.gotmp/
+
+# Frontend dependencies and generated files
+node_modules/
+temp/node_modules/
+temp/dist/
+*.tsbuildinfo
+
+# Go
+*.test
+coverage.out
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Runtime secrets
+config.json
+data/
+*.pem
+*.key
+

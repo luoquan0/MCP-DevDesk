@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>MCP DevDesk</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="img">
+            <path d="M9 14.5 24 6l15 8.5v19L24 42 9 33.5z"></path>
+            <path d="m16 18 8-4.5 8 4.5v9l-8 4.5-8-4.5z"></path>
+          </svg>
+        </div>
+        <div>
+          <strong>MCP DevDesk</strong>
+          <span>Local coding gateway</span>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item active" data-section="dashboard">
+          <span class="nav-icon">◫</span><span>仪表盘</span>
+        </button>
+        <button class="nav-item" data-section="cloudflare">
+          <span class="nav-icon">☁</span><span>Cloudflare</span>
+        </button>
+        <button class="nav-item" data-section="workspace">
+          <span class="nav-icon">◇</span><span>项目与服务</span>
+        </button>
+        <button class="nav-item" data-section="permissions">
+          <span class="nav-icon">⌾</span><span>权限设置</span>
+        </button>
+        <button class="nav-item" data-section="logs">
+          <span class="nav-icon">≡</span><span>日志</span>
+        </button>
+        <button class="nav-item" data-section="diagnostics">
+          <span class="nav-icon">✦</span><span>诊断</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="mini-status">
+          <span class="status-dot" id="sidebarStatusDot"></span>
+          <div>
+            <b id="sidebarStatusText">正在连接</b>
+            <small id="sidebarVersion">--</small>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-button mobile-menu" id="mobileMenu" aria-label="展开导航">☰</button>
+        <div>
+          <p class="eyebrow" id="pageEyebrow">OVERVIEW</p>
+          <h1 id="pageTitle">开发环境控制台</h1>
+        </div>
+        <div class="topbar-actions">
+          <span class="connection-pill"><span class="pulse-dot"></span> 本机管理</span>
+          <button class="button ghost" id="refreshButton">刷新状态</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="page active" id="page-dashboard">
+          <div class="hero panel">
+            <div class="hero-copy">
+              <span class="hero-badge" id="heroBadge">系统检查中</span>
+              <h2>一个界面管理本地 MCP、固定域名和开发权限。</h2>
+              <p id="heroMessage">正在读取本机配置与服务状态……</p>
+              <div class="hero-actions">
+                <button class="button primary" id="startAllButton">启动全部服务</button>
+                <button class="button secondary" id="restartAllButton">重新启动</button>
+                <button class="button danger-subtle" id="stopAllButton">停止全部</button>
+              </div>
+            </div>
+            <div class="hero-orbit" aria-hidden="true">
+              <div class="orbit outer"><i></i><i></i><i></i></div>
+              <div class="orbit inner"></div>
+              <div class="orbit-core">MCP</div>
+            </div>
+          </div>
+
+          <div class="status-grid">
+            <article class="status-card panel">
+              <div class="card-head"><span class="service-icon">M</span><span class="badge" id="mcpBadge">未知</span></div>
+              <h3>MCP 服务</h3>
+              <p id="mcpDetail">等待状态</p>
+              <div class="metric"><span>本地端口</span><b id="mcpPort">8765</b></div>
+            </article>
+            <article class="status-card panel">
+              <div class="card-head"><span class="service-icon cloud">C</span><span class="badge" id="tunnelBadge">未知</span></div>
+              <h3>Cloudflare Tunnel</h3>
+              <p id="tunnelDetail">等待状态</p>
+              <div class="metric"><span>固定域名</span><b id="tunnelDomain">未配置</b></div>
+            </article>
+            <article class="status-card panel">
+              <div class="card-head"><span class="service-icon shield">S</span><span class="badge neutral" id="permissionBadge">--</span></div>
+              <h3>执行权限</h3>
+              <p id="permissionDetail">等待配置</p>
+              <div class="metric"><span>联网</span><b id="networkStatus">--</b></div>
+            </article>
+          </div>
+
+          <div class="two-column">
+            <article class="panel url-panel">
+              <div class="section-heading">
+                <div><p class="eyebrow">CONNECTION</p><h3>连接信息</h3></div>
+                <button class="button ghost small" id="revealSecretsButton">显示凭证</button>
+              </div>
+              <div class="url-list">
+                <div class="url-row">
+                  <span>远程 MCP URL</span>
+                  <code id="remoteUrl">尚未配置域名</code>
+                  <button class="copy-button" data-copy-target="remoteUrl">复制</button>
+                </div>
+                <div class="url-row">
+                  <span>OAuth 授权地址</span>
+                  <code id="authorizeUrl">尚未配置域名</code>
+                  <button class="copy-button" data-copy-target="authorizeUrl">复制</button>
+                </div>
+                <div class="url-row">
+                  <span>Owner 密码</span>
+                  <code id="ownerPassword">••••••••••••••••</code>
+                  <button class="copy-button" data-copy-target="ownerPassword">复制</button>
+                </div>
+                <div class="url-row">
+                  <span>Client ID</span>
+                  <code id="clientId">mcp-devdesk</code>
+                  <button class="copy-button" data-copy-target="clientId">复制</button>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel activity-panel">
+              <div class="section-heading">
+                <div><p class="eyebrow">SYSTEM</p><h3>快速检查</h3></div>
+                <button class="button ghost small" data-goto="diagnostics">查看全部</button>
+              </div>
+              <div class="check-list" id="quickChecks">
+                <div class="check-item"><span class="skeleton short"></span><span class="skeleton"></span></div>
+                <div class="check-item"><span class="skeleton short"></span><span class="skeleton"></span></div>
+                <div class="check-item"><span class="skeleton short"></span><span class="skeleton"></span></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" id="page-cloudflare">
+          <div class="page-intro">
+            <div>
+              <p class="eyebrow">FIXED DOMAIN</p>
+              <h2>一键绑定自己的 Cloudflare 域名</h2>
+              <p>授权一次后，程序会创建 Tunnel、配置 DNS，并保持断线自动重连。</p>
+            </div>
+            <div class="step-counter"><span id="cloudflareStep">1</span><small>/ 3</small></div>
+          </div>
+
+          <div class="wizard-grid">
+            <article class="panel wizard-card" id="loginCard">
+              <div class="step-label">步骤 1</div>
+              <div class="wizard-icon cloud-large">☁</div>
+              <h3>登录并授权 Cloudflare</h3>
+              <p>点击后会打开浏览器。登录账户并选择需要授权的域名区域。</p>
+              <div class="inline-status" id="cloudflareAuthStatus"><span class="status-dot"></span><span>尚未授权</span></div>
+              <button class="button primary wide" id="cloudflareLoginButton">打开 Cloudflare 登录</button>
+            </article>
+
+            <article class="panel wizard-card" id="domainCard">
+              <div class="step-label">步骤 2</div>
+              <div class="wizard-icon">⌘</div>
+              <h3>填写固定域名</h3>
+              <p>填写完整子域名。父域名必须已托管到刚才授权的 Cloudflare 账户。</p>
+              <form id="cloudflareForm" class="stack-form">
+                <label>
+                  <span>完整子域名</span>
+                  <input id="domainInput" name="domain" placeholder="mcp.example.com" autocomplete="off" required>
+                </label>
+                <label>
+                  <span>Tunnel 名称</span>
+                  <input id="tunnelNameInput" name="tunnelName" placeholder="mcp-devdesk" autocomplete="off" required>
+                </label>
+                <label class="check-control">
+                  <input type="checkbox" id="reuseTunnelInput" checked>
+                  <span>检测到同名 Tunnel 时复用</span>
+                </label>
+                <button class="button primary wide" type="submit" id="configureTunnelButton">自动创建 Tunnel 与 DNS</button>
+              </form>
+            </article>
+
+            <article class="panel wizard-card result-card" id="resultCard">
+              <div class="step-label">步骤 3</div>
+              <div class="wizard-icon success">✓</div>
+              <h3>完成并连接</h3>
+              <p id="cloudflareResultText">配置完成后，这里会显示最终连接地址。</p>
+              <div class="result-box">
+                <span>MCP URL</span>
+                <code id="resultMcpUrl">等待配置</code>
+              </div>
+              <div class="result-box">
+                <span>Tunnel UUID</span>
+                <code id="resultTunnelId">等待配置</code>
+              </div>
+              <button class="button secondary wide" id="testAndStartButton">启动并测试连接</button>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" id="page-workspace">
+          <div class="page-intro">
+            <div>
+              <p class="eyebrow">WORKSPACE</p>
+              <h2>项目目录与服务设置</h2>
+              <p>首版兼容现有 MCP 核心；后续将支持多项目和 Git Worktree。</p>
+            </div>
+          </div>
+
+          <form class="panel settings-form" id="workspaceForm">
+            <div class="form-section">
+              <div class="form-section-title"><span>01</span><div><h3>项目目录</h3><p>MCP 工具默认只能访问这个工作区。</p></div></div>
+              <div class="form-grid">
+                <label class="field span-2">
+                  <span>工作区路径</span>
+                  <input id="workspaceInput" name="workspace" placeholder="D:\Projects\my-app" required>
+                  <small>请填写已存在的绝对目录。</small>
+                </label>
+                <label class="field">
+                  <span>工具配置</span>
+                  <select id="toolProfileInput" name="toolProfile">
+                    <option value="full">完整工具</option>
+                    <option value="read-only">只读工具</option>
+                    <option value="compat-readonly-all">兼容只读</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="form-section">
+              <div class="form-section-title"><span>02</span><div><h3>端口和自动运行</h3><p>管理后台始终只绑定到本机回环地址。</p></div></div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>MCP 端口</span>
+                  <input id="mcpPortInput" type="number" min="1024" max="65535">
+                </label>
+                <label class="field">
+                  <span>管理端口</span>
+                  <input id="adminPortInput" type="number" min="1024" max="65535">
+                  <small>修改后重启管理器生效。</small>
+                </label>
+                <label class="switch-row">
+                  <span><b>程序启动时打开界面</b><small>自动打开默认浏览器。</small></span>
+                  <input type="checkbox" id="openBrowserInput"><i></i>
+                </label>
+                <label class="switch-row">
+                  <span><b>自动启动服务</b><small>打开管理器后启动 MCP 与 Tunnel。</small></span>
+                  <input type="checkbox" id="autoStartInput"><i></i>
+                </label>
+                <label class="switch-row">
+                  <span><b>自动守护</b><small>进程掉线后自动重启。</small></span>
+                  <input type="checkbox" id="watchdogInput"><i></i>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <span id="workspaceSaveHint">修改保存后，运行中的服务需要重启。</span>
+              <button class="button primary" type="submit">保存项目设置</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="page" id="page-permissions">
+          <div class="page-intro">
+            <div>
+              <p class="eyebrow">SECURITY</p>
+              <h2>命令权限与文件访问范围</h2>
+              <p>危险模式允许联网和任意开发命令，但文件范围仍由独立选项控制。</p>
+            </div>
+          </div>
+
+          <form id="permissionForm">
+            <div class="permission-grid">
+              <label class="permission-card panel" data-mode="safe">
+                <input type="radio" name="permissionMode" value="safe">
+                <div class="permission-top"><span class="mode-icon safe">S</span><span class="mode-check">✓</span></div>
+                <h3>安全模式</h3>
+                <p>适合只读检查和谨慎修改。联网默认关闭，高风险命令会被拦截。</p>
+                <ul><li>工作区文件访问</li><li>限制 Shell 展开</li><li>联网可单独开启</li></ul>
+              </label>
+              <label class="permission-card panel recommended" data-mode="trusted">
+                <input type="radio" name="permissionMode" value="trusted">
+                <span class="recommend-label">推荐开发模式</span>
+                <div class="permission-top"><span class="mode-icon trusted">T</span><span class="mode-check">✓</span></div>
+                <h3>信任模式</h3>
+                <p>允许 npm、pip、Git 和常用脚本，系统级危险操作仍建议确认。</p>
+                <ul><li>默认允许联网</li><li>允许内联脚本</li><li>保留关键安全边界</li></ul>
+              </label>
+              <label class="permission-card panel danger" data-mode="dangerous">
+                <input type="radio" name="permissionMode" value="dangerous">
+                <div class="permission-top"><span class="mode-icon dangerous">!</span><span class="mode-check">✓</span></div>
+                <h3>危险模式</h3>
+                <p>关闭应用层命令门控，允许联网、删除、安装软件和启动子进程。</p>
+                <ul><li>完全联网</li><li>任意 Shell 命令</li><li>受 Windows 用户权限约束</li></ul>
+              </label>
+            </div>
+
+            <div class="two-column permission-details">
+              <article class="panel">
+                <div class="section-heading"><div><p class="eyebrow">FILE SCOPE</p><h3>文件访问范围</h3></div></div>
+                <div class="radio-list">
+                  <label><input type="radio" name="fileScope" value="workspace"><span><b>仅当前工作区</b><small>最安全，适合绝大多数开发任务。</small></span></label>
+                  <label><input type="radio" name="fileScope" value="roots"><span><b>已授权根目录</b><small>多项目阶段将允许选择多个目录。</small></span></label>
+                  <label class="danger-option"><input type="radio" name="fileScope" value="computer"><span><b>整台电脑</b><small>危险 Shell 可访问全机；直接文件工具仍受兼容核心工作区限制。</small></span></label>
+                </div>
+              </article>
+              <article class="panel">
+                <div class="section-heading"><div><p class="eyebrow">NETWORK</p><h3>联网控制</h3></div></div>
+                <label class="switch-row large">
+                  <span><b>允许开发命令联网</b><small>npm、pnpm、pip、Git、curl 等可访问网络。信任和危险模式会强制开启。</small></span>
+                  <input type="checkbox" id="allowNetworkInput"><i></i>
+                </label>
+                <div class="warning-box" id="dangerWarning">
+                  <strong>危险模式提醒</strong>
+                  <p>ChatGPT 将能运行当前 Windows 用户可以执行的命令。兼容核心下，危险 Shell 也可能越过工作区。请只在受信任的会话中启用。</p>
+                </div>
+              </article>
+            </div>
+
+            <div class="form-actions panel inline-save">
+              <span>权限修改会在下次重启 MCP 服务后生效。</span>
+              <button class="button primary" type="submit">保存权限设置</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="page" id="page-logs">
+          <div class="page-intro">
+            <div>
+              <p class="eyebrow">OBSERVABILITY</p>
+              <h2>运行日志</h2>
+              <p>查看 MCP、Cloudflare Tunnel、登录授权和 watchdog 的最新输出。</p>
+            </div>
+            <button class="button secondary" id="refreshLogsButton">刷新日志</button>
+          </div>
+          <div class="panel log-panel">
+            <div class="log-tabs" role="tablist">
+              <button class="active" data-log="mcp-error">MCP 错误</button>
+              <button data-log="mcp-out">MCP 输出</button>
+              <button data-log="tunnel-error">Tunnel 错误</button>
+              <button data-log="tunnel-out">Tunnel 输出</button>
+              <button data-log="login">登录</button>
+              <button data-log="watchdog">Watchdog</button>
+            </div>
+            <div class="log-meta"><span id="logPath">尚未加载</span><span id="logCount">0 行</span></div>
+            <pre class="log-view" id="logView"><code>选择日志后将在这里显示。</code></pre>
+          </div>
+        </section>
+
+        <section class="page" id="page-diagnostics">
+          <div class="page-intro">
+            <div>
+              <p class="eyebrow">DIAGNOSTICS</p>
+              <h2>环境诊断</h2>
+              <p>检查核心程序、工作区、Cloudflare 凭据、端口和管理后台安全设置。</p>
+            </div>
+            <button class="button secondary" id="runDiagnosticsButton">重新检测</button>
+          </div>
+          <div class="diagnostic-grid" id="diagnosticGrid">
+            <article class="panel diagnostic-card loading"><span class="skeleton short"></span><span class="skeleton"></span></article>
+          </div>
+          <article class="panel path-panel">
+            <div><span>程序根目录</span><code id="rootDirectory">--</code></div>
+            <div><span>数据目录</span><code id="dataDirectory">--</code></div>
+          </article>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+  <div class="modal-backdrop" id="confirmModal" hidden>
+    <div class="modal panel" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <div class="modal-icon">!</div>
+      <h3 id="confirmTitle">确认高风险操作</h3>
+      <p id="confirmMessage">此操作可能产生高风险。</p>
+      <div class="modal-actions">
+        <button class="button ghost" id="confirmCancel">取消</button>
+        <button class="button danger" id="confirmAccept">我已了解并继续</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
+
