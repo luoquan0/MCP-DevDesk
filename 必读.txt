@@ -1,0 +1,90 @@
+﻿============================================
+  Coding Tools MCP - 固定域名隧道 (便携版)
+============================================
+
+快速开始
+--------
+1. 确保已安装 Python 3.11+ (https://python.org)
+2. 双击 "配置.cmd" 配置域名和隧道
+3. 双击 "启动.cmd" 启动服务
+
+文件说明
+--------
+  启动.cmd          - 主菜单 (启停服务 / 查看凭证 / 修改配置)
+  配置.cmd          - 域名配置向导 (输入域名自动创建隧道和 DNS)
+  menu.ps1          - 主菜单脚本 (含自动守护)
+  setup.ps1         - 配置向导脚本 (含离线降级)
+  tunnel.ps1        - 隧道控制脚本 (含 watchdog 模式)
+  cloudflared.exe   - Cloudflare 隧道客户端
+  config.json       - 配置文件 (自动生成, 勿手动编辑)
+  coding_tools_mcp/ - MCP 服务源码 (离线安装)
+  wheels/           - Python 依赖离线包 (PyJWT)
+  pyproject.toml    - 项目元数据
+
+前置条件
+--------
+  1. 需要一个托管在 Cloudflare 的域名
+  2. Cloudflare SSL/TLS 加密模式设为 "完全"
+  3. Python 3.11+ (首次运行会自动创建虚拟环境并离线安装)
+  4. cloudflared 登录 (配置向导会引导浏览器登录)
+
+首次使用
+--------
+  1. 双击 "配置.cmd" 打开配置向导
+     输入你的子域名, 例如: mcp.yourdomain.com
+     根据提示依次配置域名、隧道名称、工具模式、工作区、代理(可选)
+
+  2. 在 Cloudflare 控制台确认:
+     - DNS 记录代理状态: 橙色云朵
+     - SSL/TLS 加密模式: "完全"
+
+  3. 双击 "启动.cmd", 选择 [1] 启动服务
+     首次启动会自动安装 (离线, 不需要联网)
+     启动后选 [6] 开启自动守护, 掉线自动重启
+
+  4. 启动后查看 OAuth 凭证: 主菜单选 [3]
+     在 MCP 客户端中配置 URL 和 OAuth 认证
+
+离线说明
+--------
+  本压缩包已包含所有运行所需的文件:
+    - coding-tools-mcp 源码 (coding_tools_mcp/)
+    - PyJWT 依赖包 (wheels/pyjwt-*.whl)
+    - cloudflared.exe (Cloudflare 隧道客户端)
+  首次启动时:
+    1. 自动创建 Python 虚拟环境 (.venv/)
+    2. 离线安装 PyJWT (从 wheels/)
+    3. 离线安装 coding-tools-mcp (从本地源码)
+  不需要 pip 联网, 只要有 Python 即可运行。
+
+MCP 客户端配置
+--------------
+  URL: https://你的域名/mcp
+  认证: OAuth 2.1 (PKCE)
+  授权页面: https://你的域名/oauth/authorize
+  密码: 启动后显示在 [3] 查看信息中
+
+自动守护 (Watchdog)
+--------------------
+  主菜单选 [6] 开启。守护进程每 30 秒检测一次 MCP 和隧道状态,
+  如果任一进程掉线则自动重启。选 [7] 或 [2] 停止服务时自动关闭守护。
+  重启日志: data/watchdog.log
+
+常见问题
+--------
+  Q: cloudflared 无法连接 Cloudflare?
+  A: 配置代理 - 在配置向导第5步输入 HTTP 代理地址
+
+  Q: 提示 "域名未配置" 但服务在运行?
+  A: 这是旧版 bug, 新版已修复。请重新解压或更新 scripts。
+
+  Q: 服务运行一段时间后掉线?
+  A: 开启 [6] 自动守护, 掉线后 30 秒内自动重启。
+
+  Q: OAuth 提示 Invalid password?
+  A: 每次启动会生成新密码, 请用 [3] 查看当前密码
+
+运行时目录 (自动创建)
+---------------------
+  .venv/    - Python 虚拟环境
+  data/     - OAuth 密钥、日志、状态文件
