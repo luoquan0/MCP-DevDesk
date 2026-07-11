@@ -176,3 +176,38 @@ func TestInvalidTunnelPIDIsRejected(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 }
+
+func TestSecretGenerateAndUpdateEndpoints(t *testing.T) {
+	server := newTestServer(t)
+
+	generateRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/secrets/generate", bytes.NewBufferString(`{"field":"tokenSecret"}`))
+	generateRequest.RemoteAddr = "127.0.0.1:45678"
+	generateRequest.Host = "127.0.0.1:17860"
+	generateRequest.Header.Set("Content-Type", "application/json")
+	generateRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(generateRecorder, generateRequest)
+	if generateRecorder.Code != http.StatusOK || !strings.Contains(generateRecorder.Body.String(), `"tokenSecret":"`) {
+		t.Fatalf("secret generation failed: %d %s", generateRecorder.Code, generateRecorder.Body.String())
+	}
+
+	tokenValue := strings.Repeat("cd", 32)
+	updateBody := fmt.Sprintf(`{"ownerPassword":"owner-value-long-enough","clientId":"custom-client","clientSecret":"client-value-long-enough","tokenSecret":"%s","restart":false}`, tokenValue)
+	updateRequest := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/secrets", bytes.NewBufferString(updateBody))
+	updateRequest.RemoteAddr = "127.0.0.1:45678"
+	updateRequest.Host = "127.0.0.1:17860"
+	updateRequest.Header.Set("Content-Type", "application/json")
+	updateRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(updateRecorder, updateRequest)
+	if updateRecorder.Code != http.StatusOK || !strings.Contains(updateRecorder.Body.String(), `"clientId":"custom-client"`) {
+		t.Fatalf("secret update failed: %d %s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+
+	revealRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/secrets?reveal=true", nil)
+	revealRequest.RemoteAddr = "127.0.0.1:45678"
+	revealRequest.Host = "127.0.0.1:17860"
+	revealRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(revealRecorder, revealRequest)
+	if revealRecorder.Code != http.StatusOK || !strings.Contains(revealRecorder.Body.String(), tokenValue) {
+		t.Fatalf("saved values were not revealed: %d %s", revealRecorder.Code, revealRecorder.Body.String())
+	}
+}

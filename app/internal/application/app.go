@@ -241,8 +241,8 @@ func (a *App) Status() model.ServiceStatus {
 		RemoteMCPURL:    remoteMCPURL,
 		AuthorizeURL:    authorizeURL,
 		OAuthClientID:   oauthClientID,
-		OAuthClientType: "public",
-		OAuthTokenAuth:  "none",
+		OAuthClientType: "confidential",
+		OAuthTokenAuth:  "client_secret_post",
 		MCP:             mcp,
 		MCPPortOwner: model.PortOwner{
 			Occupied:    portOwner.Occupied,
@@ -615,6 +615,33 @@ func (a *App) ConfigureTunnel(ctx context.Context, request model.ConfigureTunnel
 
 func (a *App) Secrets(reveal bool) (model.SecretSummary, error) {
 	return a.secrets.Summary(reveal)
+}
+
+func (a *App) GenerateSecret(field string) (model.SecretSummary, error) {
+	return a.secrets.Generate(field)
+}
+
+func (a *App) UpdateSecrets(ctx context.Context, request model.SecretUpdateRequest) (model.SecretSaveResult, error) {
+	summary, err := a.secrets.Update(request)
+	if err != nil {
+		return model.SecretSaveResult{}, err
+	}
+
+	mcp, _, _ := a.process.Status()
+	result := model.SecretSaveResult{
+		Secrets:         summary,
+		RestartRequired: mcp.Running,
+	}
+	if !request.Restart || !mcp.Running {
+		return result, nil
+	}
+	if err := a.RestartServices(ctx); err != nil {
+		result.RestartError = err.Error()
+		return result, nil
+	}
+	result.Restarted = true
+	result.RestartRequired = false
+	return result, nil
 }
 
 func (a *App) Logs(name string, maxLines int) (model.LogResponse, error) {

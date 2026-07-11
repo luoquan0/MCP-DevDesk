@@ -143,6 +143,23 @@ export interface SecretSummary {
   ownerPassword?: string;
   clientId?: string;
   clientSecret?: string;
+  tokenSecret?: string;
+  configured: boolean;
+}
+
+export interface SecretUpdateRequest {
+  ownerPassword?: string;
+  clientId?: string;
+  clientSecret?: string;
+  tokenSecret?: string;
+  restart: boolean;
+}
+
+export interface SecretSaveResult {
+  secrets: SecretSummary;
+  restarted: boolean;
+  restartRequired: boolean;
+  restartError?: string;
 }
 
 export type Diagnostics = Record<string, string | number | boolean | null>;

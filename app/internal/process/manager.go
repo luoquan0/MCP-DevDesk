@@ -79,18 +79,23 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 		args = append(args, "--allow-network")
 	}
 
-	env := append(os.Environ(),
-		"CODING_TOOLS_MCP_SERVER_URL="+baseURL,
-		"CODING_TOOLS_MCP_OAUTH_PASSWORD="+values.OwnerPassword,
-		"CODING_TOOLS_MCP_OAUTH_CLIENT_ID="+values.ClientID,
-		"CODING_TOOLS_MCP_OAUTH_TOKEN_SECRET="+values.TokenSecret,
-		"CODING_TOOLS_MCP_TOOL_PROFILE="+cfg.ToolProfile,
-	)
-	env = appendProxy(env, cfg)
+	env := mcpEnvironment(cfg, values, baseURL)
 
 	stdout := filepath.Join(m.dataDir, "logs", "mcp-stdout.log")
 	stderr := filepath.Join(m.dataDir, "logs", "mcp-stderr.log")
 	return m.start(&m.mcp, cfg.CoreExecutable, args, m.rootDir, env, stdout, stderr, cfg.HideChildProcessWindows)
+}
+
+func mcpEnvironment(cfg model.Config, values secrets.Values, baseURL string) []string {
+	env := append(os.Environ(),
+		"CODING_TOOLS_MCP_SERVER_URL="+baseURL,
+		"CODING_TOOLS_MCP_OAUTH_PASSWORD="+values.OwnerPassword,
+		"CODING_TOOLS_MCP_OAUTH_CLIENT_ID="+values.ClientID,
+		"CODING_TOOLS_MCP_OAUTH_CLIENT_SECRET="+values.ClientSecret,
+		"CODING_TOOLS_MCP_OAUTH_TOKEN_SECRET="+values.TokenSecret,
+		"CODING_TOOLS_MCP_TOOL_PROFILE="+cfg.ToolProfile,
+	)
+	return appendProxy(env, cfg)
 }
 
 func (m *Manager) StartTunnel(cfg model.Config) error {

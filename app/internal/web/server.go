@@ -69,6 +69,8 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/tunnels/sync-port", s.handleSyncTunnelPort)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/secrets", s.handleSecrets)
+	mux.HandleFunc("PUT /api/secrets", s.handleUpdateSecrets)
+	mux.HandleFunc("POST /api/secrets/generate", s.handleGenerateSecret)
 	mux.HandleFunc("GET /api/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("GET /api/system/desktop", s.handleDesktopStatus)
 	mux.HandleFunc("PUT /api/system/startup", s.handleStartup)
@@ -344,6 +346,36 @@ func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
 	result, err := s.app.Secrets(reveal)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleGenerateSecret(w http.ResponseWriter, r *http.Request) {
+	var request model.SecretGenerateRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	result, err := s.app.GenerateSecret(request.Field)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleUpdateSecrets(w http.ResponseWriter, r *http.Request) {
+	var request model.SecretUpdateRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	result, err := s.app.UpdateSecrets(ctx, request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

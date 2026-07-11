@@ -216,6 +216,27 @@ type SecretSummary struct {
 	OwnerPassword string `json:"ownerPassword,omitempty"`
 	ClientID      string `json:"clientId,omitempty"`
 	ClientSecret  string `json:"clientSecret,omitempty"`
+	TokenSecret   string `json:"tokenSecret,omitempty"`
+	Configured    bool   `json:"configured"`
+}
+
+type SecretUpdateRequest struct {
+	OwnerPassword *string `json:"ownerPassword"`
+	ClientID      *string `json:"clientId"`
+	ClientSecret  *string `json:"clientSecret"`
+	TokenSecret   *string `json:"tokenSecret"`
+	Restart       bool    `json:"restart"`
+}
+
+type SecretGenerateRequest struct {
+	Field string `json:"field"`
+}
+
+type SecretSaveResult struct {
+	Secrets         SecretSummary `json:"secrets"`
+	Restarted       bool          `json:"restarted"`
+	RestartRequired bool          `json:"restartRequired"`
+	RestartError    string        `json:"restartError,omitempty"`
 }
 
 type DesktopStatus struct {

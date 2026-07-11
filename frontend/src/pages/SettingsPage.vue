@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted, reactive, ref } from "vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
@@ -10,6 +11,20 @@ import { useUiStore, type ThemeMode } from "@/stores/ui";
 
 const app = useAppStore();
 const ui = useUiStore();
+const secretsLoading = ref(false);
+const restartAfterSave = ref(true);
+const secretForm = reactive({
+  ownerPassword: "",
+  clientId: "",
+  clientSecret: "",
+  tokenSecret: "",
+});
+const visible = reactive<Record<keyof typeof secretForm, boolean>>({
+  ownerPassword: false,
+  clientId: true,
+  clientSecret: false,
+  tokenSecret: false,
+});
 
 const themes: Array<{ id: ThemeMode; label: string; description: string; icon: string }> = [
   { id: "system", label: "跟随系统", description: "根据 Windows 外观自动切换", icon: "monitor" },
@@ -24,6 +39,71 @@ async function setStartup(enabled: boolean) {
     ui.toast("开机启动设置失败", error instanceof Error ? error.message : String(error), "danger");
   }
 }
+
+async function loadSecrets() {
+  secretsLoading.value = true;
+  try {
+    const values = await app.revealSecrets();
+    secretForm.ownerPassword = values.ownerPassword ?? "";
+    secretForm.clientId = values.clientId ?? "";
+    secretForm.clientSecret = values.clientSecret ?? "";
+    secretForm.tokenSecret = values.tokenSecret ?? "";
+  } catch (error) {
+    ui.toast("读取凭据失败", error instanceof Error ? error.message : String(error), "danger");
+  } finally {
+    secretsLoading.value = false;
+  }
+}
+
+async function generateSecret(field: keyof typeof secretForm | "all") {
+  try {
+    const values = await app.generateSecret(field);
+    if (values.ownerPassword) secretForm.ownerPassword = values.ownerPassword;
+    if (values.clientId) secretForm.clientId = values.clientId;
+    if (values.clientSecret) secretForm.clientSecret = values.clientSecret;
+    if (values.tokenSecret) secretForm.tokenSecret = values.tokenSecret;
+    ui.toast(field === "all" ? "随机凭据已生成" : "随机值已生成", "确认无误后点击保存凭据。", "success");
+  } catch (error) {
+    ui.toast("随机生成失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
+async function copySecret(label: string, value: string) {
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    ui.toast("已复制", `${label}已复制到剪贴板。`, "success");
+  } catch (error) {
+    ui.toast("复制失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
+async function saveSecrets() {
+  try {
+    const result = await app.saveSecrets({
+      ownerPassword: secretForm.ownerPassword,
+      clientId: secretForm.clientId,
+      clientSecret: secretForm.clientSecret,
+      tokenSecret: secretForm.tokenSecret,
+      restart: restartAfterSave.value,
+    });
+    if (result.restartError) {
+      ui.toast("凭据已保存，但重启失败", result.restartError, "danger");
+      return;
+    }
+    if (result.restarted) {
+      ui.toast("凭据已保存", "MCP 服务已自动重启并使用新的凭据。", "success");
+    } else if (result.restartRequired) {
+      ui.toast("凭据已保存", "MCP 正在运行，需要手动重启后才会生效。", "info");
+    } else {
+      ui.toast("凭据已保存", "下次启动 MCP 时将使用新的凭据。", "success");
+    }
+  } catch (error) {
+    ui.toast("保存凭据失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
+onMounted(loadSecrets);
 </script>
 
 <template>
@@ -88,6 +168,69 @@ async function setStartup(enabled: boolean) {
         </div>
       </AppCard>
     </section>
+
+    <AppCard class="credentials-card">
+      <div class="card-heading credentials-heading">
+        <div>
+          <span class="eyebrow">OAuth credentials</span>
+          <h3>连接密钥与密码</h3>
+          <p>可使用自定义值，也可以由系统安全随机生成。所有内容仅通过本机管理接口读取和修改。</p>
+        </div>
+        <div class="credentials-heading-actions">
+          <AppButton tone="secondary" icon="refresh" :loading="secretsLoading" @click="loadSecrets">重新读取</AppButton>
+          <AppButton tone="secondary" icon="key" @click="generateSecret('all')">全部随机生成</AppButton>
+        </div>
+      </div>
+
+      <form class="credentials-form" @submit.prevent="saveSecrets">
+        <div class="credential-field">
+          <span class="credential-label"><strong>所有者密码</strong><small>登录授权时使用，至少 12 个字符。</small></span>
+          <div class="credential-input-row">
+            <input v-model="secretForm.ownerPassword" :type="visible.ownerPassword ? 'text' : 'password'" autocomplete="new-password" spellcheck="false" />
+            <AppButton tone="quiet" compact @click="visible.ownerPassword = !visible.ownerPassword">{{ visible.ownerPassword ? '隐藏' : '显示' }}</AppButton>
+            <AppButton tone="quiet" compact icon="copy" @click="copySecret('所有者密码', secretForm.ownerPassword)">复制</AppButton>
+            <AppButton tone="quiet" compact icon="refresh" @click="generateSecret('ownerPassword')">随机</AppButton>
+          </div>
+        </div>
+
+        <div class="credential-field">
+          <span class="credential-label"><strong>OAuth 客户端 ID</strong><small>可以自定义，用于识别当前客户端。</small></span>
+          <div class="credential-input-row">
+            <input v-model="secretForm.clientId" type="text" autocomplete="off" spellcheck="false" />
+            <AppButton tone="quiet" compact icon="copy" @click="copySecret('客户端 ID', secretForm.clientId)">复制</AppButton>
+            <AppButton tone="quiet" compact icon="refresh" @click="generateSecret('clientId')">随机</AppButton>
+          </div>
+        </div>
+
+        <div class="credential-field">
+          <span class="credential-label"><strong>OAuth 客户端密钥</strong><small>至少 16 个字符，建议使用随机值。</small></span>
+          <div class="credential-input-row">
+            <input v-model="secretForm.clientSecret" :type="visible.clientSecret ? 'text' : 'password'" autocomplete="new-password" spellcheck="false" />
+            <AppButton tone="quiet" compact @click="visible.clientSecret = !visible.clientSecret">{{ visible.clientSecret ? '隐藏' : '显示' }}</AppButton>
+            <AppButton tone="quiet" compact icon="copy" @click="copySecret('客户端密钥', secretForm.clientSecret)">复制</AppButton>
+            <AppButton tone="quiet" compact icon="refresh" @click="generateSecret('clientSecret')">随机</AppButton>
+          </div>
+        </div>
+
+        <div class="credential-field">
+          <span class="credential-label"><strong>Token 签名密钥</strong><small>必须是 64 位十六进制字符，用于签发和校验 Token。</small></span>
+          <div class="credential-input-row">
+            <input v-model="secretForm.tokenSecret" :type="visible.tokenSecret ? 'text' : 'password'" autocomplete="new-password" spellcheck="false" maxlength="64" />
+            <AppButton tone="quiet" compact @click="visible.tokenSecret = !visible.tokenSecret">{{ visible.tokenSecret ? '隐藏' : '显示' }}</AppButton>
+            <AppButton tone="quiet" compact icon="copy" @click="copySecret('Token 签名密钥', secretForm.tokenSecret)">复制</AppButton>
+            <AppButton tone="quiet" compact icon="refresh" @click="generateSecret('tokenSecret')">随机</AppButton>
+          </div>
+        </div>
+
+        <div class="credentials-footer">
+          <label class="credentials-restart-option">
+            <input v-model="restartAfterSave" type="checkbox" />
+            <span><strong>保存后自动重启 MCP</strong><small>当前服务正在运行时，立即加载新凭据。</small></span>
+          </label>
+          <AppButton tone="primary" type="submit" icon="key" :loading="app.actionPending === 'save-secrets'">保存凭据</AppButton>
+        </div>
+      </form>
+    </AppCard>
 
     <AppCard class="about-card">
       <div class="about-mark">

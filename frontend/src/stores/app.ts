@@ -12,6 +12,8 @@ import type {
   ProjectDetails,
   ProjectDiff,
   SecretSummary,
+  SecretSaveResult,
+  SecretUpdateRequest,
   ServiceStatus,
   TunnelInventory,
 } from "@/types/api";
@@ -192,6 +194,18 @@ export const useAppStore = defineStore("app", {
     },
     async revealSecrets() {
       return api<SecretSummary>("/api/secrets?reveal=true");
+    },
+    async generateSecret(field: "ownerPassword" | "clientId" | "clientSecret" | "tokenSecret" | "all") {
+      return api<SecretSummary>("/api/secrets/generate", {
+        method: "POST",
+        body: { field } as unknown as BodyInit,
+      });
+    },
+    async saveSecrets(update: SecretUpdateRequest) {
+      return this.runAction("save-secrets", () => api<SecretSaveResult>("/api/secrets", {
+        method: "PUT",
+        body: update as unknown as BodyInit,
+      }));
     },
     async updateStartup(enabled: boolean) {
       const ui = useUiStore();
