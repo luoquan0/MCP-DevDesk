@@ -4,14 +4,14 @@ package desktop
 
 import (
 	"fmt"
-	"os"
+	"net/http"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"mcp-devdesk/internal/model"
@@ -49,6 +49,8 @@ const (
 	cmdExit    = 1005
 
 	errorAlreadyExists = 183
+	swRestore          = 9
+	swMaximize         = 3
 )
 
 var (
@@ -71,6 +73,8 @@ var (
 	procTrackPopupMenu      = user32.NewProc("TrackPopupMenu")
 	procDestroyMenu         = user32.NewProc("DestroyMenu")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
+	procShowWindow          = user32.NewProc("ShowWindow")
+	procIsWindow            = user32.NewProc("IsWindow")
 	procGetCursorPos        = user32.NewProc("GetCursorPos")
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	procCreateMutexW        = kernel32.NewProc("CreateMutexW")
@@ -132,20 +136,21 @@ type notifyIconData struct {
 type windowsController struct {
 	url        string
 	executable string
-	edgePath   string
+	dataPath   string
 	callbacks  Callbacks
 	done       chan struct{}
 	ready      chan error
 	closeOnce  sync.Once
 	hwndMu     sync.RWMutex
 	hwnd       uintptr
+	native     nativeWindowState
 }
 
-func New(url, executable string, callbacks Callbacks) Controller {
+func New(url, executable, dataPath string, callbacks Callbacks) Controller {
 	controller := &windowsController{
 		url:        url,
 		executable: executable,
-		edgePath:   findEdge(),
+		dataPath:   dataPath,
 		callbacks:  callbacks,
 		done:       make(chan struct{}),
 		ready:      make(chan error, 1),
@@ -167,11 +172,17 @@ func AcquireSingleInstance() (alreadyRunning bool, release func(), err error) {
 }
 
 func OpenDashboard(url string) error {
-	edge := findEdge()
-	if edge != "" {
-		return startEdgeApp(edge, url)
+	requestURL := strings.TrimRight(url, "/") + "/api/ui/open"
+	client := &http.Client{Timeout: 4 * time.Second}
+	response, err := client.Post(requestURL, "application/json", strings.NewReader("{}"))
+	if err != nil {
+		return fmt.Errorf("request existing native window: %w", err)
 	}
-	return exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", url).Start()
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("request existing native window: %s", response.Status)
+	}
+	return nil
 }
 
 func (c *windowsController) Start() error {
@@ -180,22 +191,22 @@ func (c *windowsController) Start() error {
 }
 
 func (c *windowsController) Open() error {
-	if c.edgePath != "" {
-		return startEdgeApp(c.edgePath, c.url)
-	}
-	return exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", c.url).Start()
+	return c.openNativeWindow()
 }
 
 func (c *windowsController) Status() model.DesktopStatus {
+	runtimeVersion, runtimeAvailable := nativeRuntimeStatus()
 	return model.DesktopStatus{
-		Available:       true,
-		AppMode:         c.edgePath != "",
-		EdgePath:        c.edgePath,
+		Available:       runtimeAvailable,
+		AppMode:         true,
+		NativeWindow:    true,
+		RenderEngine:    "Microsoft Edge WebView2（内嵌）",
+		RuntimeVersion:  runtimeVersion,
 		StartupEnabled:  startupEnabled(c.executable),
 		TrayAvailable:   true,
 		SingleInstance:  true,
 		DashboardURL:    c.url,
-		WindowModeLabel: windowModeLabel(c.edgePath),
+		WindowModeLabel: "Windows 原生窗口（内嵌 WebView2）",
 	}
 }
 
@@ -224,6 +235,7 @@ func (c *windowsController) SetStartup(enabled bool) error {
 func (c *windowsController) Done() <-chan struct{} { return c.done }
 
 func (c *windowsController) Close() error {
+	c.closeNativeWindow()
 	c.hwndMu.RLock()
 	hwnd := c.hwnd
 	c.hwndMu.RUnlock()
@@ -403,46 +415,6 @@ func copyUTF16(destination []uint16, value string) {
 	copy(destination, encoded)
 }
 
-func findEdge() string {
-	candidates := []string{
-		`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
-		`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
-	}
-	if drive := strings.TrimSpace(os.Getenv("SystemDrive")); validDriveLetter(drive) {
-		candidates = append(candidates,
-			filepath.Join(drive+string(os.PathSeparator), "Program Files (x86)", "Microsoft", "Edge", "Application", "msedge.exe"),
-			filepath.Join(drive+string(os.PathSeparator), "Program Files", "Microsoft", "Edge", "Application", "msedge.exe"),
-		)
-	}
-	for _, base := range []string{os.Getenv("ProgramFiles(x86)"), os.Getenv("ProgramFiles"), os.Getenv("LOCALAPPDATA")} {
-		if base != "" {
-			candidates = append(candidates, filepath.Join(base, "Microsoft", "Edge", "Application", "msedge.exe"))
-		}
-	}
-	if path, err := exec.LookPath("msedge.exe"); err == nil {
-		candidates = append(candidates, path)
-	}
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			absolute, _ := filepath.Abs(candidate)
-			return absolute
-		}
-	}
-	return ""
-}
-
-func startEdgeApp(edgePath, url string) error {
-	args := []string{
-		"--app=" + url,
-		"--start-maximized",
-		"--no-first-run",
-		"--disable-features=msEdgeSidebarV2",
-	}
-	command := exec.Command(edgePath, args...)
-	command.Env = normalizedWindowsEnvironment()
-	return command.Start()
-}
-
 func startupEnabled(executable string) bool {
 	const key = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 	output, err := hiddenCommand("reg.exe", "QUERY", key, "/v", "MCPDevDesk").CombinedOutput()
@@ -454,76 +426,8 @@ func startupEnabled(executable string) bool {
 	return strings.Contains(text, strings.ToLower("MCPDevDesk")) && strings.Contains(text, wanted)
 }
 
-func windowModeLabel(edgePath string) string {
-	if edgePath != "" {
-		return "Windows 独立应用窗口（Edge App 模式）"
-	}
-	return "系统默认浏览器"
-}
-
 func hiddenCommand(name string, args ...string) *exec.Cmd {
 	command := exec.Command(name, args...)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return command
-}
-
-func validDriveLetter(value string) bool {
-	if len(value) != 2 || value[1] != ':' {
-		return false
-	}
-	letter := value[0]
-	return (letter >= 'A' && letter <= 'Z') || (letter >= 'a' && letter <= 'z')
-}
-
-func normalizedWindowsEnvironment() []string {
-	drive := strings.TrimSpace(os.Getenv("SystemDrive"))
-	if !validDriveLetter(drive) {
-		if volume := filepath.VolumeName(os.Getenv("SystemRoot")); validDriveLetter(volume) {
-			drive = volume
-		} else {
-			drive = "C:"
-		}
-	}
-
-	overrides := map[string]string{
-		"SystemDrive":        drive,
-		"ProgramData":        filepath.Join(drive+string(os.PathSeparator), "ProgramData"),
-		"ProgramFiles":       filepath.Join(drive+string(os.PathSeparator), "Program Files"),
-		"ProgramFiles(x86)":  filepath.Join(drive+string(os.PathSeparator), "Program Files (x86)"),
-		"CommonProgramFiles": filepath.Join(drive+string(os.PathSeparator), "Program Files", "Common Files"),
-	}
-	if current, err := user.Current(); err == nil && current.HomeDir != "" {
-		home := filepath.Clean(current.HomeDir)
-		volume := filepath.VolumeName(home)
-		overrides["USERPROFILE"] = home
-		overrides["HOME"] = home
-		overrides["HOMEDRIVE"] = volume
-		overrides["HOMEPATH"] = strings.TrimPrefix(home, volume)
-		overrides["LOCALAPPDATA"] = filepath.Join(home, "AppData", "Local")
-		overrides["APPDATA"] = filepath.Join(home, "AppData", "Roaming")
-	}
-
-	result := make([]string, 0, len(os.Environ())+len(overrides))
-	for _, entry := range os.Environ() {
-		key, _, found := strings.Cut(entry, "=")
-		if !found {
-			continue
-		}
-		replaced := false
-		for overrideKey := range overrides {
-			if strings.EqualFold(key, overrideKey) {
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			entry = strings.ReplaceAll(entry, "%SystemDrive%", drive)
-			entry = strings.ReplaceAll(entry, "%SYSTEMDRIVE%", drive)
-			result = append(result, entry)
-		}
-	}
-	for key, value := range overrides {
-		result = append(result, key+"="+value)
-	}
-	return result
 }

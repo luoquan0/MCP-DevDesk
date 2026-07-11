@@ -25,7 +25,10 @@
 ## M2：桌面程序
 
 - [x] Windows GUI 子系统，无 CMD 窗口
-- [x] Edge App 模式独立桌面窗口
+- [x] MCP DevDesk 自身的 Win32 原生窗口
+- [x] WebView2 内嵌管理界面
+- [x] 移除 Edge App 外部浏览器窗口
+- [x] 消除状态轮询 CMD 闪烁
 - [x] 系统托盘
 - [x] 关闭窗口后继续在托盘运行
 - [x] 开机启动
@@ -33,7 +36,7 @@
 - [x] 单实例保护
 - [x] 桌面状态与控制 API
 - [ ] 自定义 EXE 和托盘图标
-- [ ] 可选 Wails/WebView2 内嵌壳
+- [x] WebView2 内嵌壳
 - [ ] NSIS 安装包
 
 ## M2.1：端口与 Tunnel 运行管理

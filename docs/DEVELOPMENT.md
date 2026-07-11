@@ -24,17 +24,18 @@ MCP DevDesk 是一个 Windows 优先的本地开发 MCP 管理器，目标是让
 - 现有 `coding-tools-mcp.exe`
 - JSON 配置文件
 
-该方案不依赖联网安装第三方 Go 包，当前环境可直接编译。
+业务后端仍主要使用 Go 标准库。桌面窗口额外使用已提交到 `app/vendor/` 的 WebView2 Go 绑定，因此构建过程不需要联网下载模块。
 
 ### 桌面封装阶段
 
 - Go 标准库 Win32 API
 - Windows GUI 子系统
-- Edge App 模式
+- Win32 原生窗口与内嵌 WebView2
+- vendored `github.com/jchv/go-webview2`
 - 系统托盘和单实例 Mutex
 - HKCU 开机启动
 
-当前桌面版不依赖联网下载第三方模块。Microsoft Edge 存在时，使用 `--app=http://127.0.0.1:17860` 打开无地址栏独立窗口；未检测到 Edge 时退回默认浏览器。Wails/WebView2 仍作为以后可选的真正内嵌壳，不影响当前业务后端。
+当前桌面版直接在 `MCP-DevDesk.exe` 自身创建的 Win32 窗口内嵌 WebView2，不调用 `msedge.exe --app`，也不回退到默认浏览器。依赖已经 vendoring，执行 `build.ps1` 时统一使用 `-mod=vendor`。
 
 ## 3. 目录结构
 
@@ -43,12 +44,12 @@ app/
 ├── cmd/mcp-devdesk/       程序入口
 ├── internal/
 │   ├── config/            配置读取、校验和持久化
-│   ├── desktop/           Win32 托盘、单实例、Edge App 和开机启动
+│   ├── desktop/           Win32 窗口、WebView2、托盘、单实例和开机启动
 │   ├── model/             公共数据结构
 │   ├── process/           MCP 与 Tunnel 进程管理
 │   ├── tunnel/            Cloudflare 登录和配置
 │   └── web/               HTTP API 与静态管理界面
-└── web/                   内嵌前端资源
+└── vendor/                WebView2 Go 绑定和 Windows Loader
 ```
 
 ## 4. 开发原则

@@ -6,6 +6,7 @@ app/data/
 app/*.log
 app/.gocache/
 app/.gotmp/
+app/.gopath/
 
 # Frontend dependencies and generated files
 node_modules/

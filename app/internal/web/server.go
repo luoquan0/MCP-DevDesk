@@ -264,7 +264,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleDesktopStatus(w http.ResponseWriter, _ *http.Request) {
 	if s.desktop == nil {
-		writeJSON(w, http.StatusOK, model.DesktopStatus{Available: false, WindowModeLabel: "浏览器模式"})
+		writeJSON(w, http.StatusOK, model.DesktopStatus{Available: false, WindowModeLabel: "桌面集成不可用"})
 		return
 	}
 	writeJSON(w, http.StatusOK, s.desktop.Status())

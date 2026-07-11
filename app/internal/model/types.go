@@ -221,7 +221,10 @@ type SecretSummary struct {
 type DesktopStatus struct {
 	Available       bool   `json:"available"`
 	AppMode         bool   `json:"appMode"`
+	NativeWindow    bool   `json:"nativeWindow"`
 	EdgePath        string `json:"edgePath,omitempty"`
+	RenderEngine    string `json:"renderEngine,omitempty"`
+	RuntimeVersion  string `json:"runtimeVersion,omitempty"`
 	StartupEnabled  bool   `json:"startupEnabled"`
 	TrayAvailable   bool   `json:"trayAvailable"`
 	SingleInstance  bool   `json:"singleInstance"`

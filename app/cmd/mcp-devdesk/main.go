@@ -55,7 +55,7 @@ func main() {
 	}
 
 	executable, _ := os.Executable()
-	controller := desktop.New(dashboardURL, executable, desktop.Callbacks{
+	controller := desktop.New(dashboardURL, executable, dataDir, desktop.Callbacks{
 		Start: func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()

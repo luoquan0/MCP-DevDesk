@@ -189,11 +189,12 @@ function renderConfig(config) {
 
 function renderDesktopStatus(desktop) {
   $("#runAtLoginInput").checked = Boolean(desktop.startupEnabled);
-  $("#desktopWindowMode").textContent = desktop.windowModeLabel || "浏览器模式";
-  $("#edgeExecutablePath").textContent = desktop.edgePath || "未检测到 Microsoft Edge，将使用默认浏览器";
+  $("#desktopWindowMode").textContent = desktop.windowModeLabel || "Windows 原生窗口";
+  $("#desktopRenderEngine").textContent = desktop.renderEngine || "Microsoft Edge WebView2（内嵌）";
+  $("#desktopRuntimeVersion").textContent = desktop.runtimeVersion || "未检测到 WebView2 Runtime";
   const openButton = $("#openDesktopWindowButton");
-  openButton.textContent = desktop.appMode ? "打开独立窗口" : "在浏览器中打开";
-  openButton.disabled = false;
+  openButton.textContent = "打开 Windows 窗口";
+  openButton.disabled = !desktop.available;
 }
 
 function renderStatus(status) {
