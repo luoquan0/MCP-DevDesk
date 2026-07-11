@@ -191,6 +191,7 @@ func (m *Manager) start(target *managedProcess, executable string, args []string
 	target.cmd = cmd
 	target.stopping = false
 	target.status.Running = true
+	target.status.Managed = true
 	target.status.PID = cmd.Process.Pid
 	target.status.StartedAt = &now
 	target.status.StoppedAt = nil

@@ -19,6 +19,7 @@
 │ Config      Process       Tunnel             │
 │ Status      Logs          Watchdog            │
 │ Desktop     Security      Diagnostics         │
+│ Port Switch Tunnel Inventory / Duplicate Guard│
 └──────────────┬───────────────────┬───────────┘
                │                   │
 ┌──────────────▼─────────┐  ┌──────▼───────────┐
@@ -45,6 +46,10 @@
 主程序保存 PID、启动时间、退出状态和日志位置。Watchdog 每隔固定时间检查进程及本地端口；异常退出时根据配置自动重启。
 
 主程序本身以 Windows GUI 子系统运行，不显示控制台窗口。它通过命名 Mutex 保证单实例，通过 Win32 `Shell_NotifyIcon` 提供系统托盘，通过 Edge App 模式展示管理界面。
+
+管理器还会通过 Windows 进程信息枚举所有 `cloudflared.exe`，解析命令行中的 Tunnel UUID、名称和 `--url` 本地目标。启动前会检查同一 Tunnel 是否已经连接，防止 Watchdog 或重复点击产生新的重复进程。
+
+修改 MCP 端口时采用“先启动新 MCP、再切换 Tunnel”的顺序。新端口未就绪前不会关闭旧 Tunnel；切换失败时会尝试恢复旧端口和旧连接。
 
 ## 4. 兼容启动参数
 

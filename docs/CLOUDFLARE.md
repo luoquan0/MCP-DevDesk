@@ -23,7 +23,7 @@ cloudflared.exe tunnel login
 cloudflared.exe tunnel list
 cloudflared.exe tunnel create mcp-devdesk
 cloudflared.exe tunnel route dns mcp-devdesk mcp.example.com
-cloudflared.exe tunnel run --credentials-file <path> --protocol http2 --url http://127.0.0.1:8765 mcp-devdesk
+cloudflared.exe tunnel run --credentials-file <path> --protocol http2 --url http://127.0.0.1:<当前 MCP 端口> mcp-devdesk
 ```
 
 ## 3. 登录状态检测
@@ -52,4 +52,32 @@ Tunnel UUID:   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 - 网络不通：展示需要手工添加的 CNAME。
 - 凭据缺失：提示重新授权或选择凭据文件。
 - Tunnel 掉线：Watchdog 自动重启并记录日志。
+
+## 6. MCP 端口联动
+
+MCP 端口不再固定为 `8765`。用户在“项目与服务”页面修改端口时，管理器会：
+
+1. 检查新端口是否被其他进程占用。
+2. 使用新端口启动 MCP，并等待端口真正就绪。
+3. 关闭与当前 Tunnel UUID 或名称匹配的旧 cloudflared 连接。
+4. 使用新的 `--url http://127.0.0.1:<端口>` 启动一个 Tunnel 进程。
+5. 成功后保存新端口；失败时尝试恢复旧 MCP 与 Tunnel。
+
+固定域名和 DNS 记录不需要重新创建，因为 Cloudflare DNS 始终指向同一个 Tunnel UUID，只有 Tunnel 在本机连接的目标端口发生变化。
+
+## 7. 隧道进程监控
+
+管理界面会枚举本机所有 `cloudflared.exe` 进程并显示：
+
+- PID 和父进程 PID
+- 可执行文件路径
+- Tunnel 名称与 UUID
+- 实际本地转发 URL 和端口
+- 是否由当前 MCP DevDesk 管理
+- 是否匹配当前配置
+- 是否存在同 UUID 或同名称的重复进程
+
+用户可以按 PID 关闭单个进程，也可以点击“同步到当前 MCP 端口”，清理当前 Tunnel 的旧连接并只启动一个正确连接。其他 Tunnel UUID 不会被自动关闭。
+
+为了避免泄露凭据，进程命令行中的 `--token` 会在 API 返回前替换为 `***`。
 

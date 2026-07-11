@@ -2,7 +2,7 @@
 
 ## 1. 当前实现
 
-MCP DevDesk `0.2.0-dev` 使用纯 Go 和 Windows 系统 API 实现桌面运行，不依赖 Wails、Electron、Node.js Runtime 或额外 DLL。
+MCP DevDesk `0.3.0-dev` 使用纯 Go 和 Windows 系统 API 实现桌面运行，不依赖 Wails、Electron、Node.js Runtime 或额外 DLL。
 
 程序启动后包含三个部分：
 

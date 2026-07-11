@@ -72,6 +72,10 @@ func commandRequest(command string) (method, path string, body io.Reader, err er
 		return http.MethodGet, "/api/diagnostics", nil, nil
 	case "desktop":
 		return http.MethodGet, "/api/system/desktop", nil, nil
+	case "tunnels":
+		return http.MethodGet, "/api/tunnels/processes", nil, nil
+	case "sync-tunnel":
+		return http.MethodPost, "/api/tunnels/sync-port", bytes.NewReader([]byte("{}")), nil
 	case "open":
 		return http.MethodPost, "/api/ui/open", bytes.NewReader([]byte("{}")), nil
 	case "startup-on":
@@ -81,7 +85,7 @@ func commandRequest(command string) (method, path string, body io.Reader, err er
 	case "start", "stop", "restart", "takeover":
 		return http.MethodPost, "/api/services/" + command, bytes.NewReader([]byte("{}")), nil
 	default:
-		return "", "", nil, errors.New("usage: devdeskctl [status|health|config|diagnostics|desktop|open|startup-on|startup-off|start|stop|restart|takeover]")
+		return "", "", nil, errors.New("usage: devdeskctl [status|health|config|diagnostics|desktop|tunnels|sync-tunnel|open|startup-on|startup-off|start|stop|restart|takeover]")
 	}
 }
 

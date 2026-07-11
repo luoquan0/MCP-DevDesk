@@ -2,6 +2,8 @@ package web
 
 import (
 	"bytes"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,5 +135,41 @@ func TestDesktopStatusAndStartupEndpoints(t *testing.T) {
 	server.server.Handler.ServeHTTP(openRecorder, openRequest)
 	if openRecorder.Code != http.StatusAccepted || !desktop.opened {
 		t.Fatalf("open UI failed: %d %s", openRecorder.Code, openRecorder.Body.String())
+	}
+}
+
+func TestConfigEndpointAppliesMCPPortChange(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+
+	server := newTestServer(t)
+	body := bytes.NewBufferString(fmt.Sprintf(`{"mcpPort":%d}`, port))
+	request := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/config", body)
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), fmt.Sprintf(`"mcpPort":%d`, port)) {
+		t.Fatalf("port was not updated: %s", recorder.Body.String())
+	}
+}
+
+func TestInvalidTunnelPIDIsRejected(t *testing.T) {
+	server := newTestServer(t)
+	request := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/tunnels/processes/not-a-pid", nil)
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 }

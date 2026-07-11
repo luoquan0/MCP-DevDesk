@@ -226,6 +226,28 @@
               <button class="button secondary wide" id="testAndStartButton">启动并测试连接</button>
             </article>
           </div>
+
+          <article class="panel tunnel-monitor">
+            <div class="section-heading tunnel-monitor-heading">
+              <div>
+                <p class="eyebrow">PROCESS MONITOR</p>
+                <h3>Cloudflare 隧道进程</h3>
+                <p>监控本机全部 cloudflared 进程，识别重复 Tunnel 和实际穿透端口。</p>
+              </div>
+              <div class="tunnel-monitor-actions">
+                <button class="button secondary" id="syncTunnelPortButton">同步到当前 MCP 端口</button>
+                <button class="button ghost" id="refreshTunnelsButton">刷新</button>
+              </div>
+            </div>
+            <div class="tunnel-summary-grid">
+              <div><span>运行中的隧道</span><b id="tunnelProcessCount">0</b></div>
+              <div><span>重复进程</span><b id="tunnelDuplicateCount">0</b></div>
+              <div class="span-2"><span>期望穿透地址</span><code id="tunnelExpectedTarget">http://127.0.0.1:8765</code></div>
+            </div>
+            <div class="tunnel-process-list" id="tunnelProcessList">
+              <div class="tunnel-empty">正在读取 cloudflared 进程……</div>
+            </div>
+          </article>
         </section>
 
         <section class="page" id="page-workspace">
@@ -265,6 +287,7 @@
                 <label class="field">
                   <span>MCP 端口</span>
                   <input id="mcpPortInput" type="number" min="1024" max="65535">
+                  <small>保存后会自动重启 MCP，并让 Cloudflare Tunnel 跟随新端口。</small>
                 </label>
                 <label class="field">
                   <span>管理端口</span>
@@ -291,7 +314,7 @@
             </div>
 
             <div class="form-actions">
-              <span id="workspaceSaveHint">修改保存后，运行中的服务需要重启。</span>
+              <span id="workspaceSaveHint">修改 MCP 端口时会自动关闭旧 Tunnel 连接并切换到新端口。</span>
               <button class="button primary" type="submit">保存项目设置</button>
             </div>
           </form>

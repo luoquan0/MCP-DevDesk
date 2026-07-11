@@ -135,6 +135,10 @@ GET  /api/logs
 GET  /api/system/desktop
 PUT  /api/system/startup
 POST /api/ui/open
+POST /api/services/change-port
+GET  /api/tunnels/processes
+DELETE /api/tunnels/processes/{pid}
+POST /api/tunnels/sync-port
 ```
 
 所有修改接口仅接受本机请求，并验证 `Origin` 和 `Host`。
