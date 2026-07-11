@@ -50,6 +50,11 @@ const (
 
 	errorAlreadyExists = 183
 	swRestore          = 9
+
+	monitorDefaultToNearest = 0x00000002
+	swpNoSize               = 0x0001
+	swpNoZOrder             = 0x0004
+	swpNoActivate           = 0x0010
 )
 
 var (
@@ -77,6 +82,10 @@ var (
 	procShowWindow          = user32.NewProc("ShowWindow")
 	procIsWindow            = user32.NewProc("IsWindow")
 	procGetCursorPos        = user32.NewProc("GetCursorPos")
+	procGetWindowRect       = user32.NewProc("GetWindowRect")
+	procMonitorFromWindow   = user32.NewProc("MonitorFromWindow")
+	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
+	procSetWindowPos        = user32.NewProc("SetWindowPos")
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	procCreateMutexW        = kernel32.NewProc("CreateMutexW")
 	procCloseHandle         = kernel32.NewProc("CloseHandle")
@@ -89,6 +98,20 @@ var (
 type point struct {
 	X int32
 	Y int32
+}
+
+type rect struct {
+	Left   int32
+	Top    int32
+	Right  int32
+	Bottom int32
+}
+
+type monitorInfo struct {
+	CbSize    uint32
+	RcMonitor rect
+	RcWork    rect
+	DwFlags   uint32
 }
 
 type msg struct {

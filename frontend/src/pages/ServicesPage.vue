@@ -50,23 +50,36 @@ async function run(action: "start" | "stop" | "restart" | "takeover") {
 
 async function save() {
   try {
-    if (form.mcpPort === form.adminPort) throw new Error("MCP 端口和管理端口不能相同。");
+    const requestedMcpPort = Number(form.mcpPort);
+    const requestedAdminPort = Number(form.adminPort);
+    if (!Number.isInteger(requestedMcpPort) || requestedMcpPort < 1024 || requestedMcpPort > 65535) {
+      throw new Error("MCP 端口必须是 1024 到 65535 之间的整数。");
+    }
+    if (!Number.isInteger(requestedAdminPort) || requestedAdminPort < 1024 || requestedAdminPort > 65535) {
+      throw new Error("管理端口必须是 1024 到 65535 之间的整数。");
+    }
+    if (requestedMcpPort === requestedAdminPort) throw new Error("MCP 端口和管理端口不能相同。");
+
     const oldPort = app.config?.mcpPort;
+    if (oldPort && oldPort !== requestedMcpPort) {
+      const accepted = await ui.ask({
+        title: "切换 MCP 与 Tunnel 端口",
+        message: `端口将从 ${oldPort} 切换为 ${requestedMcpPort}。新 MCP 就绪后，Cloudflare Tunnel 会自动跟随。`,
+        confirmLabel: "切换端口",
+      });
+      if (!accepted) {
+        form.mcpPort = oldPort;
+        return;
+      }
+    }
+
     await app.saveConfig({
-      adminPort: Number(form.adminPort),
+      mcpPort: requestedMcpPort,
+      adminPort: requestedAdminPort,
       toolProfile: form.toolProfile as "full" | "read-only" | "compat-readonly-all",
       autoStart: form.autoStart,
       watchdog: form.watchdog,
     });
-    if (oldPort && oldPort !== Number(form.mcpPort)) {
-      const accepted = await ui.ask({
-        title: "切换 MCP 与 Tunnel 端口",
-        message: `端口将从 ${oldPort} 切换为 ${form.mcpPort}。新 MCP 就绪后，Cloudflare Tunnel 会自动跟随。`,
-        confirmLabel: "切换端口",
-      });
-      if (accepted) await app.changePort(Number(form.mcpPort));
-      else form.mcpPort = oldPort;
-    }
   } catch (error) {
     ui.toast("保存失败", error instanceof Error ? error.message : String(error), "danger");
   }

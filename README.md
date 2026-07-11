@@ -10,7 +10,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-当前 `0.4.0-dev` 已完成：
+当前 `0.6.0-dev` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -33,7 +33,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 - 本机 cloudflared 进程监控
 - 重复 Tunnel 检测与按 PID 关闭
 - Apple 风格 Vue 3 + TypeScript 桌面界面
-- 默认以 1340 × 880 居中窗口启动，不再默认最大化
+- 默认以 1200 × 800 居中窗口启动，不再默认最大化
 - 从 `logo/` 品牌源图自动生成界面、窗口、托盘和 EXE 图标
 - 前端、Go 测试、Windows GUI/CLI 和便携版的一体化构建流程
 

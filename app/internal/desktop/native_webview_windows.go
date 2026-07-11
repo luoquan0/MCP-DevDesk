@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"unsafe"
 
 	webview2 "github.com/jchv/go-webview2"
 	"github.com/jchv/go-webview2/webviewloader"
@@ -98,8 +99,8 @@ func (c *windowsController) runNativeWindow() {
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
 			Title:  "MCP DevDesk",
-			Width:  1340,
-			Height: 880,
+			Width:  1200,
+			Height: 800,
 			Center: true,
 		},
 	})
@@ -112,6 +113,7 @@ func (c *windowsController) runNativeWindow() {
 	view.Navigate(c.url)
 	hwnd := uintptr(view.Window())
 	setApplicationWindowIcon(hwnd, c.applicationIcon())
+	centerNativeWindow(hwnd)
 	c.finishNativeOpen(nil, view, hwnd)
 	procSetForegroundWindow.Call(hwnd)
 
@@ -123,6 +125,48 @@ func (c *windowsController) runNativeWindow() {
 		c.native.hwnd = 0
 	}
 	c.native.mu.Unlock()
+}
+
+func centerNativeWindow(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+
+	var windowRect rect
+	if result, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&windowRect))); result == 0 {
+		return
+	}
+	monitor, _, _ := procMonitorFromWindow.Call(hwnd, monitorDefaultToNearest)
+	if monitor == 0 {
+		return
+	}
+	info := monitorInfo{CbSize: uint32(unsafe.Sizeof(monitorInfo{}))}
+	if result, _, _ := procGetMonitorInfoW.Call(monitor, uintptr(unsafe.Pointer(&info))); result == 0 {
+		return
+	}
+
+	windowWidth := windowRect.Right - windowRect.Left
+	windowHeight := windowRect.Bottom - windowRect.Top
+	workWidth := info.RcWork.Right - info.RcWork.Left
+	workHeight := info.RcWork.Bottom - info.RcWork.Top
+	x := info.RcWork.Left
+	y := info.RcWork.Top
+	if windowWidth < workWidth {
+		x += (workWidth - windowWidth) / 2
+	}
+	if windowHeight < workHeight {
+		y += (workHeight - windowHeight) / 2
+	}
+
+	procSetWindowPos.Call(
+		hwnd,
+		0,
+		uintptr(x),
+		uintptr(y),
+		0,
+		0,
+		swpNoSize|swpNoZOrder|swpNoActivate,
+	)
 }
 
 func (c *windowsController) finishNativeOpen(err error, view webview2.WebView, hwnd uintptr) {
