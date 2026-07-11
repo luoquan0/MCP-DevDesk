@@ -42,9 +42,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleShortcut));
     <aside class="app-sidebar" :class="{ 'is-open': ui.mobileSidebarOpen }">
       <div class="brand-block">
         <div class="brand-mark">
-          <span class="brand-node node-a" />
-          <span class="brand-node node-b" />
-          <span class="brand-line" />
+          <img class="brand-logo-image" src="/brand-logo.png" alt="" />
         </div>
         <div class="brand-copy">
           <strong>MCP DevDesk</strong>

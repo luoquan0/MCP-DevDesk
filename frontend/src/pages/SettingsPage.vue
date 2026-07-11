@@ -91,9 +91,7 @@ async function setStartup(enabled: boolean) {
 
     <AppCard class="about-card">
       <div class="about-mark">
-        <span class="brand-node node-a" />
-        <span class="brand-node node-b" />
-        <span class="brand-line" />
+        <img class="brand-logo-image" src="/brand-logo.png" alt="MCP DevDesk" />
       </div>
       <div class="about-copy">
         <h3>MCP DevDesk</h3>

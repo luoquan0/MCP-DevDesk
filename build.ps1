@@ -9,10 +9,16 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppDir = Join-Path $Root "app"
 $FrontendDir = Join-Path $Root "frontend"
 $DistDir = Join-Path $Root "dist"
+$BrandAssetScript = Join-Path $Root "tools\generate-brand-assets.ps1"
+$ExeIconScript = Join-Path $Root "tools\set-exe-icon.ps1"
 
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $AppDir ".gocache") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $AppDir ".gotmp") | Out-Null
+
+if (Test-Path -LiteralPath $BrandAssetScript) {
+    & $BrandAssetScript
+}
 
 if (Test-Path (Join-Path $FrontendDir "package.json")) {
     Push-Location $FrontendDir
@@ -38,6 +44,9 @@ try {
     $env:GOARCH = $Arch
     $Output = Join-Path $DistDir "MCP-DevDesk-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w -H=windowsgui" -o $Output ./cmd/mcp-devdesk
+    if (Test-Path -LiteralPath $ExeIconScript) {
+        & $ExeIconScript -ExePath $Output -IconPath (Join-Path $AppDir "internal\desktop\assets\mcp-devdesk.ico")
+    }
 
     $CliOutput = Join-Path $DistDir "devdeskctl-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w" -o $CliOutput ./cmd/devdeskctl

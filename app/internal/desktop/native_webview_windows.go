@@ -98,8 +98,8 @@ func (c *windowsController) runNativeWindow() {
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
 			Title:  "MCP DevDesk",
-			Width:  1400,
-			Height: 900,
+			Width:  1340,
+			Height: 880,
 			Center: true,
 		},
 	})
@@ -111,8 +111,8 @@ func (c *windowsController) runNativeWindow() {
 	view.SetSize(960, 640, webview2.HintMin)
 	view.Navigate(c.url)
 	hwnd := uintptr(view.Window())
+	setApplicationWindowIcon(hwnd, c.applicationIcon())
 	c.finishNativeOpen(nil, view, hwnd)
-	procShowWindow.Call(hwnd, swMaximize)
 	procSetForegroundWindow.Call(hwnd)
 
 	view.Run()

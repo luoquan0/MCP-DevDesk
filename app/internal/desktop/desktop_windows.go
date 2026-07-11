@@ -50,7 +50,6 @@ const (
 
 	errorAlreadyExists = 183
 	swRestore          = 9
-	swMaximize         = 3
 )
 
 var (
@@ -67,12 +66,14 @@ var (
 	procPostQuitMessage     = user32.NewProc("PostQuitMessage")
 	procPostMessageW        = user32.NewProc("PostMessageW")
 	procLoadIconW           = user32.NewProc("LoadIconW")
+	procLoadImageW          = user32.NewProc("LoadImageW")
 	procLoadCursorW         = user32.NewProc("LoadCursorW")
 	procCreatePopupMenu     = user32.NewProc("CreatePopupMenu")
 	procAppendMenuW         = user32.NewProc("AppendMenuW")
 	procTrackPopupMenu      = user32.NewProc("TrackPopupMenu")
 	procDestroyMenu         = user32.NewProc("DestroyMenu")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
+	procSendMessageW        = user32.NewProc("SendMessageW")
 	procShowWindow          = user32.NewProc("ShowWindow")
 	procIsWindow            = user32.NewProc("IsWindow")
 	procGetCursorPos        = user32.NewProc("GetCursorPos")
@@ -141,6 +142,8 @@ type windowsController struct {
 	done       chan struct{}
 	ready      chan error
 	closeOnce  sync.Once
+	iconOnce   sync.Once
+	iconHandle uintptr
 	hwndMu     sync.RWMutex
 	hwnd       uintptr
 	native     nativeWindowState
@@ -263,7 +266,7 @@ func (c *windowsController) runTray() {
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 	className, _ := syscall.UTF16PtrFromString("MCPDevDeskTrayWindow")
 	title, _ := syscall.UTF16PtrFromString("MCP DevDesk")
-	hIcon, _, _ := procLoadIconW.Call(0, idiApplication)
+	hIcon := c.applicationIcon()
 	hCursor, _, _ := procLoadCursorW.Call(0, idcArrow)
 	class := wndClassEx{
 		CbSize:        uint32(unsafe.Sizeof(wndClassEx{})),
