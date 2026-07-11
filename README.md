@@ -104,7 +104,7 @@ go run ./cmd/mcp-core --workspace .. --port 18765
 http://127.0.0.1:18765/mcp
 ```
 
-当前已支持初始化、会话 ID、`ping`、`tools/list`、`tools/call` 和会话删除。文件、命令、Git、OAuth 与图片工具在兼容测试完成前仍由旧核心提供。
+当前已支持初始化、会话 ID、`ping`、`tools/list`、`tools/call`、会话删除，以及限制在工作区内的 `read_file`、`list_dir`、`search_text` 三个只读文件工具。文件写入、命令、Git、OAuth 与图片工具在兼容测试完成前仍由旧核心提供。
 
 设置页现已支持管理旧核心与后续 Go 核心共用的 OAuth 凭据：所有者密码、客户端 ID、客户端密钥和 Token 签名密钥。每一项都可以自定义、使用安全随机值、显示或复制；保存时可自动重启 MCP 让新凭据立即生效。凭据当前保存在本机数据目录的 `secrets.json`，管理 API 仅监听回环地址。
 

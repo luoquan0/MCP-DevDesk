@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"mime"
 	"net/http"
 	"strings"
@@ -112,6 +111,21 @@ func New(options Options) *Server {
 		"properties":           map[string]any{},
 		"additionalProperties": false,
 	}
+	tools := []Tool{
+		{
+			Name:        "server_info",
+			Title:       "Go Core Server Info",
+			Description: "Return protocol, version, transport, workspace, and uptime details for the Go MCP preview core.",
+			InputSchema: emptyObjectSchema,
+		},
+		{
+			Name:        "get_workspace",
+			Title:       "Get Workspace",
+			Description: "Return the workspace currently assigned to the Go MCP preview core.",
+			InputSchema: emptyObjectSchema,
+		},
+	}
+	tools = append(tools, previewFileTools()...)
 	return &Server{
 		name:         options.Name,
 		version:      options.Version,
@@ -119,20 +133,7 @@ func New(options Options) *Server {
 		maxBodyBytes: options.MaxBodyBytes,
 		startedAt:    time.Now(),
 		sessions:     make(map[string]session),
-		tools: []Tool{
-			{
-				Name:        "server_info",
-				Title:       "Go Core Server Info",
-				Description: "Return protocol, version, transport, workspace, and uptime details for the Go MCP preview core.",
-				InputSchema: emptyObjectSchema,
-			},
-			{
-				Name:        "get_workspace",
-				Title:       "Get Workspace",
-				Description: "Return the workspace currently assigned to the Go MCP preview core.",
-				InputSchema: emptyObjectSchema,
-			},
-		},
+		tools:        tools,
 	}
 }
 
@@ -269,24 +270,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, request rpcRequest) {
 		return
 	}
 
-	var structured map[string]any
-	switch params.Name {
-	case "server_info":
-		structured = map[string]any{
-			"name":            s.name,
-			"version":         s.version,
-			"protocolVersion": ProtocolVersion,
-			"transport":       "streamable-http",
-			"coreMode":        "go-preview",
-			"workspace":       s.workspace,
-			"toolCount":       len(s.tools),
-			"uptimeSeconds":   int64(time.Since(s.startedAt).Seconds()),
-		}
-	case "get_workspace":
-		structured = map[string]any{"workspace": s.workspace}
-	default:
+	structured, err := s.executeTool(params.Name, params.Arguments)
+	if err != nil {
 		writeRPCResult(w, request.ID, toolCallResult{
-			Content: []contentItem{{Type: "text", Text: fmt.Sprintf("unknown tool: %s", params.Name)}},
+			Content: []contentItem{{Type: "text", Text: err.Error()}},
 			IsError: true,
 		})
 		return
@@ -301,6 +288,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, request rpcRequest) {
 		Content:           []contentItem{{Type: "text", Text: string(raw)}},
 		StructuredContent: structured,
 	})
+}
+
+func (s *Server) uptimeSeconds() int64 {
+	return int64(time.Since(s.startedAt).Seconds())
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {

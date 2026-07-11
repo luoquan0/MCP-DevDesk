@@ -84,9 +84,10 @@
 - [x] Streamable HTTP JSON-RPC 基础端点、初始化与会话生命周期
 - [x] `tools/list`、`tools/call` 与首批只读诊断工具
 - [x] OAuth 凭据本机管理：自定义、随机生成、显示、复制与保存后重启
+- [x] 工作区只读文件工具：`read_file`、`list_dir`、`search_text`
 - [ ] SSE 恢复流与完整 Streamable HTTP 兼容
 - [ ] OAuth 2.1 + PKCE
-- [ ] 文件工具
+- [ ] 文件写入、补丁、移动与删除工具
 - [ ] 命令会话
 - [ ] Git 工具
 - [ ] 权限申请

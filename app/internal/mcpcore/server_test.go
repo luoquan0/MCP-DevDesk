@@ -6,11 +6,18 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestInitializeListAndCallTools(t *testing.T) {
-	server := New(Options{Name: "test-core", Version: "test", Workspace: `C:\work`})
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "hello.txt"), []byte("hello preview"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := New(Options{Name: "test-core", Version: "test", Workspace: workspace})
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
 
@@ -62,7 +69,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 		} `json:"result"`
 	}
 	decodeJSON(t, listResponse.Body, &listResult)
-	if len(listResult.Result.Tools) != 2 {
+	if len(listResult.Result.Tools) != 5 {
 		t.Fatalf("tool count = %d", len(listResult.Result.Tools))
 	}
 
@@ -91,6 +98,27 @@ func TestInitializeListAndCallTools(t *testing.T) {
 	}
 	if callResult.Result.StructuredContent["coreMode"] != "go-preview" {
 		t.Fatalf("core mode = %#v", callResult.Result.StructuredContent["coreMode"])
+	}
+
+	readResponse := postRPC(t, httpServer.URL+"/mcp", sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      4,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "read_file",
+			"arguments": map[string]any{"path": "hello.txt"},
+		},
+	})
+	defer readResponse.Body.Close()
+	var readResult struct {
+		Result struct {
+			StructuredContent map[string]any `json:"structuredContent"`
+			IsError           bool           `json:"isError"`
+		} `json:"result"`
+	}
+	decodeJSON(t, readResponse.Body, &readResult)
+	if readResult.Result.IsError || readResult.Result.StructuredContent["content"] != "hello preview" {
+		t.Fatalf("unexpected read_file result: %#v", readResult.Result)
 	}
 }
 
@@ -146,6 +174,93 @@ func TestSessionIsRequiredAndCanBeDeleted(t *testing.T) {
 	defer afterDelete.Body.Close()
 	if afterDelete.StatusCode != http.StatusBadRequest {
 		t.Fatalf("deleted session status = %d", afterDelete.StatusCode)
+	}
+}
+
+func TestWorkspaceFileTools(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := "alpha\nBeta target\ngamma target\n"
+	if err := os.WriteFile(filepath.Join(workspace, "docs", "notes.txt"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".hidden.txt"), []byte("target hidden"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(Options{Workspace: workspace})
+	readResult, err := server.executeTool("read_file", map[string]any{
+		"path":      "docs/notes.txt",
+		"startLine": 2,
+		"endLine":   3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readResult["content"] != "Beta target\ngamma target" {
+		t.Fatalf("unexpected read content: %#v", readResult["content"])
+	}
+
+	listResult, err := server.executeTool("list_dir", map[string]any{"path": "."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, ok := listResult["entries"].([]directoryEntry)
+	if !ok {
+		t.Fatalf("unexpected entries type: %T", listResult["entries"])
+	}
+	if len(entries) != 1 || entries[0].Name != "docs" {
+		t.Fatalf("hidden entries should be excluded: %#v", entries)
+	}
+
+	searchResult, err := server.executeTool("search_text", map[string]any{
+		"query": "TARGET",
+		"path":  ".",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, ok := searchResult["matches"].([]textMatch)
+	if !ok {
+		t.Fatalf("unexpected matches type: %T", searchResult["matches"])
+	}
+	if len(matches) != 2 || matches[0].Path != "docs/notes.txt" || matches[0].Line != 2 {
+		t.Fatalf("unexpected matches: %#v", matches)
+	}
+}
+
+func TestWorkspaceFileToolsRejectPathEscape(t *testing.T) {
+	workspace := t.TempDir()
+	outside := filepath.Join(filepath.Dir(workspace), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(outside) })
+
+	server := New(Options{Workspace: workspace})
+	_, err := server.executeTool("read_file", map[string]any{"path": filepath.Join("..", filepath.Base(outside))})
+	if err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("expected workspace escape error, got %v", err)
+	}
+}
+
+func TestWorkspaceFileToolsRejectSymlinkEscape(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "outside.txt"), []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(workspace, "outside-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink creation is unavailable: %v", err)
+	}
+
+	server := New(Options{Workspace: workspace})
+	_, err := server.executeTool("read_file", map[string]any{"path": filepath.Join("outside-link", "outside.txt")})
+	if err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("expected symlink escape error, got %v", err)
 	}
 }
 
