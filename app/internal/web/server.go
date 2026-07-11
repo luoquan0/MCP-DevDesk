@@ -23,17 +23,28 @@ import (
 var staticFiles embed.FS
 
 type Server struct {
-	app    *application.App
-	server *http.Server
+	app     *application.App
+	desktop DesktopController
+	server  *http.Server
+}
+
+type DesktopController interface {
+	Open() error
+	Status() model.DesktopStatus
+	SetStartup(enabled bool) error
 }
 
 func New(app *application.App, address string) (*Server, error) {
+	return NewWithDesktop(app, address, nil)
+}
+
+func NewWithDesktop(app *application.App, address string, desktop DesktopController) (*Server, error) {
 	assets, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		return nil, err
 	}
 
-	s := &Server{app: app}
+	s := &Server{app: app, desktop: desktop}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
@@ -47,6 +58,9 @@ func New(app *application.App, address string) (*Server, error) {
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/secrets", s.handleSecrets)
 	mux.HandleFunc("GET /api/diagnostics", s.handleDiagnostics)
+	mux.HandleFunc("GET /api/system/desktop", s.handleDesktopStatus)
+	mux.HandleFunc("PUT /api/system/startup", s.handleStartup)
+	mux.HandleFunc("POST /api/ui/open", s.handleOpenUI)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.Handle("/", noCache(http.FileServer(http.FS(assets))))
 
@@ -183,6 +197,45 @@ func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.Diagnostics())
+}
+
+func (s *Server) handleDesktopStatus(w http.ResponseWriter, _ *http.Request) {
+	if s.desktop == nil {
+		writeJSON(w, http.StatusOK, model.DesktopStatus{Available: false, WindowModeLabel: "浏览器模式"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.desktop.Status())
+}
+
+func (s *Server) handleStartup(w http.ResponseWriter, r *http.Request) {
+	if s.desktop == nil {
+		writeError(w, http.StatusNotImplemented, errors.New("desktop integration is unavailable"))
+		return
+	}
+	var request struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.desktop.SetStartup(request.Enabled); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.desktop.Status())
+}
+
+func (s *Server) handleOpenUI(w http.ResponseWriter, _ *http.Request) {
+	if s.desktop == nil {
+		writeError(w, http.StatusNotImplemented, errors.New("desktop integration is unavailable"))
+		return
+	}
+	if err := s.desktop.Open(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"message": "desktop window opened"})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

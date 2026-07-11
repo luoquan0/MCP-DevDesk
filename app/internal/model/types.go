@@ -187,3 +187,14 @@ type SecretSummary struct {
 	ClientID      string `json:"clientId,omitempty"`
 	ClientSecret  string `json:"clientSecret,omitempty"`
 }
+
+type DesktopStatus struct {
+	Available       bool   `json:"available"`
+	AppMode         bool   `json:"appMode"`
+	EdgePath        string `json:"edgePath,omitempty"`
+	StartupEnabled  bool   `json:"startupEnabled"`
+	TrayAvailable   bool   `json:"trayAvailable"`
+	SingleInstance  bool   `json:"singleInstance"`
+	DashboardURL    string `json:"dashboardUrl"`
+	WindowModeLabel string `json:"windowModeLabel"`
+}

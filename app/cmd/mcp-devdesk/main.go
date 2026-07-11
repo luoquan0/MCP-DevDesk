@@ -10,19 +10,24 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"mcp-devdesk/internal/application"
+	"mcp-devdesk/internal/desktop"
 	"mcp-devdesk/internal/web"
 )
 
 func main() {
+	background := hasArgument("--background")
 	rootDir, err := locateRoot()
 	if err != nil {
 		log.Fatal(err)
 	}
 	dataDir := filepath.Join(rootDir, "data", "devdesk")
+	closeLog := configureLogging(dataDir)
+	defer closeLog()
 
 	app, err := application.New(rootDir, dataDir)
 	if err != nil {
@@ -32,21 +37,69 @@ func main() {
 
 	cfg := app.Config()
 	address := cfg.AdminHost + ":" + strconv.Itoa(cfg.AdminPort)
-	server, err := web.New(app, address)
+	dashboardURL := "http://" + address
+
+	alreadyRunning, releaseInstance, instanceErr := desktop.AcquireSingleInstance()
+	if instanceErr != nil {
+		log.Printf("single-instance protection unavailable: %v", instanceErr)
+	} else {
+		defer releaseInstance()
+	}
+	if alreadyRunning {
+		if waitForHTTP(dashboardURL+"/api/health", 3*time.Second) {
+			if err := desktop.OpenDashboard(dashboardURL); err != nil {
+				log.Printf("open existing dashboard: %v", err)
+			}
+		}
+		return
+	}
+
+	executable, _ := os.Executable()
+	controller := desktop.New(dashboardURL, executable, desktop.Callbacks{
+		Start: func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := app.StartServices(ctx); err != nil {
+				log.Printf("tray start services: %v", err)
+			}
+		},
+		Stop: func() {
+			if err := app.StopServices(); err != nil {
+				log.Printf("tray stop services: %v", err)
+			}
+		},
+		Restart: func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+			defer cancel()
+			if err := app.RestartServices(ctx); err != nil {
+				log.Printf("tray restart services: %v", err)
+			}
+		},
+	})
+	if err := controller.Start(); err != nil {
+		log.Printf("desktop tray unavailable: %v", err)
+	} else {
+		log.Printf("desktop tray initialized: %s", controller.Status().WindowModeLabel)
+	}
+	defer controller.Close()
+
+	server, err := web.NewWithDesktop(app, address, controller)
 	if err != nil {
 		log.Fatalf("initialize web server: %v", err)
 	}
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		log.Printf("MCP DevDesk %s listening on http://%s", application.Version, address)
+		log.Printf("MCP DevDesk %s listening on %s", application.Version, dashboardURL)
 		serverErrors <- server.ListenAndServe()
 	}()
 
-	if cfg.OpenBrowserOnStart {
+	if cfg.OpenBrowserOnStart && !background {
 		go func() {
-			if waitForHTTP("http://"+address+"/api/health", 5*time.Second) {
-				_ = openBrowser("http://" + address)
+			if waitForHTTP(dashboardURL+"/api/health", 5*time.Second) {
+				if err := controller.Open(); err != nil {
+					log.Printf("open desktop window: %v", err)
+				}
 			}
 		}()
 	}
@@ -66,6 +119,8 @@ func main() {
 	select {
 	case sig := <-signals:
 		log.Printf("received signal %s", sig)
+	case <-controller.Done():
+		log.Printf("desktop exit requested")
 	case err := <-serverErrors:
 		if err != nil {
 			log.Printf("web server stopped: %v", err)
@@ -77,6 +132,27 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Printf("shutdown web server: %v", err)
 	}
+}
+
+func hasArgument(wanted string) bool {
+	for _, argument := range os.Args[1:] {
+		if strings.EqualFold(strings.TrimSpace(argument), wanted) {
+			return true
+		}
+	}
+	return false
+}
+
+func configureLogging(dataDir string) func() {
+	if err := os.MkdirAll(filepath.Join(dataDir, "logs"), 0o700); err != nil {
+		return func() {}
+	}
+	file, err := os.OpenFile(filepath.Join(dataDir, "logs", "manager.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return func() {}
+	}
+	log.SetOutput(file)
+	return func() { _ = file.Close() }
 }
 
 func locateRoot() (string, error) {
