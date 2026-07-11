@@ -12,6 +12,9 @@ const projectName = computed(() => app.config?.workspace?.split(/[\\/]/).filter(
 const projectPath = ref("");
 const projectLabel = ref("");
 const showAdd = ref(false);
+const selectedId = ref("");
+const worktreePath = ref("");
+const worktreeBranch = ref("");
 
 async function addProject() {
   const path = projectPath.value.trim();
@@ -20,6 +23,18 @@ async function addProject() {
   projectPath.value = "";
   projectLabel.value = "";
   showAdd.value = false;
+}
+
+async function inspect(id: string) {
+  selectedId.value = id;
+  await Promise.all([app.loadProjectDetails(id), app.loadProjectDiff(id)]);
+}
+
+async function createWorktree() {
+  if (!selectedId.value || !worktreePath.value.trim() || !worktreeBranch.value.trim()) return;
+  await app.createWorktree(selectedId.value, worktreePath.value.trim(), worktreeBranch.value.trim());
+  worktreePath.value = "";
+  worktreeBranch.value = "";
 }
 </script>
 
@@ -61,11 +76,29 @@ async function addProject() {
           <small>最近打开 {{ new Date(project.lastOpenedAt).toLocaleString() }}</small>
         </div>
         <div class="project-row-actions">
+          <AppButton tone="secondary" icon="info" @click="inspect(project.id)">详情</AppButton>
           <AppButton v-if="project.path !== app.config?.workspace" tone="primary" icon="restart" :loading="app.actionPending === `activate-${project.id}`" @click="app.activateProject(project.id)">切换</AppButton>
           <AppButton v-if="project.path !== app.config?.workspace" tone="quiet" :loading="app.actionPending === `remove-${project.id}`" @click="app.removeProject(project.id)">移除</AppButton>
         </div>
       </AppCard>
     </section>
+
+    <AppCard v-if="selectedId && app.projectDetails[selectedId]" class="project-inspector-card">
+      <div class="card-heading"><div><span class="eyebrow">Developer context</span><h3>项目开发信息</h3></div><AppButton tone="secondary" icon="refresh" @click="inspect(selectedId)">刷新</AppButton></div>
+      <div class="project-inspector-grid">
+        <div><span>Git</span><strong>{{ app.projectDetails[selectedId].git ? app.projectDetails[selectedId].branch || 'Detached' : '不是 Git 仓库' }}</strong></div>
+        <div><span>文件变化</span><strong>{{ app.projectDetails[selectedId].changedFiles }}</strong></div>
+        <div><span>AGENTS.md</span><strong>{{ app.projectDetails[selectedId].hasAgents ? '已检测' : '未检测' }}</strong></div>
+        <div><span>Skills</span><strong>{{ app.projectDetails[selectedId].skills.length }}</strong></div>
+      </div>
+      <div v-if="app.projectDetails[selectedId].skills.length" class="skill-chip-list"><span v-for="skill in app.projectDetails[selectedId].skills" :key="skill">{{ skill }}</span></div>
+      <div v-if="app.projectDetails[selectedId].git" class="worktree-panel">
+        <div class="card-heading"><div><span class="eyebrow">Git worktree</span><h3>并行工作区</h3></div></div>
+        <div v-for="tree in app.projectDetails[selectedId].worktrees" :key="tree.path" class="worktree-row"><div><strong>{{ tree.branch || 'Detached' }}</strong><code>{{ tree.path }}</code></div><AppButton v-if="tree.path !== app.projectDetails[selectedId].path" tone="quiet" @click="app.removeWorktree(selectedId, tree.path)">移除</AppButton></div>
+        <form class="worktree-form" @submit.prevent="createWorktree"><input v-model="worktreePath" placeholder="Worktree 目录" /><input v-model="worktreeBranch" placeholder="新分支名称" /><AppButton type="submit" tone="primary" :loading="app.actionPending === 'create-worktree'">创建</AppButton></form>
+      </div>
+      <div v-if="app.projectDetails[selectedId].git" class="diff-panel"><div class="card-heading"><div><span class="eyebrow">Working tree diff</span><h3>未提交修改</h3></div></div><pre>{{ app.projectDiffs[selectedId]?.text || '当前没有未提交的文本差异。' }}</pre><small v-if="app.projectDiffs[selectedId]?.truncated">差异过大，已截断显示。</small></div>
+    </AppCard>
 
     <section class="project-roadmap-grid">
       <AppCard><div class="roadmap-icon is-blue"><AppIcon name="projects" :size="20" /></div><h3>多项目列表</h3><p>项目记录保存在本机数据目录，重启软件后仍然保留。</p></AppCard>

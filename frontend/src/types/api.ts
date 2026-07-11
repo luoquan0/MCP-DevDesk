@@ -125,6 +125,13 @@ export interface Project {
   lastOpenedAt: string;
 }
 
+export interface Worktree { path: string; head: string; branch?: string; bare: boolean; detached: boolean; }
+export interface ProjectDetails {
+  path: string; git: boolean; branch?: string; changedFiles: number; ahead: number; behind: number;
+  hasAgents: boolean; agentsPath?: string; skills: string[]; worktrees: Worktree[];
+}
+export interface ProjectDiff { text: string; truncated: boolean; }
+
 export interface LogResponse {
   name: string;
   path: string;

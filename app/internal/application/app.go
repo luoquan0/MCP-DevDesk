@@ -18,6 +18,7 @@ import (
 	"mcp-devdesk/internal/model"
 	processmanager "mcp-devdesk/internal/process"
 	projectstore "mcp-devdesk/internal/projects"
+	"mcp-devdesk/internal/projecttools"
 	"mcp-devdesk/internal/secrets"
 	"mcp-devdesk/internal/tunnel"
 )
@@ -85,6 +86,38 @@ func (a *App) AddProject(name, path string) (projectstore.Project, error) {
 
 func (a *App) RemoveProject(id string) error {
 	return a.projects.Remove(id, a.config.Get().Workspace)
+}
+
+func (a *App) ProjectDetails(id string) (projecttools.Details, error) {
+	project, ok := a.projects.Get(id)
+	if !ok {
+		return projecttools.Details{}, errors.New("project not found")
+	}
+	return projecttools.Inspect(project.Path)
+}
+
+func (a *App) ProjectDiff(id string) (projecttools.Diff, error) {
+	project, ok := a.projects.Get(id)
+	if !ok {
+		return projecttools.Diff{}, errors.New("project not found")
+	}
+	return projecttools.GetDiff(project.Path)
+}
+
+func (a *App) CreateWorktree(id, targetPath, branch, base string) error {
+	project, ok := a.projects.Get(id)
+	if !ok {
+		return errors.New("project not found")
+	}
+	return projecttools.CreateWorktree(project.Path, targetPath, branch, base)
+}
+
+func (a *App) RemoveWorktree(id, targetPath string) error {
+	project, ok := a.projects.Get(id)
+	if !ok {
+		return errors.New("project not found")
+	}
+	return projecttools.RemoveWorktree(project.Path, targetPath)
 }
 
 func (a *App) SwitchProject(ctx context.Context, id string) error {

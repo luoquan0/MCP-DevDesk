@@ -53,6 +53,10 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
 	mux.HandleFunc("POST /api/projects/{id}/activate", s.handleActivateProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
+	mux.HandleFunc("GET /api/projects/{id}/details", s.handleProjectDetails)
+	mux.HandleFunc("GET /api/projects/{id}/diff", s.handleProjectDiff)
+	mux.HandleFunc("POST /api/projects/{id}/worktrees", s.handleCreateWorktree)
+	mux.HandleFunc("DELETE /api/projects/{id}/worktrees", s.handleRemoveWorktree)
 	mux.HandleFunc("POST /api/services/start", s.handleStartServices)
 	mux.HandleFunc("POST /api/services/stop", s.handleStopServices)
 	mux.HandleFunc("POST /api/services/restart", s.handleRestartServices)
@@ -137,6 +141,50 @@ func (s *Server) handleActivateProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRemoveProject(w http.ResponseWriter, r *http.Request) {
 	if err := s.app.RemoveProject(r.PathValue("id")); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleProjectDetails(w http.ResponseWriter, r *http.Request) {
+	details, err := s.app.ProjectDetails(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, details)
+}
+
+func (s *Server) handleProjectDiff(w http.ResponseWriter, r *http.Request) {
+	diff, err := s.app.ProjectDiff(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, diff)
+}
+
+func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Path   string `json:"path"`
+		Branch string `json:"branch"`
+		Base   string `json:"base"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.app.CreateWorktree(r.PathValue("id"), request.Path, request.Branch, request.Base); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	details, _ := s.app.ProjectDetails(r.PathValue("id"))
+	writeJSON(w, http.StatusCreated, details)
+}
+
+func (s *Server) handleRemoveWorktree(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.RemoveWorktree(r.PathValue("id"), r.URL.Query().Get("path")); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}

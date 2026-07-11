@@ -1412,6 +1412,21 @@ kbd {
 .project-list-card small { display: block; margin-top: 6px; color: var(--text-tertiary); font-size: 10px; }
 .project-row-actions { display: flex; align-items: center; gap: 8px; }
 
+.project-inspector-card { display: grid; gap: 18px; }
+.project-inspector-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.project-inspector-grid > div { padding: 14px; border-radius: 14px; background: var(--surface-secondary); }
+.project-inspector-grid span, .project-inspector-grid strong { display: block; }
+.project-inspector-grid span { color: var(--text-tertiary); font-size: 10px; }
+.project-inspector-grid strong { margin-top: 5px; font-size: 13px; }
+.skill-chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.skill-chip-list span { padding: 5px 9px; border-radius: 999px; color: var(--indigo); background: var(--indigo-soft); font-size: 10px; }
+.worktree-panel, .diff-panel { padding-top: 16px; border-top: 1px solid var(--border); }
+.worktree-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
+.worktree-row strong, .worktree-row code { display: block; }
+.worktree-row code { margin-top: 3px; color: var(--text-secondary); font-size: 10px; }
+.worktree-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .5fr) auto; gap: 8px; margin-top: 10px; }
+.diff-panel pre { max-height: 360px; overflow: auto; padding: 16px; border-radius: 14px; color: var(--text-primary); background: var(--code-surface); font: 10px/1.6 var(--font-mono); white-space: pre-wrap; }
+
 .project-roadmap-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

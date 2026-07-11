@@ -9,6 +9,8 @@ import type {
   Diagnostics,
   LogResponse,
   Project,
+  ProjectDetails,
+  ProjectDiff,
   SecretSummary,
   ServiceStatus,
   TunnelInventory,
@@ -21,6 +23,8 @@ export const useAppStore = defineStore("app", {
     desktop: null as DesktopStatus | null,
     diagnostics: null as Diagnostics | null,
     projects: [] as Project[],
+    projectDetails: {} as Record<string, ProjectDetails>,
+    projectDiffs: {} as Record<string, ProjectDiff>,
     loading: true,
     refreshing: false,
     actionPending: "" as string,
@@ -88,6 +92,23 @@ export const useAppStore = defineStore("app", {
       await this.runAction(`remove-${id}`, () => api(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }));
       await this.loadProjects();
       ui.toast("项目已移除", "项目文件没有被删除。", "success");
+    },
+    async loadProjectDetails(id: string) {
+      this.projectDetails[id] = await api<ProjectDetails>(`/api/projects/${encodeURIComponent(id)}/details`);
+      return this.projectDetails[id];
+    },
+    async loadProjectDiff(id: string) {
+      this.projectDiffs[id] = await api<ProjectDiff>(`/api/projects/${encodeURIComponent(id)}/diff`);
+      return this.projectDiffs[id];
+    },
+    async createWorktree(id: string, path: string, branch: string, base = "HEAD") {
+      this.projectDetails[id] = await this.runAction("create-worktree", () => api<ProjectDetails>(`/api/projects/${encodeURIComponent(id)}/worktrees`, {
+        method: "POST", body: { path, branch, base } as unknown as BodyInit,
+      }));
+    },
+    async removeWorktree(id: string, path: string) {
+      await this.runAction("remove-worktree", () => api(`/api/projects/${encodeURIComponent(id)}/worktrees?path=${encodeURIComponent(path)}`, { method: "DELETE" }));
+      await this.loadProjectDetails(id);
     },
     async loadDesktop() {
       this.desktop = await api<DesktopStatus>("/api/system/desktop");

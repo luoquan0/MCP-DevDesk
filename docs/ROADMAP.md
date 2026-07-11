@@ -71,9 +71,10 @@
 - [x] 动态打开工作区与 MCP 热切换
 - [x] 切换失败自动回滚旧项目
 - [x] 切换目录时保持 Cloudflare Tunnel 地址
-- [ ] Git Worktree
-- [ ] Skills 和 AGENTS.md
-- [ ] 文件 Diff 卡片
+- [x] Git 仓库、分支与变更状态识别
+- [x] Git Worktree 创建、列表与移除
+- [x] Skills 和 AGENTS.md 检测
+- [x] 文件 Diff 卡片
 
 ## M4：Go MCP 核心
 
