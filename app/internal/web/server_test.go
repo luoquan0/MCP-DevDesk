@@ -104,7 +104,10 @@ func TestDesktopStatusAndStartupEndpoints(t *testing.T) {
 	desktop := &fakeDesktop{status: model.DesktopStatus{
 		Available:       true,
 		AppMode:         true,
-		WindowModeLabel: "Edge App 模式",
+		NativeWindow:    true,
+		RenderEngine:    "Microsoft Edge WebView2（内嵌）",
+		RuntimeVersion:  "test-runtime",
+		WindowModeLabel: "Windows 原生窗口（内嵌 WebView2）",
 	}}
 	server.desktop = desktop
 

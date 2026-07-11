@@ -12,7 +12,9 @@ import (
 )
 
 func FindTCPListener(port int) (PortOwner, error) {
-	output, err := exec.Command("netstat.exe", "-ano", "-p", "TCP").CombinedOutput()
+	command := exec.Command("netstat.exe", "-ano", "-p", "TCP")
+	configureChildProcess(command, true)
+	output, err := command.CombinedOutput()
 	if err != nil {
 		return PortOwner{}, fmt.Errorf("query TCP listeners: %w", err)
 	}
@@ -65,7 +67,9 @@ func populateProcessDetails(owner *PortOwner) {
 func processDetails(pid int) PortOwner {
 	owner := PortOwner{PID: pid}
 	query := fmt.Sprintf("ProcessId=%d", pid)
-	output, err := exec.Command("wmic.exe", "process", "where", query, "get", "Name,ExecutablePath,ParentProcessId", "/format:list").CombinedOutput()
+	command := exec.Command("wmic.exe", "process", "where", query, "get", "Name,ExecutablePath,ParentProcessId", "/format:list")
+	configureChildProcess(command, true)
+	output, err := command.CombinedOutput()
 	if err == nil {
 		for _, line := range strings.Split(string(output), "\n") {
 			line = strings.TrimSpace(line)
@@ -84,7 +88,9 @@ func processDetails(pid int) PortOwner {
 		}
 	}
 	if owner.ProcessName == "" {
-		output, err = exec.Command("tasklist.exe", "/FI", "PID eq "+strconv.Itoa(pid), "/FO", "CSV", "/NH").CombinedOutput()
+		command = exec.Command("tasklist.exe", "/FI", "PID eq "+strconv.Itoa(pid), "/FO", "CSV", "/NH")
+		configureChildProcess(command, true)
+		output, err = command.CombinedOutput()
 		if err == nil {
 			reader := csv.NewReader(bytes.NewReader(output))
 			if row, readErr := reader.Read(); readErr == nil && len(row) > 0 {

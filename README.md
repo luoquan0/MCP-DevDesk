@@ -10,7 +10,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-当前 `0.3.0-dev` 已完成：
+当前 `0.4.0-dev` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -21,7 +21,9 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 - 实时状态与日志查看
 - Windows 单文件编译
 - Windows GUI 子系统启动，不显示 CMD 窗口
-- Edge App 模式独立桌面窗口
+- MCP DevDesk 自身创建的 Windows 原生窗口
+- 内嵌 Microsoft Edge WebView2 渲染，不再启动 Edge 浏览器窗口
+- 状态轮询子进程全部隐藏，不再闪烁 CMD 黑框
 - 系统托盘与托盘服务控制菜单
 - 单实例运行
 - Windows 登录时后台启动
@@ -44,10 +46,12 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ```powershell
 cd app
-go run ./cmd/mcp-devdesk
+go run -mod=vendor ./cmd/mcp-devdesk
 ```
 
-程序会优先以 Edge App 模式打开无地址栏独立窗口。也可直接访问：
+程序会直接创建属于 `MCP-DevDesk.exe` 的 Windows 窗口，并在窗口内嵌 WebView2 渲染管理界面。不会再执行 `msedge.exe --app=...`。
+
+本机管理地址仍然保留，主要供内嵌窗口、CLI 和故障诊断使用：
 
 ```text
 http://127.0.0.1:17860

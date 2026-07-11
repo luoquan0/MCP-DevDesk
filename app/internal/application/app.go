@@ -21,7 +21,7 @@ import (
 	"mcp-devdesk/internal/tunnel"
 )
 
-const Version = "0.3.0-dev"
+const Version = "0.4.0-dev"
 
 type App struct {
 	rootDir string

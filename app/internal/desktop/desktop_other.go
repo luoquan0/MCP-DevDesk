@@ -13,7 +13,7 @@ type otherController struct {
 	done chan struct{}
 }
 
-func New(url, _ string, _ Callbacks) Controller {
+func New(url, _, _ string, _ Callbacks) Controller {
 	return &otherController{url: url, done: make(chan struct{})}
 }
 

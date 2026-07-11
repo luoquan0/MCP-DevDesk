@@ -3,28 +3,31 @@
 package desktop
 
 import (
-	"strings"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
-func TestValidDriveLetter(t *testing.T) {
-	for _, value := range []string{"C:", "d:"} {
-		if !validDriveLetter(value) {
-			t.Fatalf("expected valid drive: %q", value)
+func TestOpenDashboardRequestsExistingNativeWindow(t *testing.T) {
+	called := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Fatalf("method = %s", request.Method)
 		}
-	}
-	for _, value := range []string{"", "%SystemDrive%", "C", "CC:"} {
-		if validDriveLetter(value) {
-			t.Fatalf("expected invalid drive: %q", value)
+		if request.URL.Path != "/api/ui/open" {
+			t.Fatalf("path = %s", request.URL.Path)
 		}
-	}
-}
+		called <- struct{}{}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
 
-func TestNormalizedWindowsEnvironmentResolvesPlaceholders(t *testing.T) {
-	environment := normalizedWindowsEnvironment()
-	for _, entry := range environment {
-		if strings.Contains(strings.ToLower(entry), "%systemdrive%") {
-			t.Fatalf("unresolved SystemDrive placeholder: %s", entry)
-		}
+	if err := OpenDashboard(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-called:
+	default:
+		t.Fatal("native window endpoint was not called")
 	}
 }

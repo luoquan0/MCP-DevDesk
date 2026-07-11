@@ -2,13 +2,13 @@
 
 ## 1. 当前实现
 
-MCP DevDesk `0.3.0-dev` 使用纯 Go 和 Windows 系统 API 实现桌面运行，不依赖 Wails、Electron、Node.js Runtime 或额外 DLL。
+MCP DevDesk `0.4.0-dev` 使用 Go、Win32 和内嵌 WebView2 实现桌面运行，不依赖 Electron、Node.js Runtime，也不会启动外部 Edge 浏览器窗口。
 
 程序启动后包含三个部分：
 
 1. 后台 Go 管理器与本地 HTTP API。
 2. Windows 系统托盘图标。
-3. Microsoft Edge App 模式独立窗口。
+3. 由 `MCP-DevDesk.exe` 自身创建的 Windows 原生窗口。
 
 正式构建使用：
 
@@ -18,17 +18,19 @@ MCP DevDesk `0.3.0-dev` 使用纯 Go 和 Windows 系统 API 实现桌面运行�
 
 因此双击 EXE 不会弹出 CMD 窗口。
 
-## 2. 独立窗口
+## 2. Windows 原生窗口
 
-检测到 Microsoft Edge 后执行等价命令：
+程序通过 `go-webview2` 在自己的 Win32 窗口内创建 WebView2 控件，并加载本机管理地址：
 
-```powershell
-msedge.exe --app=http://127.0.0.1:17860 --start-maximized --no-first-run
+```text
+MCP-DevDesk-amd64.exe
+└─ Win32 主窗口：MCP DevDesk
+   └─ WebView2 控件：http://127.0.0.1:17860
 ```
 
-该窗口没有普通浏览器地址栏和标签栏，但继续复用现有 HTML、CSS、JavaScript 管理界面。
+窗口进程、标题栏、任务栏图标和生命周期都属于 MCP DevDesk，不属于 `msedge.exe`。WebView2 只作为内嵌渲染控件使用，因此没有浏览器地址栏、标签页或 Edge App 进程。
 
-如果没有找到 Edge，程序会调用 Windows 默认浏览器打开管理地址。
+如果系统缺少 WebView2 Runtime，程序会返回明确错误，不会静默退回浏览器模式。
 
 ## 3. 系统托盘
 
@@ -40,7 +42,7 @@ msedge.exe --app=http://127.0.0.1:17860 --start-maximized --no-first-run
 - 重新启动服务
 - 退出 MCP DevDesk
 
-双击托盘图标也会打开独立窗口。关闭 Edge App 窗口只关闭界面，后台管理器和服务继续运行；只有选择托盘“退出”才结束管理器。
+双击托盘图标也会打开原生窗口。关闭窗口只关闭界面，后台管理器和服务继续运行；只有选择托盘“退出”才结束管理器。
 
 ## 4. 单实例
 
@@ -50,7 +52,7 @@ msedge.exe --app=http://127.0.0.1:17860 --start-maximized --no-first-run
 Local\MCPDevDesk.Manager
 ```
 
-防止重复启动后台实例。第二次双击 EXE 时不会创建新管理器，只会打开现有管理地址。
+防止重复启动后台实例。第二次双击 EXE 时不会创建新管理器，而是通过本机管理 API 激活现有原生窗口，不会启动浏览器。
 
 ## 5. 开机启动
 
@@ -96,6 +98,18 @@ devdeskctl.exe startup-off
 - 自定义应用和托盘图标
 - Windows 通知气泡
 - NSIS 安装器
-- 可选 Wails/WebView2 内嵌窗口
 - 自动更新与代码签名
+
+## 8. CMD 黑框处理
+
+管理器的状态轮询会调用 Windows 系统工具读取端口和进程信息。所有以下子进程都使用 `HideWindow` 启动：
+
+- `netstat.exe`
+- `wmic.exe`
+- `tasklist.exe`
+- `taskkill.exe`
+- `reg.exe`
+- PowerShell 的进程查询回退
+
+因此后台每 3 秒刷新状态时不会再出现短暂 CMD 黑框。
 
