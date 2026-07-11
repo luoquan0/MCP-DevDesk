@@ -10,7 +10,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-第一阶段 MVP 已规划为：
+当前 `0.2.0-dev` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -20,6 +20,12 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 - 安全、信任、危险三档权限
 - 实时状态与日志查看
 - Windows 单文件编译
+- Windows GUI 子系统启动，不显示 CMD 窗口
+- Edge App 模式独立桌面窗口
+- 系统托盘与托盘服务控制菜单
+- 单实例运行
+- Windows 登录时后台启动
+- 关闭界面后继续在托盘运行
 
 详细文档见：
 
@@ -27,6 +33,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 - [总体架构](docs/ARCHITECTURE.md)
 - [安全模型](docs/SECURITY.md)
 - [Cloudflare 流程](docs/CLOUDFLARE.md)
+- [Windows 桌面模式](docs/DESKTOP.md)
 - [开发路线图](docs/ROADMAP.md)
 
 ## 本地运行
@@ -36,7 +43,7 @@ cd app
 go run ./cmd/mcp-devdesk
 ```
 
-浏览器访问：
+程序会优先以 Edge App 模式打开无地址栏独立窗口。也可直接访问：
 
 ```text
 http://127.0.0.1:17860
@@ -58,6 +65,10 @@ dist\MCP-DevDesk-amd64.exe
 
 ```powershell
 dist\devdeskctl-amd64.exe status
+dist\devdeskctl-amd64.exe desktop
+dist\devdeskctl-amd64.exe open
+dist\devdeskctl-amd64.exe startup-on
+dist\devdeskctl-amd64.exe startup-off
 dist\devdeskctl-amd64.exe start
 dist\devdeskctl-amd64.exe stop
 ```

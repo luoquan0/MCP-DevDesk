@@ -3,6 +3,7 @@
 const state = {
   status: null,
   config: null,
+  desktop: null,
   diagnostics: null,
   activeLog: "mcp-error",
   secretsRevealed: false,
@@ -39,7 +40,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function initialize() {
-  await Promise.all([loadConfig(), refreshStatus(), runDiagnostics()]);
+  await Promise.all([loadConfig(), refreshStatus(), loadDesktopStatus(), runDiagnostics()]);
   await loadLog(state.activeLog);
   state.pollTimer = window.setInterval(() => refreshStatus(true), 3000);
 }
@@ -69,8 +70,15 @@ function navigate(section) {
 function bindActions() {
   $("#refreshButton").addEventListener("click", async (event) => {
     await withBusy(event.currentTarget, async () => {
-      await Promise.all([refreshStatus(), loadConfig(), runDiagnostics()]);
+      await Promise.all([refreshStatus(), loadConfig(), loadDesktopStatus(), runDiagnostics()]);
       toast("状态已刷新", "已重新读取配置和服务状态。", "success");
+    });
+  });
+
+  $("#openDesktopWindowButton").addEventListener("click", async (event) => {
+    await withBusy(event.currentTarget, async () => {
+      await api("/api/ui/open", { method: "POST" });
+      toast("独立窗口已打开", "关闭窗口后，MCP DevDesk 仍会在系统托盘运行。", "success");
     });
   });
 
@@ -133,6 +141,11 @@ async function loadConfig() {
   renderConfig(state.config);
 }
 
+async function loadDesktopStatus() {
+  state.desktop = await api("/api/system/desktop");
+  renderDesktopStatus(state.desktop);
+}
+
 async function refreshStatus(silent = false) {
   try {
     const previousAuth = state.status?.cloudflare?.authenticated ?? state.lastAuthenticated;
@@ -166,6 +179,15 @@ function renderConfig(config) {
   if (scopeInput) scopeInput.checked = true;
   $("#allowNetworkInput").checked = Boolean(config.allowNetwork);
   updatePermissionCards();
+}
+
+function renderDesktopStatus(desktop) {
+  $("#runAtLoginInput").checked = Boolean(desktop.startupEnabled);
+  $("#desktopWindowMode").textContent = desktop.windowModeLabel || "浏览器模式";
+  $("#edgeExecutablePath").textContent = desktop.edgePath || "未检测到 Microsoft Edge，将使用默认浏览器";
+  const openButton = $("#openDesktopWindowButton");
+  openButton.textContent = desktop.appMode ? "打开独立窗口" : "在浏览器中打开";
+  openButton.disabled = false;
 }
 
 function renderStatus(status) {
@@ -350,6 +372,7 @@ async function saveWorkspaceSettings(event) {
   event.preventDefault();
   const button = $("button[type=submit]", event.currentTarget);
   await withBusy(button, async () => {
+    const startupEnabled = $("#runAtLoginInput").checked;
     await api("/api/config", {
       method: "PUT",
       body: {
@@ -362,7 +385,11 @@ async function saveWorkspaceSettings(event) {
         watchdog: $("#watchdogInput").checked,
       },
     });
-    await Promise.all([loadConfig(), refreshStatus(), runDiagnostics()]);
+    await api("/api/system/startup", {
+      method: "PUT",
+      body: { enabled: startupEnabled },
+    });
+    await Promise.all([loadConfig(), loadDesktopStatus(), refreshStatus(), runDiagnostics()]);
     toast("项目设置已保存", "运行中的服务请重新启动以应用新参数。", "success");
   });
 }

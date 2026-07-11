@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,7 +10,30 @@ import (
 	"testing"
 
 	"mcp-devdesk/internal/application"
+	"mcp-devdesk/internal/model"
 )
+
+type fakeDesktop struct {
+	status  model.DesktopStatus
+	opened  bool
+	startup bool
+}
+
+func (f *fakeDesktop) Open() error {
+	f.opened = true
+	return nil
+}
+
+func (f *fakeDesktop) Status() model.DesktopStatus {
+	result := f.status
+	result.StartupEnabled = f.startup
+	return result
+}
+
+func (f *fakeDesktop) SetStartup(enabled bool) error {
+	f.startup = enabled
+	return nil
+}
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
@@ -70,5 +94,44 @@ func TestStaticDashboardIsEmbedded(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "MCP DevDesk") {
 		t.Fatal("embedded dashboard marker not found")
+	}
+}
+
+func TestDesktopStatusAndStartupEndpoints(t *testing.T) {
+	server := newTestServer(t)
+	desktop := &fakeDesktop{status: model.DesktopStatus{
+		Available:       true,
+		AppMode:         true,
+		WindowModeLabel: "Edge App 模式",
+	}}
+	server.desktop = desktop
+
+	statusRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/system/desktop", nil)
+	statusRequest.RemoteAddr = "127.0.0.1:45678"
+	statusRequest.Host = "127.0.0.1:17860"
+	statusRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(statusRecorder, statusRequest)
+	if statusRecorder.Code != http.StatusOK || !strings.Contains(statusRecorder.Body.String(), `"appMode":true`) {
+		t.Fatalf("unexpected desktop status: %d %s", statusRecorder.Code, statusRecorder.Body.String())
+	}
+
+	startupRequest := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/system/startup", bytes.NewBufferString(`{"enabled":true}`))
+	startupRequest.RemoteAddr = "127.0.0.1:45678"
+	startupRequest.Host = "127.0.0.1:17860"
+	startupRequest.Header.Set("Content-Type", "application/json")
+	startupRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(startupRecorder, startupRequest)
+	if startupRecorder.Code != http.StatusOK || !desktop.startup {
+		t.Fatalf("startup update failed: %d %s", startupRecorder.Code, startupRecorder.Body.String())
+	}
+
+	openRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/ui/open", bytes.NewBufferString(`{}`))
+	openRequest.RemoteAddr = "127.0.0.1:45678"
+	openRequest.Host = "127.0.0.1:17860"
+	openRequest.Header.Set("Content-Type", "application/json")
+	openRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(openRecorder, openRequest)
+	if openRecorder.Code != http.StatusAccepted || !desktop.opened {
+		t.Fatalf("open UI failed: %d %s", openRecorder.Code, openRecorder.Body.String())
 	}
 }

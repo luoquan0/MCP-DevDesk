@@ -24,7 +24,7 @@ try {
     $env:GOOS = "windows"
     $env:GOARCH = $Arch
     $Output = Join-Path $DistDir "MCP-DevDesk-$Arch.exe"
-    go build -trimpath -ldflags "-s -w" -o $Output ./cmd/mcp-devdesk
+    go build -trimpath -ldflags "-s -w -H=windowsgui" -o $Output ./cmd/mcp-devdesk
 
     $CliOutput = Join-Path $DistDir "devdeskctl-$Arch.exe"
     go build -trimpath -ldflags "-s -w" -o $CliOutput ./cmd/devdeskctl

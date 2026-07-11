@@ -21,7 +21,7 @@ import (
 	"mcp-devdesk/internal/tunnel"
 )
 
-const Version = "0.1.1-dev"
+const Version = "0.2.0-dev"
 
 type App struct {
 	rootDir string
@@ -262,6 +262,7 @@ func (a *App) Logs(name string, maxLines int) (model.LogResponse, error) {
 		maxLines = 300
 	}
 	paths := map[string]string{
+		"manager":      filepath.Join(a.dataDir, "logs", "manager.log"),
 		"mcp-out":      filepath.Join(a.dataDir, "logs", "mcp-stdout.log"),
 		"mcp-error":    filepath.Join(a.dataDir, "logs", "mcp-stderr.log"),
 		"tunnel-out":   filepath.Join(a.dataDir, "logs", "tunnel-stdout.log"),

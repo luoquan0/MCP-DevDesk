@@ -67,6 +67,7 @@
         </div>
         <div class="topbar-actions">
           <span class="connection-pill"><span class="pulse-dot"></span> 本机管理</span>
+          <button class="button ghost" id="openDesktopWindowButton">打开独立窗口</button>
           <button class="button ghost" id="refreshButton">刷新状态</button>
         </div>
       </header>
@@ -271,8 +272,12 @@
                   <small>修改后重启管理器生效。</small>
                 </label>
                 <label class="switch-row">
-                  <span><b>程序启动时打开界面</b><small>自动打开默认浏览器。</small></span>
+                  <span><b>程序启动时打开界面</b><small>优先使用 Edge 独立应用窗口。</small></span>
                   <input type="checkbox" id="openBrowserInput"><i></i>
+                </label>
+                <label class="switch-row">
+                  <span><b>Windows 登录时后台运行</b><small>注册到当前用户开机启动，不需要管理员权限。</small></span>
+                  <input type="checkbox" id="runAtLoginInput"><i></i>
                 </label>
                 <label class="switch-row">
                   <span><b>自动启动服务</b><small>打开管理器后启动 MCP 与 Tunnel。</small></span>
@@ -367,6 +372,7 @@
           </div>
           <div class="panel log-panel">
             <div class="log-tabs" role="tablist">
+              <button data-log="manager">管理器</button>
               <button class="active" data-log="mcp-error">MCP 错误</button>
               <button data-log="mcp-out">MCP 输出</button>
               <button data-log="tunnel-error">Tunnel 错误</button>
@@ -394,6 +400,8 @@
           <article class="panel path-panel">
             <div><span>程序根目录</span><code id="rootDirectory">--</code></div>
             <div><span>数据目录</span><code id="dataDirectory">--</code></div>
+            <div><span>桌面窗口模式</span><code id="desktopWindowMode">--</code></div>
+            <div><span>Edge 路径</span><code id="edgeExecutablePath">--</code></div>
           </article>
         </section>
       </div>

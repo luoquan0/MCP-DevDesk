@@ -28,12 +28,13 @@ MCP DevDesk 是一个 Windows 优先的本地开发 MCP 管理器，目标是让
 
 ### 桌面封装阶段
 
-- Go
-- Wails v2
-- React + TypeScript
-- WebView2
+- Go 标准库 Win32 API
+- Windows GUI 子系统
+- Edge App 模式
+- 系统托盘和单实例 Mutex
+- HKCU 开机启动
 
-当前网页界面和 API 会设计为可被 Wails 复用。安装 Wails 后，前端可直接迁入桌面窗口，不需要重写业务后端。
+当前桌面版不依赖联网下载第三方模块。Microsoft Edge 存在时，使用 `--app=http://127.0.0.1:17860` 打开无地址栏独立窗口；未检测到 Edge 时退回默认浏览器。Wails/WebView2 仍作为以后可选的真正内嵌壳，不影响当前业务后端。
 
 ## 3. 目录结构
 
@@ -42,6 +43,7 @@ app/
 ├── cmd/mcp-devdesk/       程序入口
 ├── internal/
 │   ├── config/            配置读取、校验和持久化
+│   ├── desktop/           Win32 托盘、单实例、Edge App 和开机启动
 │   ├── model/             公共数据结构
 │   ├── process/           MCP 与 Tunnel 进程管理
 │   ├── tunnel/            Cloudflare 登录和配置
@@ -125,10 +127,14 @@ PUT  /api/config
 POST /api/services/start
 POST /api/services/stop
 POST /api/services/restart
+POST /api/services/takeover
 POST /api/cloudflare/login
 GET  /api/cloudflare/login/status
 POST /api/cloudflare/configure
 GET  /api/logs
+GET  /api/system/desktop
+PUT  /api/system/startup
+POST /api/ui/open
 ```
 
 所有修改接口仅接受本机请求，并验证 `Origin` 和 `Host`。
@@ -138,7 +144,7 @@ GET  /api/logs
 ```powershell
 cd app
 go test ./...
-go build -trimpath -ldflags "-s -w" -o ..\dist\MCP-DevDesk.exe ./cmd/mcp-devdesk
+go build -trimpath -ldflags "-s -w -H=windowsgui" -o ..\dist\MCP-DevDesk.exe ./cmd/mcp-devdesk
 ```
 
 或者运行仓库根目录的：
@@ -147,13 +153,22 @@ go build -trimpath -ldflags "-s -w" -o ..\dist\MCP-DevDesk.exe ./cmd/mcp-devdesk
 .\build.ps1
 ```
 
-## 8. Wails 集成计划
+## 8. 桌面模式与 Wails 计划
 
-网络依赖可用后执行：
+当前已经提供纯 Go 桌面壳：
+
+- 双击 EXE 后不显示控制台窗口。
+- Microsoft Edge 使用 App 模式展示现有前端。
+- 关闭 App 窗口不会退出后台管理器。
+- 托盘菜单可以打开界面、启停服务和退出。
+- 命名 Mutex 防止重复后台实例。
+- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 保存当前用户开机启动。
+
+网络依赖可用后仍可评估 Wails：
 
 ```powershell
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 ```
 
-随后建立 Wails 壳，将现有管理 API 服务封装为 Go service binding。现有 `app/web` 页面也可以先作为 Wails 内嵌资源运行。
+随后可建立 Wails 壳，将现有管理 API 服务封装为 Go service binding。当前页面和后端无需重写。
 
