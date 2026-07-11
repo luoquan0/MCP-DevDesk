@@ -21,7 +21,7 @@ import (
 	"mcp-devdesk/internal/tunnel"
 )
 
-const Version = "0.2.0-dev"
+const Version = "0.3.0-dev"
 
 type App struct {
 	rootDir string
@@ -33,6 +33,7 @@ type App struct {
 
 	mu             sync.RWMutex
 	desiredRunning bool
+	tunnelDesired  bool
 	watchdogCancel context.CancelFunc
 }
 
@@ -84,6 +85,24 @@ func (a *App) UpdateConfig(update model.ConfigUpdate) (model.PublicConfig, error
 func (a *App) Status() model.ServiceStatus {
 	cfg := a.config.Get()
 	mcp, tunnelStatus, login := a.process.Status()
+	tunnelInventory, tunnelInventoryErr := a.tunnelInventoryForConfig(cfg, tunnelStatus)
+	if tunnelInventoryErr == nil && !tunnelStatus.Running {
+		for _, process := range tunnelInventory.Processes {
+			if !process.MatchesConfig {
+				continue
+			}
+			tunnelStatus = model.ProcessStatus{
+				Name:    "tunnel",
+				Running: true,
+				Managed: process.Managed,
+				PID:     process.PID,
+			}
+			break
+		}
+	}
+	if tunnelInventoryErr != nil && tunnelStatus.LastError == "" {
+		tunnelStatus.LastError = tunnelInventoryErr.Error()
+	}
 	portOwner, _ := processmanager.FindTCPListener(cfg.MCPPort)
 	managedPort := false
 	if portOwner.Occupied && mcp.Running {
@@ -125,6 +144,7 @@ func (a *App) Status() model.ServiceStatus {
 			Managed:     managedPort,
 		},
 		Tunnel:           tunnelStatus,
+		TunnelInventory:  tunnelInventory,
 		Cloudflare:       cf,
 		PermissionMode:   cfg.PermissionMode,
 		FileScope:        cfg.FileScope,
@@ -139,17 +159,23 @@ func (a *App) StartServices(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.desiredRunning = true
-
 	cfg := a.config.Get()
+	a.tunnelDesired = cfg.Domain != "" && cfg.TunnelID != ""
+	return a.startServicesLocked(ctx, cfg)
+}
+
+func (a *App) startServicesLocked(ctx context.Context, cfg model.Config) error {
 	mcp, tunnelStatus, _ := a.process.Status()
 	if !mcp.Running {
 		owner, err := processmanager.FindTCPListener(cfg.MCPPort)
 		if err != nil {
 			a.desiredRunning = false
+			a.tunnelDesired = false
 			return fmt.Errorf("检查 MCP 端口失败: %w", err)
 		}
 		if owner.Occupied {
 			a.desiredRunning = false
+			a.tunnelDesired = false
 			name := owner.ProcessName
 			if name == "" {
 				name = "未知进程"
@@ -158,16 +184,30 @@ func (a *App) StartServices(ctx context.Context) error {
 		}
 		if err := a.process.StartMCP(cfg); err != nil {
 			a.desiredRunning = false
+			a.tunnelDesired = false
 			return err
 		}
 		if err := a.waitForMCP(ctx, cfg, 15*time.Second); err != nil {
 			_ = a.process.StopMCP()
 			a.desiredRunning = false
+			a.tunnelDesired = false
 			return fmt.Errorf("MCP 服务未能监听端口: %w", err)
 		}
 	}
 
-	if cfg.Domain != "" && cfg.TunnelID != "" && !tunnelStatus.Running {
+	if a.tunnelDesired && cfg.Domain != "" && cfg.TunnelID != "" && !tunnelStatus.Running {
+		inventory, err := a.tunnelInventoryForConfig(cfg, tunnelStatus)
+		if err != nil {
+			return fmt.Errorf("MCP 已启动，但无法检查 Tunnel 进程: %w", err)
+		}
+		if inventory.MatchingCount > 0 {
+			return nil
+		}
+		for _, process := range inventory.Processes {
+			if tunnelIdentityMatches(process, cfg) {
+				return fmt.Errorf("检测到同一 Cloudflare Tunnel 仍在指向 %s（PID %d），为避免重复连接已阻止启动；请同步端口或关闭旧进程", displayTunnelTarget(process), process.PID)
+			}
+		}
 		if err := a.process.StartTunnel(cfg); err != nil {
 			return fmt.Errorf("MCP 已启动，但 Tunnel 启动失败: %w", err)
 		}
@@ -213,6 +253,7 @@ func (a *App) TakeoverAndStart(ctx context.Context) error {
 func (a *App) StopServices() error {
 	a.mu.Lock()
 	a.desiredRunning = false
+	a.tunnelDesired = false
 	a.mu.Unlock()
 	return a.process.StopAll()
 }
@@ -227,6 +268,216 @@ func (a *App) RestartServices(ctx context.Context) error {
 	case <-time.After(600 * time.Millisecond):
 	}
 	return a.StartServices(ctx)
+}
+
+func (a *App) TunnelInventory() (model.TunnelInventory, error) {
+	cfg := a.config.Get()
+	_, tunnelStatus, _ := a.process.Status()
+	return a.tunnelInventoryForConfig(cfg, tunnelStatus)
+}
+
+func (a *App) StopTunnelProcess(pid int) (model.TunnelInventory, error) {
+	cfg := a.config.Get()
+	_, tunnelStatus, _ := a.process.Status()
+	inventory, err := a.tunnelInventoryForConfig(cfg, tunnelStatus)
+	if err != nil {
+		return model.TunnelInventory{}, err
+	}
+	found := false
+	selectedMatchesConfig := false
+	for _, process := range inventory.Processes {
+		if process.PID != pid {
+			continue
+		}
+		found = true
+		selectedMatchesConfig = process.MatchesConfig
+		break
+	}
+	if !found {
+		return model.TunnelInventory{}, fmt.Errorf("未找到 cloudflared PID %d", pid)
+	}
+	if err := processmanager.StopCloudflaredProcess(pid); err != nil {
+		return model.TunnelInventory{}, err
+	}
+	if err := waitForCloudflaredPID(pid, 8*time.Second); err != nil {
+		return model.TunnelInventory{}, err
+	}
+	_, tunnelStatus, _ = a.process.Status()
+	updated, err := a.tunnelInventoryForConfig(cfg, tunnelStatus)
+	if err != nil {
+		return model.TunnelInventory{}, err
+	}
+	if selectedMatchesConfig && updated.MatchingCount == 0 {
+		a.mu.Lock()
+		a.tunnelDesired = false
+		a.mu.Unlock()
+	}
+	return updated, nil
+}
+
+func (a *App) SyncTunnelPort(ctx context.Context) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	cfg := a.config.Get()
+	if cfg.TunnelID == "" || cfg.TunnelName == "" || cfg.Domain == "" {
+		return errors.New("请先完成 Cloudflare Tunnel 和固定域名配置")
+	}
+
+	mcp, _, _ := a.process.Status()
+	if !mcp.Running {
+		owner, err := processmanager.FindTCPListener(cfg.MCPPort)
+		if err != nil {
+			return err
+		}
+		if owner.Occupied {
+			if !strings.EqualFold(owner.ProcessName, "coding-tools-mcp.exe") {
+				return fmt.Errorf("当前 MCP 端口 %d 被 %s（PID %d）占用，不能同步 Tunnel", cfg.MCPPort, owner.ProcessName, owner.PID)
+			}
+		} else {
+			if err := a.process.StartMCP(cfg); err != nil {
+				return err
+			}
+			if err := a.waitForMCP(ctx, cfg, 15*time.Second); err != nil {
+				_ = a.process.StopMCP()
+				return fmt.Errorf("MCP 服务未能监听当前端口: %w", err)
+			}
+		}
+	}
+
+	if err := a.stopTunnelIdentityProcesses(cfg); err != nil {
+		return err
+	}
+	if err := waitForTunnelIdentityStopped(cfg, 8*time.Second); err != nil {
+		return err
+	}
+	if err := waitForManagedProcessStopped(a.process, false, 8*time.Second); err != nil {
+		return err
+	}
+	if err := a.process.StartTunnel(cfg); err != nil {
+		return err
+	}
+	a.desiredRunning = true
+	a.tunnelDesired = true
+	return nil
+}
+
+func (a *App) ChangeMCPPort(ctx context.Context, port int) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	oldCfg := a.config.Get()
+	if oldCfg.MCPPort == port {
+		return nil
+	}
+	newCfg := oldCfg
+	newCfg.MCPPort = port
+	if err := config.Validate(newCfg); err != nil {
+		return err
+	}
+	owner, err := processmanager.FindTCPListener(port)
+	if err != nil {
+		return fmt.Errorf("检查新端口失败: %w", err)
+	}
+	if owner.Occupied {
+		name := owner.ProcessName
+		if name == "" {
+			name = "未知进程"
+		}
+		return fmt.Errorf("新端口 %d 已被 %s（PID %d）占用", port, name, owner.PID)
+	}
+
+	mcpStatus, tunnelStatus, _ := a.process.Status()
+	oldInventory, inventoryErr := a.tunnelInventoryForConfig(oldCfg, tunnelStatus)
+	if inventoryErr != nil {
+		return inventoryErr
+	}
+	wasDesired := a.desiredRunning
+	wasTunnelDesired := a.tunnelDesired
+	oldTunnelWasActive := tunnelStatus.Running || oldInventory.MatchingCount > 0
+	wasActive := wasDesired || mcpStatus.Running || tunnelStatus.Running || oldInventory.MatchingCount > 0
+	if !wasActive {
+		_, err := a.config.Replace(newCfg)
+		return err
+	}
+
+	managedMCPWasRunning := mcpStatus.Running && mcpStatus.Managed
+	if err := a.process.StopTunnel(); err != nil {
+		return err
+	}
+	if err := waitForManagedProcessStopped(a.process, false, 8*time.Second); err != nil {
+		return err
+	}
+	if managedMCPWasRunning {
+		if err := a.process.StopMCP(); err != nil {
+			return err
+		}
+		if err := waitForManagedProcessStopped(a.process, true, 8*time.Second); err != nil {
+			return err
+		}
+	}
+
+	rollback := func(cause error, oldTunnelStopped bool) error {
+		_ = a.process.StopAll()
+		_ = waitForManagedProcessStopped(a.process, true, 5*time.Second)
+		_ = waitForManagedProcessStopped(a.process, false, 5*time.Second)
+		a.desiredRunning = wasDesired
+		a.tunnelDesired = wasTunnelDesired
+		var rollbackProblems []string
+		oldMCPReady := false
+		if managedMCPWasRunning && portAvailable(oldCfg.MCPHost, oldCfg.MCPPort) {
+			if startErr := a.process.StartMCP(oldCfg); startErr != nil {
+				rollbackProblems = append(rollbackProblems, "恢复旧 MCP 失败: "+startErr.Error())
+			} else if waitErr := a.waitForMCP(ctx, oldCfg, 12*time.Second); waitErr != nil {
+				rollbackProblems = append(rollbackProblems, "旧 MCP 端口恢复失败: "+waitErr.Error())
+			} else {
+				oldMCPReady = true
+			}
+		} else if owner, ownerErr := processmanager.FindTCPListener(oldCfg.MCPPort); ownerErr == nil {
+			oldMCPReady = owner.Occupied && strings.EqualFold(owner.ProcessName, "coding-tools-mcp.exe")
+		}
+		if oldTunnelStopped && oldTunnelWasActive && oldCfg.TunnelID != "" && oldMCPReady {
+			if startErr := a.process.StartTunnel(oldCfg); startErr != nil {
+				rollbackProblems = append(rollbackProblems, "恢复旧 Tunnel 失败: "+startErr.Error())
+			}
+		} else if oldTunnelStopped && oldTunnelWasActive && !oldMCPReady {
+			rollbackProblems = append(rollbackProblems, "旧 MCP 未恢复，因此未重新启动旧 Tunnel")
+		}
+		if len(rollbackProblems) > 0 {
+			return fmt.Errorf("%w；%s", cause, strings.Join(rollbackProblems, "；"))
+		}
+		return cause
+	}
+
+	if err := a.process.StartMCP(newCfg); err != nil {
+		return rollback(fmt.Errorf("启动新端口 MCP 失败: %w", err), false)
+	}
+	if err := a.waitForMCP(ctx, newCfg, 15*time.Second); err != nil {
+		return rollback(fmt.Errorf("新端口 MCP 未就绪: %w", err), false)
+	}
+
+	oldTunnelStopped := false
+	if oldCfg.TunnelID != "" || (oldCfg.Domain != "" && oldCfg.TunnelName != "") {
+		oldTunnelStopped = true
+		if err := a.stopTunnelIdentityProcesses(oldCfg); err != nil {
+			return rollback(fmt.Errorf("关闭旧 Tunnel 连接失败: %w", err), true)
+		}
+		if err := waitForTunnelIdentityStopped(oldCfg, 8*time.Second); err != nil {
+			return rollback(err, true)
+		}
+	}
+
+	if newCfg.Domain != "" && newCfg.TunnelID != "" {
+		if err := a.process.StartTunnel(newCfg); err != nil {
+			return rollback(fmt.Errorf("Cloudflare 切换到新端口失败: %w", err), oldTunnelStopped)
+		}
+	}
+	if _, err := a.config.Replace(newCfg); err != nil {
+		return rollback(fmt.Errorf("保存新端口失败: %w", err), oldTunnelStopped)
+	}
+	a.desiredRunning = true
+	a.tunnelDesired = newCfg.Domain != "" && newCfg.TunnelID != ""
+	return nil
 }
 
 func (a *App) StartCloudflareLogin() error {
@@ -284,9 +535,10 @@ func (a *App) Logs(name string, maxLines int) (model.LogResponse, error) {
 
 func (a *App) Diagnostics() map[string]any {
 	cfg := a.config.Get()
-	mcp, _, _ := a.process.Status()
+	mcp, tunnelStatus, _ := a.process.Status()
 	owner, _ := processmanager.FindTCPListener(cfg.MCPPort)
 	portHealthy := !owner.Occupied || (mcp.Running && (owner.PID == mcp.PID || samePath(owner.ProcessPath, cfg.CoreExecutable)))
+	tunnelInventory, _ := a.tunnelInventoryForConfig(cfg, tunnelStatus)
 	result := map[string]any{
 		"version":                 Version,
 		"rootDirectory":           a.rootDir,
@@ -301,6 +553,9 @@ func (a *App) Diagnostics() map[string]any {
 		"mcpPortOwnerPid":         owner.PID,
 		"mcpPortOwnerName":        owner.ProcessName,
 		"mcpPortOwnerPath":        owner.ProcessPath,
+		"tunnelProcessCount":      tunnelInventory.Count,
+		"tunnelDuplicateCount":    tunnelInventory.DuplicateCount,
+		"tunnelExpectedLocalUrl":  tunnelInventory.ExpectedLocalURL,
 		"adminHostLoopback":       isLoopbackHost(cfg.AdminHost),
 	}
 	return result
@@ -357,6 +612,7 @@ func (a *App) watchdogTick(ctx context.Context) {
 	}
 	a.mu.RLock()
 	desired := a.desiredRunning
+	tunnelDesired := a.tunnelDesired
 	a.mu.RUnlock()
 	if !desired {
 		return
@@ -383,12 +639,201 @@ func (a *App) watchdogTick(ctx context.Context) {
 			return
 		}
 	}
-	if cfg.Domain != "" && cfg.TunnelID != "" && !tunnelStatus.Running {
+	if tunnelDesired && cfg.Domain != "" && cfg.TunnelID != "" && !tunnelStatus.Running {
+		inventory, err := a.tunnelInventoryForConfig(cfg, tunnelStatus)
+		if err != nil {
+			a.logWatchdog("Tunnel 进程检查失败: " + err.Error())
+			return
+		}
+		if inventory.MatchingCount > 0 {
+			return
+		}
+		for _, process := range inventory.Processes {
+			if tunnelIdentityMatches(process, cfg) {
+				a.logWatchdog(fmt.Sprintf("同一 Tunnel PID %d 仍指向 %s，watchdog 不会重复启动", process.PID, displayTunnelTarget(process)))
+				return
+			}
+		}
 		a.logWatchdog("Tunnel 进程退出，正在重启")
 		if err := a.process.StartTunnel(cfg); err != nil {
 			a.logWatchdog("Tunnel 重启失败: " + err.Error())
 		}
 	}
+}
+
+func (a *App) tunnelInventoryForConfig(cfg model.Config, managedStatus model.ProcessStatus) (model.TunnelInventory, error) {
+	processes, err := processmanager.ListCloudflaredProcesses()
+	if err != nil {
+		return model.TunnelInventory{}, err
+	}
+	inventory := model.TunnelInventory{
+		ExpectedLocalURL: "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort),
+		Processes:        processes,
+	}
+	identityGroups := map[string][]int{}
+	for index := range inventory.Processes {
+		process := &inventory.Processes[index]
+		process.Managed = managedStatus.Running && process.PID == managedStatus.PID
+		process.MatchesConfig = tunnelIdentityMatches(*process, cfg) && tunnelTargetMatches(*process, cfg)
+		if process.MatchesConfig {
+			inventory.MatchingCount++
+		}
+		identity := tunnelIdentityKey(*process)
+		if identity != "" {
+			identityGroups[identity] = append(identityGroups[identity], index)
+		}
+	}
+	for _, indexes := range identityGroups {
+		if len(indexes) <= 1 {
+			continue
+		}
+		inventory.DuplicateCount += len(indexes) - 1
+		for _, index := range indexes {
+			inventory.Processes[index].Duplicate = true
+		}
+	}
+	inventory.Count = len(inventory.Processes)
+	sort.SliceStable(inventory.Processes, func(left, right int) bool {
+		leftProcess := inventory.Processes[left]
+		rightProcess := inventory.Processes[right]
+		if leftProcess.MatchesConfig != rightProcess.MatchesConfig {
+			return leftProcess.MatchesConfig
+		}
+		if leftProcess.Managed != rightProcess.Managed {
+			return leftProcess.Managed
+		}
+		if leftProcess.Duplicate != rightProcess.Duplicate {
+			return leftProcess.Duplicate
+		}
+		return leftProcess.PID < rightProcess.PID
+	})
+	return inventory, nil
+}
+
+func tunnelIdentityKey(process model.TunnelProcess) string {
+	if process.TunnelID != "" {
+		return "id:" + strings.ToLower(process.TunnelID)
+	}
+	if process.TunnelName != "" {
+		return "name:" + strings.ToLower(process.TunnelName)
+	}
+	return ""
+}
+
+func tunnelIdentityMatches(process model.TunnelProcess, cfg model.Config) bool {
+	if cfg.TunnelID != "" && process.TunnelID != "" {
+		return strings.EqualFold(cfg.TunnelID, process.TunnelID)
+	}
+	if cfg.TunnelName != "" && process.TunnelName != "" {
+		return strings.EqualFold(cfg.TunnelName, process.TunnelName)
+	}
+	return false
+}
+
+func tunnelTargetMatches(process model.TunnelProcess, cfg model.Config) bool {
+	if process.LocalPort != cfg.MCPPort {
+		return false
+	}
+	if process.LocalHost == "" {
+		return false
+	}
+	if strings.EqualFold(process.LocalHost, cfg.MCPHost) {
+		return true
+	}
+	return isLoopbackHost(process.LocalHost) && isLoopbackHost(cfg.MCPHost)
+}
+
+func displayTunnelTarget(process model.TunnelProcess) string {
+	if process.LocalURL != "" {
+		return process.LocalURL
+	}
+	if process.LocalPort > 0 {
+		return net.JoinHostPort(process.LocalHost, strconv.Itoa(process.LocalPort))
+	}
+	return "未知本地地址"
+}
+
+func (a *App) stopTunnelIdentityProcesses(cfg model.Config) error {
+	processes, err := processmanager.ListCloudflaredProcesses()
+	if err != nil {
+		return err
+	}
+	var failures []string
+	for _, process := range processes {
+		if !tunnelIdentityMatches(process, cfg) {
+			continue
+		}
+		if err := processmanager.StopCloudflaredProcess(process.PID); err != nil {
+			failures = append(failures, err.Error())
+		}
+	}
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, "；"))
+	}
+	return nil
+}
+
+func waitForCloudflaredPID(pid int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		processes, err := processmanager.ListCloudflaredProcesses()
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, process := range processes {
+			if process.PID == pid {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return fmt.Errorf("等待 cloudflared PID %d 退出超时", pid)
+}
+
+func waitForTunnelIdentityStopped(cfg model.Config, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		processes, err := processmanager.ListCloudflaredProcesses()
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, process := range processes {
+			if tunnelIdentityMatches(process, cfg) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return errors.New("等待旧 Cloudflare Tunnel 进程退出超时")
+}
+
+func waitForManagedProcessStopped(manager *processmanager.Manager, mcp bool, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		mcpStatus, tunnelStatus, _ := manager.Status()
+		status := tunnelStatus
+		if mcp {
+			status = mcpStatus
+		}
+		if !status.Running {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if mcp {
+		return errors.New("等待 MCP 进程退出超时")
+	}
+	return errors.New("等待 Tunnel 进程退出超时")
 }
 
 func (a *App) logWatchdog(message string) {

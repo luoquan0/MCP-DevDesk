@@ -107,6 +107,7 @@ type ConfigUpdate struct {
 type ProcessStatus struct {
 	Name       string     `json:"name"`
 	Running    bool       `json:"running"`
+	Managed    bool       `json:"managed"`
 	PID        int        `json:"pid,omitempty"`
 	StartedAt  *time.Time `json:"startedAt,omitempty"`
 	StoppedAt  *time.Time `json:"stoppedAt,omitempty"`
@@ -114,6 +115,30 @@ type ProcessStatus struct {
 	LastError  string     `json:"lastError,omitempty"`
 	StdoutPath string     `json:"stdoutPath,omitempty"`
 	StderrPath string     `json:"stderrPath,omitempty"`
+}
+
+type TunnelProcess struct {
+	PID             int    `json:"pid"`
+	ParentPID       int    `json:"parentPid,omitempty"`
+	ProcessPath     string `json:"processPath,omitempty"`
+	CommandLine     string `json:"commandLine,omitempty"`
+	TunnelName      string `json:"tunnelName,omitempty"`
+	TunnelID        string `json:"tunnelId,omitempty"`
+	CredentialsPath string `json:"credentialsPath,omitempty"`
+	LocalURL        string `json:"localUrl,omitempty"`
+	LocalHost       string `json:"localHost,omitempty"`
+	LocalPort       int    `json:"localPort,omitempty"`
+	Managed         bool   `json:"managed"`
+	MatchesConfig   bool   `json:"matchesConfig"`
+	Duplicate       bool   `json:"duplicate"`
+}
+
+type TunnelInventory struct {
+	Count            int             `json:"count"`
+	MatchingCount    int             `json:"matchingCount"`
+	DuplicateCount   int             `json:"duplicateCount"`
+	ExpectedLocalURL string          `json:"expectedLocalUrl"`
+	Processes        []TunnelProcess `json:"processes"`
 }
 
 type PortOwner struct {
@@ -150,6 +175,7 @@ type ServiceStatus struct {
 	MCP              ProcessStatus    `json:"mcp"`
 	MCPPortOwner     PortOwner        `json:"mcpPortOwner"`
 	Tunnel           ProcessStatus    `json:"tunnel"`
+	TunnelInventory  TunnelInventory  `json:"tunnelInventory"`
 	Cloudflare       CloudflareStatus `json:"cloudflare"`
 	PermissionMode   string           `json:"permissionMode"`
 	FileScope        string           `json:"fileScope"`
@@ -157,6 +183,10 @@ type ServiceStatus struct {
 	WatchdogEnabled  bool             `json:"watchdogEnabled"`
 	ConfigurationOK  bool             `json:"configurationOk"`
 	ConfigurationMsg string           `json:"configurationMessage,omitempty"`
+}
+
+type ChangeMCPPortRequest struct {
+	Port int `json:"port"`
 }
 
 type ConfigureTunnelRequest struct {

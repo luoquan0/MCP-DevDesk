@@ -99,6 +99,12 @@ function bindActions() {
   $("#cloudflareForm").addEventListener("submit", configureCloudflare);
   $("#workspaceForm").addEventListener("submit", saveWorkspaceSettings);
   $("#permissionForm").addEventListener("submit", savePermissionSettings);
+  $("#refreshTunnelsButton").addEventListener("click", (event) => withBusy(event.currentTarget, refreshTunnelProcesses));
+  $("#syncTunnelPortButton").addEventListener("click", syncTunnelPort);
+  $("#tunnelProcessList").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-stop-tunnel-pid]");
+    if (button) stopTunnelProcess(button);
+  });
 
   $$('input[name="permissionMode"]').forEach((input) => input.addEventListener("change", updatePermissionCards));
   $$('input[name="fileScope"]').forEach((input) => input.addEventListener("change", updateDangerWarning));
@@ -209,11 +215,19 @@ function renderStatus(status) {
   }
   $("#mcpPort").textContent = status.localMcpUrl.replace(/^.*:/, "").replace("/mcp", "");
 
-  setServiceBadge("tunnelBadge", status.tunnel.running, status.tunnel.running ? "已连接" : "未连接");
+  const tunnelInventory = status.tunnelInventory || { count: 0, matchingCount: 0, duplicateCount: 0, processes: [] };
+  if (tunnelInventory.duplicateCount > 0) {
+    const badge = $("#tunnelBadge");
+    badge.textContent = `${tunnelInventory.count} 个进程`;
+    badge.className = "badge warning";
+  } else {
+    setServiceBadge("tunnelBadge", status.tunnel.running, status.tunnel.running ? "已连接" : "未连接");
+  }
   $("#tunnelDetail").textContent = status.tunnel.running
-    ? `PID ${status.tunnel.pid} · 固定域名通道在线`
+    ? `${status.tunnel.managed ? "受管理" : "外部"} PID ${status.tunnel.pid} · ${tunnelInventory.matchingCount || 1} 个连接指向当前端口`
     : status.tunnel.lastError || (status.cloudflare.tunnelId ? "Tunnel 当前未启动" : "尚未配置 Tunnel");
   $("#tunnelDomain").textContent = status.cloudflare.domain || "未配置";
+  renderTunnelInventory(tunnelInventory);
 
   const permissionNames = { safe: "安全", trusted: "信任", dangerous: "危险" };
   $("#permissionBadge").textContent = `${permissionNames[status.permissionMode] || status.permissionMode}模式`;
@@ -255,7 +269,7 @@ function renderStatus(status) {
   const takeoverButton = $("#takeoverButton");
   takeoverButton.hidden = !portConflict || String(status.mcpPortOwner?.processName || "").toLowerCase() !== "coding-tools-mcp.exe";
   $("#startAllButton").disabled = portConflict || (status.mcp.running && (status.tunnel.running || !status.cloudflare.tunnelId));
-  $("#stopAllButton").disabled = !status.mcp.running && !status.tunnel.running;
+  $("#stopAllButton").disabled = !status.mcp.running && !(status.tunnel.running && status.tunnel.managed);
 
   renderCloudflareStatus(status.cloudflare, status);
 }
@@ -302,6 +316,52 @@ function renderCloudflareStatus(cloudflare, status) {
   }
 }
 
+function renderTunnelInventory(inventory) {
+  const normalized = inventory || { count: 0, matchingCount: 0, duplicateCount: 0, processes: [] };
+  $("#tunnelProcessCount").textContent = String(normalized.count || 0);
+  $("#tunnelDuplicateCount").textContent = String(normalized.duplicateCount || 0);
+  $("#tunnelExpectedTarget").textContent = normalized.expectedLocalUrl || "尚未配置";
+  $("#syncTunnelPortButton").disabled = !state.status?.cloudflare?.tunnelId;
+
+  const root = $("#tunnelProcessList");
+  root.replaceChildren();
+  const processes = Array.isArray(normalized.processes) ? normalized.processes : [];
+  if (!processes.length) {
+    root.append(element("div", "tunnel-empty", "当前没有检测到 cloudflared 隧道进程。"));
+    return;
+  }
+
+  processes.forEach((process) => {
+    const item = element("article", `tunnel-process-item${process.duplicate ? " duplicate" : ""}${process.matchesConfig ? " current" : ""}`);
+    const main = element("div", "tunnel-process-main");
+    const heading = element("div", "tunnel-process-title");
+    const title = element("b", "", process.tunnelName || process.tunnelId || "未识别 Tunnel");
+    const badges = element("div", "tunnel-process-badges");
+    if (process.managed) badges.append(element("span", "mini-badge managed", "本程序管理"));
+    if (process.matchesConfig) badges.append(element("span", "mini-badge current", "当前配置"));
+    if (process.duplicate) badges.append(element("span", "mini-badge duplicate", "重复"));
+    heading.append(title, badges);
+
+    const target = element("div", "tunnel-process-target");
+    target.append(
+      element("span", "", `PID ${process.pid}`),
+      element("code", "", process.localUrl || "未识别本地转发地址")
+    );
+    const metadata = element("div", "tunnel-process-meta");
+    metadata.append(
+      element("span", "", `Tunnel ID：${process.tunnelId || "未知"}`),
+      element("span", "", `父进程：${process.parentPid || "未知"}`),
+      element("span", "path", process.processPath || "路径未知")
+    );
+    main.append(heading, target, metadata);
+
+    const stopButton = element("button", "button danger-subtle small", "关闭此进程");
+    stopButton.dataset.stopTunnelPid = String(process.pid);
+    item.append(main, stopButton);
+    root.append(item);
+  });
+}
+
 function renderDisconnected() {
   $("#sidebarStatusDot").className = "status-dot offline";
   $("#sidebarStatusText").textContent = "管理器离线";
@@ -334,11 +394,50 @@ async function serviceAction(button, action, successMessage) {
   });
 }
 
+async function refreshTunnelProcesses() {
+  const inventory = await api("/api/tunnels/processes");
+  if (state.status) state.status.tunnelInventory = inventory;
+  renderTunnelInventory(inventory);
+  return inventory;
+}
+
+async function syncTunnelPort(event) {
+  const expected = state.status?.tunnelInventory?.expectedLocalUrl || `http://127.0.0.1:${state.config?.mcpPort || 8765}`;
+  const accepted = await confirmAction(
+    "同步 Cloudflare 穿透端口",
+    `将关闭与当前 Tunnel 同名或同 UUID 的旧 cloudflared 连接，并只启动一个指向 ${expected} 的新连接。公网 MCP 会短暂中断。`
+  );
+  if (!accepted) return;
+  await withBusy(event.currentTarget, async () => {
+    await api("/api/tunnels/sync-port", { method: "POST" });
+    await refreshStatus();
+    toast("Tunnel 端口已同步", `Cloudflare 现在指向 ${expected}。`, "success");
+  });
+}
+
+async function stopTunnelProcess(button) {
+  const pid = Number(button.dataset.stopTunnelPid);
+  const process = state.status?.tunnelInventory?.processes?.find((item) => item.pid === pid);
+  const accepted = await confirmAction(
+    "关闭 Cloudflare 隧道进程",
+    `将结束 PID ${pid}（${process?.tunnelName || process?.tunnelId || "未识别 Tunnel"}），当前连接可能会短暂中断。其他隧道不会受影响。`
+  );
+  if (!accepted) return;
+  await withBusy(button, async () => {
+    const inventory = await api(`/api/tunnels/processes/${pid}`, { method: "DELETE" });
+    if (state.status) state.status.tunnelInventory = inventory;
+    renderTunnelInventory(inventory);
+    await refreshStatus();
+    toast("隧道进程已关闭", `cloudflared PID ${pid} 已停止。`, "success");
+  });
+}
+
 async function takeoverOldInstance(event) {
   const owner = state.status?.mcpPortOwner;
+  const currentPort = state.config?.mcpPort || 8765;
   const accepted = await confirmAction(
     "接管旧 MCP 实例",
-    `将终止当前占用 8765 端口的 ${owner?.processName || "coding-tools-mcp.exe"}（PID ${owner?.pid || "未知"}），然后用本管理器的 OAuth client_id 重新启动。旧实例未保存的会话会中断。`
+    `将终止当前占用 ${currentPort} 端口的 ${owner?.processName || "coding-tools-mcp.exe"}（PID ${owner?.pid || "未知"}），然后用本管理器的 OAuth client_id 重新启动。旧实例未保存的会话会中断。`
   );
   if (!accepted) return;
   await withBusy(event.currentTarget, async () => {
@@ -371,6 +470,22 @@ async function configureCloudflare(event) {
 async function saveWorkspaceSettings(event) {
   event.preventDefault();
   const button = $("button[type=submit]", event.currentTarget);
+  const requestedPort = Number($("#mcpPortInput").value);
+  const requestedAdminPort = Number($("#adminPortInput").value);
+  const previousPort = Number(state.config?.mcpPort || 8765);
+  const portChanged = requestedPort !== previousPort;
+  if (requestedPort === requestedAdminPort) {
+    toast("端口设置无效", "MCP 端口和管理端口不能相同。", "error");
+    return;
+  }
+  if (portChanged) {
+    const activeTunnels = Number(state.status?.tunnelInventory?.count || 0);
+    const accepted = await confirmAction(
+      "更改 MCP 与 Cloudflare 端口",
+      `端口将从 ${previousPort} 改为 ${requestedPort}。程序会先启动新端口 MCP，再关闭同一 Tunnel 的旧连接，并让 Cloudflare 指向 http://127.0.0.1:${requestedPort}。当前有 ${activeTunnels} 个 cloudflared 进程。`
+    );
+    if (!accepted) return;
+  }
   await withBusy(button, async () => {
     const startupEnabled = $("#runAtLoginInput").checked;
     await api("/api/config", {
@@ -378,19 +493,28 @@ async function saveWorkspaceSettings(event) {
       body: {
         workspace: $("#workspaceInput").value.trim(),
         toolProfile: $("#toolProfileInput").value,
-        mcpPort: Number($("#mcpPortInput").value),
-        adminPort: Number($("#adminPortInput").value),
+        adminPort: requestedAdminPort,
         openBrowserOnStart: $("#openBrowserInput").checked,
         autoStart: $("#autoStartInput").checked,
         watchdog: $("#watchdogInput").checked,
       },
     });
+    if (portChanged) {
+      await api("/api/services/change-port", {
+        method: "POST",
+        body: { port: requestedPort },
+      });
+    }
     await api("/api/system/startup", {
       method: "PUT",
       body: { enabled: startupEnabled },
     });
     await Promise.all([loadConfig(), loadDesktopStatus(), refreshStatus(), runDiagnostics()]);
-    toast("项目设置已保存", "运行中的服务请重新启动以应用新参数。", "success");
+    toast(
+      portChanged ? "端口与 Tunnel 已切换" : "项目设置已保存",
+      portChanged ? `MCP 与 Cloudflare 已同步到端口 ${requestedPort}。` : "运行中的服务请重新启动以应用其他参数。",
+      "success"
+    );
   });
 }
 

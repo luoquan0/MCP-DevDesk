@@ -10,7 +10,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-当前 `0.2.0-dev` 已完成：
+当前 `0.3.0-dev` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -26,6 +26,10 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 - 单实例运行
 - Windows 登录时后台启动
 - 关闭界面后继续在托盘运行
+- MCP 端口在线切换
+- Cloudflare Tunnel 自动跟随 MCP 端口
+- 本机 cloudflared 进程监控
+- 重复 Tunnel 检测与按 PID 关闭
 
 详细文档见：
 
@@ -66,6 +70,8 @@ dist\MCP-DevDesk-amd64.exe
 ```powershell
 dist\devdeskctl-amd64.exe status
 dist\devdeskctl-amd64.exe desktop
+dist\devdeskctl-amd64.exe tunnels
+dist\devdeskctl-amd64.exe sync-tunnel
 dist\devdeskctl-amd64.exe open
 dist\devdeskctl-amd64.exe startup-on
 dist\devdeskctl-amd64.exe startup-off

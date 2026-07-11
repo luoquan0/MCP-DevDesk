@@ -76,3 +76,12 @@ Cloudflare Tunnel JSON 凭据继续由 `cloudflared` 放在用户配置目录，
 
 日志默认不记录敏感环境变量和完整 Token。
 
+## 6. Tunnel 进程控制
+
+- 关闭进程接口仍受本机管理 API、Host 和 Origin 检查保护。
+- 根据 PID 关闭前会重新枚举进程，并确认该 PID 当前确实属于 `cloudflared.exe`。
+- “同步端口”只结束与当前配置具有相同 Tunnel UUID；缺少 UUID 时才退回同名称匹配。
+- 其他 Cloudflare Tunnel 不会被批量终止。
+- 进程命令行中的 `--token` 值在返回管理 API 前会被替换为 `***`。
+- 修改端口采用新 MCP 先就绪、旧 Tunnel 后关闭的顺序，降低公网连接中断时间。
+

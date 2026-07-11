@@ -36,6 +36,18 @@
 - [ ] 可选 Wails/WebView2 内嵌壳
 - [ ] NSIS 安装包
 
+## M2.1：端口与 Tunnel 运行管理
+
+- [x] MCP 端口在线修改
+- [x] Cloudflare 自动跟随 MCP 端口
+- [x] 新端口占用检测
+- [x] cloudflared 全局进程枚举
+- [x] Tunnel UUID、名称和本地目标解析
+- [x] 重复 Tunnel 进程检测
+- [x] 按 PID 关闭单个 Tunnel
+- [x] 一键清理旧连接并同步端口
+- [x] Watchdog 防止重复启动
+
 ## M3：多项目开发能力
 
 - [ ] 允许根目录

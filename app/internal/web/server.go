@@ -53,8 +53,12 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/services/stop", s.handleStopServices)
 	mux.HandleFunc("POST /api/services/restart", s.handleRestartServices)
 	mux.HandleFunc("POST /api/services/takeover", s.handleTakeoverServices)
+	mux.HandleFunc("POST /api/services/change-port", s.handleChangeMCPPort)
 	mux.HandleFunc("POST /api/cloudflare/login", s.handleCloudflareLogin)
 	mux.HandleFunc("POST /api/cloudflare/configure", s.handleCloudflareConfigure)
+	mux.HandleFunc("GET /api/tunnels/processes", s.handleTunnelProcesses)
+	mux.HandleFunc("DELETE /api/tunnels/processes/{pid}", s.handleStopTunnelProcess)
+	mux.HandleFunc("POST /api/tunnels/sync-port", s.handleSyncTunnelPort)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/secrets", s.handleSecrets)
 	mux.HandleFunc("GET /api/diagnostics", s.handleDiagnostics)
@@ -102,10 +106,21 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	requestedPort := update.MCPPort
+	update.MCPPort = nil
 	cfg, err := s.app.UpdateConfig(update)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
+	}
+	if requestedPort != nil && *requestedPort != cfg.MCPPort {
+		ctx, cancel := context.WithTimeout(r.Context(), 55*time.Second)
+		defer cancel()
+		if err := s.app.ChangeMCPPort(ctx, *requestedPort); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		cfg = s.app.Config()
 	}
 	writeJSON(w, http.StatusOK, cfg)
 }
@@ -148,6 +163,21 @@ func (s *Server) handleTakeoverServices(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, s.app.Status())
 }
 
+func (s *Server) handleChangeMCPPort(w http.ResponseWriter, r *http.Request) {
+	var request model.ChangeMCPPortRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 55*time.Second)
+	defer cancel()
+	if err := s.app.ChangeMCPPort(ctx, request.Port); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.app.Status())
+}
+
 func (s *Server) handleCloudflareLogin(w http.ResponseWriter, _ *http.Request) {
 	if err := s.app.StartCloudflareLogin(); err != nil {
 		writeError(w, http.StatusConflict, err)
@@ -172,6 +202,39 @@ func (s *Server) handleCloudflareConfigure(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleTunnelProcesses(w http.ResponseWriter, _ *http.Request) {
+	inventory, err := s.app.TunnelInventory()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, inventory)
+}
+
+func (s *Server) handleStopTunnelProcess(w http.ResponseWriter, r *http.Request) {
+	pid, err := strconv.Atoi(r.PathValue("pid"))
+	if err != nil || pid <= 0 {
+		writeError(w, http.StatusBadRequest, errors.New("invalid tunnel PID"))
+		return
+	}
+	inventory, err := s.app.StopTunnelProcess(pid)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, inventory)
+}
+
+func (s *Server) handleSyncTunnelPort(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	if err := s.app.SyncTunnelPort(ctx); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.app.Status())
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
