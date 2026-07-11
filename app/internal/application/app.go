@@ -17,19 +17,21 @@ import (
 	"mcp-devdesk/internal/config"
 	"mcp-devdesk/internal/model"
 	processmanager "mcp-devdesk/internal/process"
+	projectstore "mcp-devdesk/internal/projects"
 	"mcp-devdesk/internal/secrets"
 	"mcp-devdesk/internal/tunnel"
 )
 
-const Version = "0.5.0-ui-preview"
+const Version = "0.6.0-dev"
 
 type App struct {
-	rootDir string
-	dataDir string
-	config  *config.Store
-	secrets *secrets.Store
-	process *processmanager.Manager
-	tunnel  *tunnel.Client
+	rootDir  string
+	dataDir  string
+	config   *config.Store
+	secrets  *secrets.Store
+	process  *processmanager.Manager
+	projects *projectstore.Store
+	tunnel   *tunnel.Client
 
 	mu             sync.RWMutex
 	desiredRunning bool
@@ -55,13 +57,18 @@ func New(rootDir, dataDir string) (*App, error) {
 		return nil, err
 	}
 	secretStore := secrets.NewStore(dataDir)
+	projectsStore, err := projectstore.NewStore(dataDir, configStore.Get().Workspace)
+	if err != nil {
+		return nil, err
+	}
 	app := &App{
-		rootDir: rootDir,
-		dataDir: dataDir,
-		config:  configStore,
-		secrets: secretStore,
-		process: processmanager.NewManager(rootDir, dataDir, secretStore),
-		tunnel:  tunnel.NewClient(),
+		rootDir:  rootDir,
+		dataDir:  dataDir,
+		config:   configStore,
+		secrets:  secretStore,
+		process:  processmanager.NewManager(rootDir, dataDir, secretStore),
+		projects: projectsStore,
+		tunnel:   tunnel.NewClient(),
 	}
 	app.startWatchdog()
 	return app, nil
@@ -69,6 +76,74 @@ func New(rootDir, dataDir string) (*App, error) {
 
 func (a *App) RootDir() string { return a.rootDir }
 func (a *App) DataDir() string { return a.dataDir }
+
+func (a *App) Projects() []projectstore.Project { return a.projects.List() }
+
+func (a *App) AddProject(name, path string) (projectstore.Project, error) {
+	return a.projects.Add(name, path)
+}
+
+func (a *App) RemoveProject(id string) error {
+	return a.projects.Remove(id, a.config.Get().Workspace)
+}
+
+func (a *App) SwitchProject(ctx context.Context, id string) error {
+	project, ok := a.projects.Get(id)
+	if !ok {
+		return errors.New("project not found")
+	}
+	if !pathIsDirectory(project.Path) {
+		return errors.New("project directory is unavailable")
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	oldCfg := a.config.Get()
+	if strings.EqualFold(oldCfg.Workspace, project.Path) {
+		return a.projects.Touch(id)
+	}
+	mcpStatus, _, _ := a.process.Status()
+	wasRunning := mcpStatus.Running && mcpStatus.Managed
+	if owner, err := processmanager.FindTCPListener(oldCfg.MCPPort); err == nil && owner.Occupied && !wasRunning {
+		return fmt.Errorf("MCP port is owned by an unmanaged process (PID %d); take over the service before switching projects", owner.PID)
+	}
+	newCfg := oldCfg
+	newCfg.Workspace = project.Path
+	newCfg.AllowedRoots = []string{project.Path}
+
+	if wasRunning {
+		if err := a.process.StopMCP(); err != nil {
+			return err
+		}
+		if err := waitForManagedProcessStopped(a.process, true, 8*time.Second); err != nil {
+			return err
+		}
+	}
+	if _, err := a.config.Replace(newCfg); err != nil {
+		return err
+	}
+	rollback := func(cause error) error {
+		_, _ = a.config.Replace(oldCfg)
+		if wasRunning {
+			if err := a.process.StartMCP(oldCfg); err != nil {
+				return fmt.Errorf("%w; rollback failed: %v", cause, err)
+			}
+			if err := a.waitForMCP(ctx, oldCfg, 12*time.Second); err != nil {
+				return fmt.Errorf("%w; rollback not ready: %v", cause, err)
+			}
+		}
+		return cause
+	}
+	if wasRunning {
+		if err := a.process.StartMCP(newCfg); err != nil {
+			return rollback(fmt.Errorf("start MCP for project: %w", err))
+		}
+		if err := a.waitForMCP(ctx, newCfg, 15*time.Second); err != nil {
+			return rollback(fmt.Errorf("project MCP not ready: %w", err))
+		}
+	}
+	return a.projects.Touch(id)
+}
 
 func (a *App) Config() model.PublicConfig {
 	return a.config.Get().Public()

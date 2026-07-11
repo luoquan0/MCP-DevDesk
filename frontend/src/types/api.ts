@@ -117,6 +117,14 @@ export interface DesktopStatus {
   windowModeLabel: string;
 }
 
+export interface Project {
+  id: string;
+  name: string;
+  path: string;
+  addedAt: string;
+  lastOpenedAt: string;
+}
+
 export interface LogResponse {
   name: string;
   path: string;

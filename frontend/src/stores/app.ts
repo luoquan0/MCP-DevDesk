@@ -8,6 +8,7 @@ import type {
   DesktopStatus,
   Diagnostics,
   LogResponse,
+  Project,
   SecretSummary,
   ServiceStatus,
   TunnelInventory,
@@ -19,6 +20,7 @@ export const useAppStore = defineStore("app", {
     config: null as Config | null,
     desktop: null as DesktopStatus | null,
     diagnostics: null as Diagnostics | null,
+    projects: [] as Project[],
     loading: true,
     refreshing: false,
     actionPending: "" as string,
@@ -41,6 +43,7 @@ export const useAppStore = defineStore("app", {
           this.loadConfig(),
           this.loadDesktop(),
           this.loadDiagnostics(),
+          this.loadProjects(),
         ]);
       } finally {
         this.loading = false;
@@ -61,6 +64,30 @@ export const useAppStore = defineStore("app", {
     },
     async loadConfig() {
       this.config = await api<Config>("/api/config");
+    },
+    async loadProjects() {
+      this.projects = await api<Project[]>("/api/projects");
+    },
+    async addProject(path: string, name = "") {
+      const ui = useUiStore();
+      await this.runAction("add-project", () => api<Project>("/api/projects", {
+        method: "POST",
+        body: { path, name } as unknown as BodyInit,
+      }));
+      await this.loadProjects();
+      ui.toast("项目已添加", path, "success");
+    },
+    async activateProject(id: string) {
+      const ui = useUiStore();
+      this.status = await this.runAction(`activate-${id}`, () => api<ServiceStatus>(`/api/projects/${encodeURIComponent(id)}/activate`, { method: "POST" }));
+      await Promise.all([this.loadConfig(), this.loadProjects()]);
+      ui.toast("项目已切换", "MCP 已使用新的工作目录，Tunnel 地址保持不变。", "success");
+    },
+    async removeProject(id: string) {
+      const ui = useUiStore();
+      await this.runAction(`remove-${id}`, () => api(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }));
+      await this.loadProjects();
+      ui.toast("项目已移除", "项目文件没有被删除。", "success");
     },
     async loadDesktop() {
       this.desktop = await api<DesktopStatus>("/api/system/desktop");

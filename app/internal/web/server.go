@@ -49,6 +49,10 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleUpdateConfig)
+	mux.HandleFunc("GET /api/projects", s.handleListProjects)
+	mux.HandleFunc("POST /api/projects", s.handleAddProject)
+	mux.HandleFunc("POST /api/projects/{id}/activate", s.handleActivateProject)
+	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
 	mux.HandleFunc("POST /api/services/start", s.handleStartServices)
 	mux.HandleFunc("POST /api/services/stop", s.handleStopServices)
 	mux.HandleFunc("POST /api/services/restart", s.handleRestartServices)
@@ -98,6 +102,45 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.Config())
+}
+
+func (s *Server) handleListProjects(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.app.Projects())
+}
+
+func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	project, err := s.app.AddProject(request.Name, request.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, project)
+}
+
+func (s *Server) handleActivateProject(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	if err := s.app.SwitchProject(ctx, r.PathValue("id")); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.app.Status())
+}
+
+func (s *Server) handleRemoveProject(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.RemoveProject(r.PathValue("id")); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
