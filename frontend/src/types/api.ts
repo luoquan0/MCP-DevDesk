@@ -1,6 +1,7 @@
 export type PermissionMode = "safe" | "trusted" | "dangerous";
 export type FileScope = "workspace" | "roots" | "computer";
 export type ToolProfile = "full" | "read-only" | "compat-readonly-all";
+export type CoreMode = "legacy" | "go";
 
 export interface ProcessStatus {
   name: string;
@@ -70,6 +71,7 @@ export interface ServiceStatus {
   oauthClientId: string;
   oauthClientType: string;
   oauthTokenAuth: string;
+  coreMode: CoreMode;
   mcp: ProcessStatus;
   mcpPortOwner: PortOwner;
   tunnel: ProcessStatus;
@@ -85,11 +87,14 @@ export interface ServiceStatus {
 
 export interface Config {
   workspace: string;
+  allowedRoots: string[];
   mcpHost: string;
   mcpPort: number;
   adminHost: string;
   adminPort: number;
+  coreMode: CoreMode;
   coreExecutable: string;
+  goCoreExecutable: string;
   cloudflaredExecutable: string;
   toolProfile: ToolProfile;
   permissionMode: PermissionMode;
@@ -145,6 +150,8 @@ export interface SecretSummary {
   clientSecret?: string;
   tokenSecret?: string;
   configured: boolean;
+  encryptedAtRest: boolean;
+  redirectUris?: string[];
 }
 
 export interface SecretUpdateRequest {
@@ -152,6 +159,7 @@ export interface SecretUpdateRequest {
   clientId?: string;
   clientSecret?: string;
   tokenSecret?: string;
+  redirectUris?: string[];
   restart: boolean;
 }
 

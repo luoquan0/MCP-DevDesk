@@ -42,7 +42,8 @@ func NewManager(rootDir, dataDir string, secretStore *secrets.Store) *Manager {
 }
 
 func (m *Manager) StartMCP(cfg model.Config) error {
-	if _, err := os.Stat(cfg.CoreExecutable); err != nil {
+	executable := selectedMCPExecutable(cfg)
+	if _, err := os.Stat(executable); err != nil {
 		return fmt.Errorf("MCP executable unavailable: %w", err)
 	}
 	if info, err := os.Stat(cfg.Workspace); err != nil || !info.IsDir() {
@@ -62,6 +63,23 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 		baseURL = "https://" + cfg.Domain
 	}
 
+	args := mcpArguments(cfg, m.dataDir, baseURL)
+
+	env := mcpEnvironment(cfg, values, baseURL)
+
+	stdout := filepath.Join(m.dataDir, "logs", "mcp-stdout.log")
+	stderr := filepath.Join(m.dataDir, "logs", "mcp-stderr.log")
+	return m.start(&m.mcp, executable, args, m.rootDir, env, stdout, stderr, cfg.HideChildProcessWindows)
+}
+
+func selectedMCPExecutable(cfg model.Config) string {
+	if cfg.CoreMode == "go" {
+		return cfg.GoCoreExecutable
+	}
+	return cfg.CoreExecutable
+}
+
+func mcpArguments(cfg model.Config, dataDir, baseURL string) []string {
 	args := []string{
 		"--workspace", cfg.Workspace,
 		"--host", cfg.MCPHost,
@@ -70,7 +88,19 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 		"--oauth-mode",
 		"--permission-mode", cfg.PermissionMode,
 	}
-	if cfg.PermissionMode == "safe" {
+	if cfg.CoreMode == "go" {
+		args = append(args,
+			"--data-dir", dataDir,
+			"--server-url", baseURL,
+			"--audit-path", filepath.Join(dataDir, "logs", "mcp-audit.jsonl"),
+			"--file-scope", cfg.FileScope,
+		)
+		for _, root := range cfg.AllowedRoots {
+			if strings.TrimSpace(root) != "" {
+				args = append(args, "--allowed-root", root)
+			}
+		}
+	} else if cfg.PermissionMode == "safe" {
 		args = append(args, "--shell-env-inherit", "core")
 	} else {
 		args = append(args, "--shell-env-inherit", "all")
@@ -78,12 +108,7 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 	if cfg.AllowNetwork {
 		args = append(args, "--allow-network")
 	}
-
-	env := mcpEnvironment(cfg, values, baseURL)
-
-	stdout := filepath.Join(m.dataDir, "logs", "mcp-stdout.log")
-	stderr := filepath.Join(m.dataDir, "logs", "mcp-stderr.log")
-	return m.start(&m.mcp, cfg.CoreExecutable, args, m.rootDir, env, stdout, stderr, cfg.HideChildProcessWindows)
+	return args
 }
 
 func mcpEnvironment(cfg model.Config, values secrets.Values, baseURL string) []string {
@@ -93,6 +118,7 @@ func mcpEnvironment(cfg model.Config, values secrets.Values, baseURL string) []s
 		"CODING_TOOLS_MCP_OAUTH_CLIENT_ID="+values.ClientID,
 		"CODING_TOOLS_MCP_OAUTH_CLIENT_SECRET="+values.ClientSecret,
 		"CODING_TOOLS_MCP_OAUTH_TOKEN_SECRET="+values.TokenSecret,
+		"CODING_TOOLS_MCP_OAUTH_REDIRECT_URIS="+strings.Join(values.RedirectURIs, "\n"),
 		"CODING_TOOLS_MCP_TOOL_PROFILE="+cfg.ToolProfile,
 	)
 	return appendProxy(env, cfg)

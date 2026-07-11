@@ -16,6 +16,7 @@ const form = reactive({
   workspace: "",
   mcpPort: 8765,
   adminPort: 17860,
+  coreMode: "legacy",
   toolProfile: "full",
   autoStart: false,
   watchdog: true,
@@ -26,6 +27,7 @@ watch(() => app.config, (config) => {
   form.workspace = config.workspace;
   form.mcpPort = config.mcpPort;
   form.adminPort = config.adminPort;
+  form.coreMode = config.coreMode;
   form.toolProfile = config.toolProfile;
   form.autoStart = config.autoStart;
   form.watchdog = config.watchdog;
@@ -61,6 +63,7 @@ async function save() {
     if (requestedMcpPort === requestedAdminPort) throw new Error("MCP 端口和管理端口不能相同。");
 
     const oldPort = app.config?.mcpPort;
+    const oldCoreMode = app.config?.coreMode;
     if (oldPort && oldPort !== requestedMcpPort) {
       const accepted = await ui.ask({
         title: "切换 MCP 与 Tunnel 端口",
@@ -73,13 +76,31 @@ async function save() {
       }
     }
 
+    if (oldCoreMode && oldCoreMode !== form.coreMode) {
+      const accepted = await ui.ask({
+        title: "切换 MCP 核心",
+        message: form.coreMode === "go"
+          ? "将切换到新版 Go MCP 核心。旧核心仍保留，可随时切回。"
+          : "将切回旧版稳定核心。Go 核心配置和数据不会被删除。",
+        confirmLabel: "切换核心",
+      });
+      if (!accepted) {
+        form.coreMode = oldCoreMode;
+        return;
+      }
+    }
+
     await app.saveConfig({
       mcpPort: requestedMcpPort,
       adminPort: requestedAdminPort,
+      coreMode: form.coreMode as "legacy" | "go",
       toolProfile: form.toolProfile as "full" | "read-only" | "compat-readonly-all",
       autoStart: form.autoStart,
       watchdog: form.watchdog,
     });
+    if (oldCoreMode && oldCoreMode !== form.coreMode && app.status?.mcp.running) {
+      await app.serviceAction("restart");
+    }
   } catch (error) {
     ui.toast("保存失败", error instanceof Error ? error.message : String(error), "danger");
   }
@@ -167,6 +188,14 @@ async function save() {
             <small>仅绑定本机管理界面。</small>
           </label>
           <label class="field span-2">
+            <span>MCP 核心</span>
+            <select v-model="form.coreMode">
+              <option value="legacy">旧核心 · 稳定兼容模式</option>
+              <option value="go">Go 核心 · 0.7 新版</option>
+            </select>
+            <small>切换核心会在保存后自动重启 MCP；Cloudflare 域名和端口保持不变。</small>
+          </label>
+          <label class="field span-2">
             <span>工具配置</span>
             <select v-model="form.toolProfile">
               <option value="full">Full · 全部工具</option>
@@ -196,7 +225,9 @@ async function save() {
         <div><span class="eyebrow">Process details</span><h3>程序路径</h3></div>
       </div>
       <div class="path-list">
-        <div><span>MCP 核心</span><code>{{ app.config?.coreExecutable || '--' }}</code></div>
+        <div><span>当前核心</span><code>{{ app.config?.coreMode === 'go' ? app.config?.goCoreExecutable : app.config?.coreExecutable || '--' }}</code></div>
+        <div><span>旧核心</span><code>{{ app.config?.coreExecutable || '--' }}</code></div>
+        <div><span>Go 核心</span><code>{{ app.config?.goCoreExecutable || '--' }}</code></div>
         <div><span>Cloudflare 客户端</span><code>{{ app.config?.cloudflaredExecutable || '--' }}</code></div>
       </div>
     </AppCard>

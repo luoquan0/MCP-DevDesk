@@ -17,7 +17,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "hello.txt"), []byte("hello preview"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	server := New(Options{Name: "test-core", Version: "test", Workspace: workspace})
+	server := mustNewServer(t, Options{Name: "test-core", Version: "test", Workspace: workspace})
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
 
@@ -69,7 +69,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 		} `json:"result"`
 	}
 	decodeJSON(t, listResponse.Body, &listResult)
-	if len(listResult.Result.Tools) != 5 {
+	if len(listResult.Result.Tools) != 30 {
 		t.Fatalf("tool count = %d", len(listResult.Result.Tools))
 	}
 
@@ -96,7 +96,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 	if callResult.Result.IsError {
 		t.Fatal("server_info returned an error result")
 	}
-	if callResult.Result.StructuredContent["coreMode"] != "go-preview" {
+	if callResult.Result.StructuredContent["coreMode"] != "go" {
 		t.Fatalf("core mode = %#v", callResult.Result.StructuredContent["coreMode"])
 	}
 
@@ -123,7 +123,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 }
 
 func TestSessionIsRequiredAndCanBeDeleted(t *testing.T) {
-	server := New(Options{Workspace: t.TempDir()})
+	server := mustNewServer(t, Options{Workspace: t.TempDir()})
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
 
@@ -190,7 +190,7 @@ func TestWorkspaceFileTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := New(Options{Workspace: workspace})
+	server := mustNewServer(t, Options{Workspace: workspace})
 	readResult, err := server.executeTool("read_file", map[string]any{
 		"path":      "docs/notes.txt",
 		"startLine": 2,
@@ -239,7 +239,7 @@ func TestWorkspaceFileToolsRejectPathEscape(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Remove(outside) })
 
-	server := New(Options{Workspace: workspace})
+	server := mustNewServer(t, Options{Workspace: workspace})
 	_, err := server.executeTool("read_file", map[string]any{"path": filepath.Join("..", filepath.Base(outside))})
 	if err == nil || !strings.Contains(err.Error(), "escapes") {
 		t.Fatalf("expected workspace escape error, got %v", err)
@@ -257,11 +257,20 @@ func TestWorkspaceFileToolsRejectSymlinkEscape(t *testing.T) {
 		t.Skipf("symlink creation is unavailable: %v", err)
 	}
 
-	server := New(Options{Workspace: workspace})
+	server := mustNewServer(t, Options{Workspace: workspace})
 	_, err := server.executeTool("read_file", map[string]any{"path": filepath.Join("outside-link", "outside.txt")})
 	if err == nil || !strings.Contains(err.Error(), "escapes") {
 		t.Fatalf("expected symlink escape error, got %v", err)
 	}
+}
+
+func mustNewServer(t *testing.T, options Options) *Server {
+	t.Helper()
+	server, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server
 }
 
 func postRPC(t *testing.T, url, sessionID string, payload any) *http.Response {

@@ -22,10 +22,12 @@
 │ Port Switch Tunnel Inventory / Duplicate Guard│
 └──────────────┬───────────────────┬───────────┘
                │                   │
-┌──────────────▼─────────┐  ┌──────▼───────────┐
-│ coding-tools-mcp.exe   │  │ cloudflared.exe  │
-│ 127.0.0.1:8765         │  │ 固定域名 Tunnel  │
-└────────────────────────┘  └──────────────────┘
+┌──────────────▼─────────────────────┐  ┌──────▼───────────┐
+│ 可切换 MCP 核心                    │  │ cloudflared.exe  │
+│ legacy: coding-tools-mcp.exe       │  │ 固定域名 Tunnel  │
+│ go:     mcp-core.exe               │  │                 │
+│ 127.0.0.1:8765                     │  │                 │
+└────────────────────────────────────┘  └──────────────────┘
 ```
 
 ## 2. 端口规划
@@ -40,7 +42,7 @@
 
 主程序负责启动两个子进程：
 
-1. `coding-tools-mcp.exe`
+1. 当前选择的 `coding-tools-mcp.exe` 或 `mcp-core.exe`
 2. `cloudflared.exe`
 
 主程序保存 PID、启动时间、退出状态和日志位置。Watchdog 每隔固定时间检查进程及本地端口；异常退出时根据配置自动重启。
@@ -52,6 +54,8 @@
 管理器还会通过 Windows 进程信息枚举所有 `cloudflared.exe`，解析命令行中的 Tunnel UUID、名称和 `--url` 本地目标。启动前会检查同一 Tunnel 是否已经连接，防止 Watchdog 或重复点击产生新的重复进程。
 
 修改 MCP 端口时采用“先启动新 MCP、再切换 Tunnel”的顺序。新端口未就绪前不会关闭旧 Tunnel；切换失败时会尝试恢复旧端口和旧连接。
+
+切换核心时配置只改变 `coreMode`，端口、固定域名、工作区和 OAuth 凭据保持不变。保存后管理器停止当前核心并启动目标核心；旧核心文件不会删除，因此可以立即回退。
 
 ## 4. 兼容启动参数
 
@@ -77,18 +81,19 @@
 | 信任 | `--permission-mode trusted --allow-network` |
 | 危险 | `--permission-mode dangerous --allow-network` |
 
-## 5. 后续 Go MCP 核心
+## 5. Go MCP 核心
 
-第二阶段会实现：
+`0.7.0` 的 Go 核心已经实现：
 
-- MCP Streamable HTTP
-- OAuth 2.1 + PKCE
-- 多项目根目录
-- 文件工具
-- 命令会话
-- Git 和 Worktree
-- Skills / AGENTS.md
-- 权限申请与审计
+- MCP Streamable HTTP、SSE 与事件恢复
+- OAuth 2.1、PKCE、动态客户端注册与资源受众绑定
+- 文件范围：工作区、多个授权根目录、整台电脑
+- 文件读取、写入、搜索、补丁、移动和删除
+- 长时间命令会话、输出续读、标准输入和进程树终止
+- Git 状态、Diff、日志、Show、Blame 和 Worktree
+- 权限状态、工具档位和审计日志
+- 图片保存及 MCP image content 输出
+- 旧核心工具名称与常用参数兼容
 
-完成后可删除对 Python PyInstaller 核心的依赖。
+当前仍保留旧核心作为兼容回退，不会强制删除。后续版本会在更多真实客户端验证通过后再考虑把 Go 核心设为默认。
 

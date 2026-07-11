@@ -10,7 +10,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-稳定收尾版本 `0.6.0-dev` 已完成：
+当前版本 `0.7.0` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -36,6 +36,12 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 - 默认以 1200 × 800 居中窗口启动，不再默认最大化
 - 从 `logo/` 品牌源图自动生成界面、窗口、托盘和 EXE 图标
 - 前端、Go 测试、Windows GUI/CLI 和便携版的一体化构建流程
+- 可在旧核心和新版 Go 核心之间切换，旧核心持续保留为兼容回退
+- Go MCP Streamable HTTP、SSE 断线恢复与会话管理
+- OAuth 2.1 授权码流程、PKCE S256、动态客户端注册和资源绑定
+- 文件、命令会话、Git、权限、审计和图片工具
+- Windows DPAPI 密钥加密、随机生成、自定义、显示和复制
+- 多授权根目录及工具配置档位的实际执行限制
 
 详细文档见：
 
@@ -89,13 +95,13 @@ dist\devdeskctl-amd64.exe stop
 
 管理界面只监听本机地址。Cloudflare Tunnel 仅暴露 MCP/OAuth 服务，不暴露管理后台。
 
-## Go MCP Preview
+## Go MCP 核心
 
-`0.7.0-dev` 开始提供独立 Go MCP 预览核心。它当前只用于协议与兼容性测试，不会替换默认的 `coding-tools-mcp.exe`：
+`0.7.0` 提供可直接使用的独立 Go MCP 核心。桌面管理器默认继续使用旧核心，用户可在“服务 → MCP 核心”中切换到 Go 核心，并在需要时一键切回：
 
 ```powershell
 cd app
-go run ./cmd/mcp-core --workspace .. --port 18765
+go run ./cmd/mcp-core --workspace .. --port 18765 --permission-mode trusted
 ```
 
 预览地址：
@@ -104,7 +110,18 @@ go run ./cmd/mcp-core --workspace .. --port 18765
 http://127.0.0.1:18765/mcp
 ```
 
-当前已支持初始化、会话 ID、`ping`、`tools/list`、`tools/call`、会话删除，以及限制在工作区内的 `read_file`、`list_dir`、`search_text` 三个只读文件工具。文件写入、命令、Git、OAuth 与图片工具在兼容测试完成前仍由旧核心提供。
+Go 核心当前提供 30 个工具，覆盖文件读写、递归文件列表、文本搜索、多文件补丁、命令会话、Git、权限状态、审计和图片传输。旧核心已有的 22 个工具名称继续保留，并兼容常用的下划线参数和命令字符串格式。
 
-设置页现已支持管理旧核心与后续 Go 核心共用的 OAuth 凭据：所有者密码、客户端 ID、客户端密钥和 Token 签名密钥。每一项都可以自定义、使用安全随机值、显示或复制；保存时可自动重启 MCP 让新凭据立即生效。凭据当前保存在本机数据目录的 `secrets.json`，管理 API 仅监听回环地址。
+设置页支持管理两套核心共用的 OAuth 凭据：所有者密码、客户端 ID、客户端密钥、Token 签名密钥和静态客户端回调地址。每一项均可自定义、随机生成、显示或复制；保存时可自动重启 MCP。Windows 下 `secrets.json` 使用当前用户 DPAPI 加密，旧明文文件会在首次读取时自动迁移。
+
+Go 核心的 OAuth 模式还支持：
+
+- 受保护资源与授权服务器元数据发现
+- 动态客户端注册
+- 授权码 + PKCE S256
+- 精确回调地址校验
+- `resource` 受众绑定
+- 短期访问令牌和刷新令牌轮换
+
+命令工具不会隐式继承 OAuth Token、密码和其他常见敏感环境变量。安全模式完全拒绝命令和写入；信任模式允许工作区开发操作，但删除、覆盖和补丁删除仍要求明确确认。
 

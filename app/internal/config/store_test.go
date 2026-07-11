@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -36,6 +37,49 @@ func TestTrustedModeForcesNetwork(t *testing.T) {
 	}
 	if !cfg.AllowNetwork {
 		t.Fatal("trusted mode must force network access")
+	}
+}
+
+func TestDefaultCoreModeKeepsLegacyFallback(t *testing.T) {
+	root := t.TempDir()
+	dist := filepath.Join(root, "dist")
+	if err := os.MkdirAll(dist, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	goCore := filepath.Join(dist, "mcp-core.exe")
+	if err := os.WriteFile(goCore, []byte("placeholder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := store.Get()
+	if cfg.CoreMode != "legacy" {
+		t.Fatalf("default core mode = %q", cfg.CoreMode)
+	}
+	if cfg.GoCoreExecutable != goCore {
+		t.Fatalf("Go core executable = %q, want %q", cfg.GoCoreExecutable, goCore)
+	}
+	mode := "go"
+	updated, err := store.Update(model.ConfigUpdate{CoreMode: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.CoreMode != "go" {
+		t.Fatalf("updated core mode = %q", updated.CoreMode)
+	}
+}
+
+func TestInvalidCoreModeIsRejected(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := "unknown"
+	if _, err := store.Update(model.ConfigUpdate{CoreMode: &mode}); err == nil {
+		t.Fatal("invalid core mode was accepted")
 	}
 }
 

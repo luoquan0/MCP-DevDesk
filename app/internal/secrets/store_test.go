@@ -2,6 +2,10 @@ package secrets
 
 import (
 	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -43,6 +47,77 @@ func TestStoreGeneratesUpdatesAndPersistsSecrets(t *testing.T) {
 	}
 	if reloaded.OwnerPassword != ownerPassword || reloaded.ClientID != clientID || reloaded.ClientSecret != clientSecret || reloaded.TokenSecret != tokenSecret {
 		t.Fatalf("secrets were not persisted: %#v", reloaded)
+	}
+	stored, err := os.ReadFile(filepath.Join(dataDir, "secrets.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encryptionAvailable() && (strings.Contains(string(stored), ownerPassword) || strings.Contains(string(stored), clientSecret) || strings.Contains(string(stored), tokenSecret)) {
+		t.Fatal("encrypted secrets file contains plaintext credential values")
+	}
+	var envelope secretEnvelope
+	if err := json.Unmarshal(stored, &envelope); err != nil || envelope.Version != 2 || envelope.Data == "" {
+		t.Fatalf("unexpected secret envelope: %#v, %v", envelope, err)
+	}
+}
+
+func TestPlaintextSecretsAreMigrated(t *testing.T) {
+	dataDir := t.TempDir()
+	values := Values{
+		OwnerPassword: "plaintext-owner-password",
+		ClientID:      "plaintext-client",
+		ClientSecret:  "plaintext-client-secret",
+		TokenSecret:   strings.Repeat("cd", 32),
+	}
+	raw, err := json.MarshalIndent(values, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dataDir, "secrets.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := NewStore(dataDir).GetOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, values) {
+		t.Fatalf("migrated values changed: %#v", loaded)
+	}
+	migrated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope secretEnvelope
+	if err := json.Unmarshal(migrated, &envelope); err != nil || envelope.Version != 2 {
+		t.Fatalf("plaintext file was not migrated: %s, %v", string(migrated), err)
+	}
+}
+
+func TestRedirectURIValidation(t *testing.T) {
+	store := NewStore(t.TempDir())
+	initial, err := store.GetOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := []string{"https://example.com/oauth/callback", "http://127.0.0.1:43210/callback"}
+	updated, err := store.Update(model.SecretUpdateRequest{RedirectURIs: &valid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(updated.RedirectURIs, valid) {
+		t.Fatalf("redirect URIs were not saved: %#v", updated.RedirectURIs)
+	}
+	invalid := []string{"http://example.com/callback"}
+	if _, err := store.Update(model.SecretUpdateRequest{RedirectURIs: &invalid}); err == nil {
+		t.Fatal("non-loopback HTTP redirect URI was accepted")
+	}
+	reloaded, err := store.GetOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ClientID != initial.ClientID || !reflect.DeepEqual(reloaded.RedirectURIs, valid) {
+		t.Fatalf("invalid update changed stored secrets: %#v", reloaded)
 	}
 }
 

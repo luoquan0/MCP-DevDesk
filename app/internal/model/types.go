@@ -24,7 +24,9 @@ type Config struct {
 	ProxyPassword           string   `json:"proxyPassword,omitempty"`
 	AutoStart               bool     `json:"autoStart"`
 	Watchdog                bool     `json:"watchdog"`
+	CoreMode                string   `json:"coreMode"`
 	CoreExecutable          string   `json:"coreExecutable"`
+	GoCoreExecutable        string   `json:"goCoreExecutable"`
 	CloudflaredExecutable   string   `json:"cloudflaredExecutable"`
 	OpenBrowserOnStart      bool     `json:"openBrowserOnStart"`
 	HideChildProcessWindows bool     `json:"hideChildProcessWindows"`
@@ -50,7 +52,9 @@ type PublicConfig struct {
 	HasProxyPassword        bool     `json:"hasProxyPassword"`
 	AutoStart               bool     `json:"autoStart"`
 	Watchdog                bool     `json:"watchdog"`
+	CoreMode                string   `json:"coreMode"`
 	CoreExecutable          string   `json:"coreExecutable"`
+	GoCoreExecutable        string   `json:"goCoreExecutable"`
 	CloudflaredExecutable   string   `json:"cloudflaredExecutable"`
 	OpenBrowserOnStart      bool     `json:"openBrowserOnStart"`
 	HideChildProcessWindows bool     `json:"hideChildProcessWindows"`
@@ -77,7 +81,9 @@ func (c Config) Public() PublicConfig {
 		HasProxyPassword:        c.ProxyPassword != "",
 		AutoStart:               c.AutoStart,
 		Watchdog:                c.Watchdog,
+		CoreMode:                c.CoreMode,
 		CoreExecutable:          c.CoreExecutable,
+		GoCoreExecutable:        c.GoCoreExecutable,
 		CloudflaredExecutable:   c.CloudflaredExecutable,
 		OpenBrowserOnStart:      c.OpenBrowserOnStart,
 		HideChildProcessWindows: c.HideChildProcessWindows,
@@ -100,6 +106,7 @@ type ConfigUpdate struct {
 	ProxyPassword           *string   `json:"proxyPassword"`
 	AutoStart               *bool     `json:"autoStart"`
 	Watchdog                *bool     `json:"watchdog"`
+	CoreMode                *string   `json:"coreMode"`
 	OpenBrowserOnStart      *bool     `json:"openBrowserOnStart"`
 	HideChildProcessWindows *bool     `json:"hideChildProcessWindows"`
 }
@@ -172,6 +179,7 @@ type ServiceStatus struct {
 	OAuthClientID    string           `json:"oauthClientId"`
 	OAuthClientType  string           `json:"oauthClientType"`
 	OAuthTokenAuth   string           `json:"oauthTokenAuth"`
+	CoreMode         string           `json:"coreMode"`
 	MCP              ProcessStatus    `json:"mcp"`
 	MCPPortOwner     PortOwner        `json:"mcpPortOwner"`
 	Tunnel           ProcessStatus    `json:"tunnel"`
@@ -213,19 +221,22 @@ type LogResponse struct {
 }
 
 type SecretSummary struct {
-	OwnerPassword string `json:"ownerPassword,omitempty"`
-	ClientID      string `json:"clientId,omitempty"`
-	ClientSecret  string `json:"clientSecret,omitempty"`
-	TokenSecret   string `json:"tokenSecret,omitempty"`
-	Configured    bool   `json:"configured"`
+	OwnerPassword   string   `json:"ownerPassword,omitempty"`
+	ClientID        string   `json:"clientId,omitempty"`
+	ClientSecret    string   `json:"clientSecret,omitempty"`
+	TokenSecret     string   `json:"tokenSecret,omitempty"`
+	Configured      bool     `json:"configured"`
+	EncryptedAtRest bool     `json:"encryptedAtRest"`
+	RedirectURIs    []string `json:"redirectUris,omitempty"`
 }
 
 type SecretUpdateRequest struct {
-	OwnerPassword *string `json:"ownerPassword"`
-	ClientID      *string `json:"clientId"`
-	ClientSecret  *string `json:"clientSecret"`
-	TokenSecret   *string `json:"tokenSecret"`
-	Restart       bool    `json:"restart"`
+	OwnerPassword *string   `json:"ownerPassword"`
+	ClientID      *string   `json:"clientId"`
+	ClientSecret  *string   `json:"clientSecret"`
+	TokenSecret   *string   `json:"tokenSecret"`
+	RedirectURIs  *[]string `json:"redirectUris"`
+	Restart       bool      `json:"restart"`
 }
 
 type SecretGenerateRequest struct {

@@ -1,6 +1,7 @@
 package process
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,4 +44,95 @@ func TestMCPEnvironmentIncludesAllOAuthValues(t *testing.T) {
 			t.Fatalf("missing %s from MCP environment", key)
 		}
 	}
+}
+
+func TestGoCoreLaunchConfiguration(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	cfg := model.Config{
+		CoreMode:         "go",
+		CoreExecutable:   `C:\legacy.exe`,
+		GoCoreExecutable: `C:\mcp-core.exe`,
+		Workspace:        `C:\workspace`,
+		MCPHost:          "127.0.0.1",
+		MCPPort:          8765,
+		ToolProfile:      "full",
+		PermissionMode:   "trusted",
+		FileScope:        "roots",
+		AllowedRoots:     []string{`C:\workspace`, `D:\projects`},
+		AllowNetwork:     true,
+	}
+	if selected := selectedMCPExecutable(cfg); selected != cfg.GoCoreExecutable {
+		t.Fatalf("selected executable = %q", selected)
+	}
+	args := mcpArguments(cfg, dataDir, "https://mcp.example")
+	wantPairs := map[string]string{
+		"--workspace":       cfg.Workspace,
+		"--host":            cfg.MCPHost,
+		"--port":            "8765",
+		"--permission-mode": cfg.PermissionMode,
+		"--data-dir":        dataDir,
+		"--server-url":      "https://mcp.example",
+		"--file-scope":      cfg.FileScope,
+	}
+	for flag, expected := range wantPairs {
+		if !argumentPairExists(args, flag, expected) {
+			t.Fatalf("missing %s %q in %#v", flag, expected, args)
+		}
+	}
+	if !containsArgument(args, "--allow-network") {
+		t.Fatal("Go core launch arguments do not include --allow-network")
+	}
+	if countArgument(args, "--allowed-root") != 2 {
+		t.Fatalf("allowed root argument count = %d", countArgument(args, "--allowed-root"))
+	}
+}
+
+func TestLegacyCoreRemainsSelectable(t *testing.T) {
+	cfg := model.Config{
+		CoreMode:       "legacy",
+		CoreExecutable: `C:\legacy.exe`,
+		Workspace:      `C:\workspace`,
+		MCPHost:        "127.0.0.1",
+		MCPPort:        8765,
+		ToolProfile:    "full",
+		PermissionMode: "safe",
+	}
+	if selected := selectedMCPExecutable(cfg); selected != cfg.CoreExecutable {
+		t.Fatalf("selected executable = %q", selected)
+	}
+	args := mcpArguments(cfg, t.TempDir(), "http://127.0.0.1:8765")
+	if !argumentPairExists(args, "--shell-env-inherit", "core") {
+		t.Fatalf("legacy safe arguments missing shell env restriction: %#v", args)
+	}
+	if containsArgument(args, "--data-dir") {
+		t.Fatalf("legacy arguments unexpectedly contain Go-only flags: %#v", args)
+	}
+}
+
+func containsArgument(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func countArgument(values []string, expected string) int {
+	count := 0
+	for _, value := range values {
+		if value == expected {
+			count++
+		}
+	}
+	return count
+}
+
+func argumentPairExists(values []string, key, expected string) bool {
+	for index := 0; index+1 < len(values); index++ {
+		if values[index] == key && values[index+1] == expected {
+			return true
+		}
+	}
+	return false
 }

@@ -51,12 +51,13 @@ try {
     $CliOutput = Join-Path $DistDir "devdeskctl-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w" -o $CliOutput ./cmd/devdeskctl
 
-    $CorePreviewOutput = Join-Path $DistDir "mcp-core-preview-$Arch.exe"
-    go build -mod=vendor -trimpath -ldflags "-s -w" -o $CorePreviewOutput ./cmd/mcp-core
+    $CoreOutput = Join-Path $DistDir "mcp-core-$Arch.exe"
+    go build -mod=vendor -trimpath -ldflags "-s -w" -o $CoreOutput ./cmd/mcp-core
+    Copy-Item -LiteralPath $CoreOutput -Destination (Join-Path $DistDir "mcp-core.exe") -Force
 
     Write-Host "Build complete: $Output" -ForegroundColor Green
     Write-Host "CLI complete:   $CliOutput" -ForegroundColor Green
-    Write-Host "Core preview:   $CorePreviewOutput" -ForegroundColor Green
+    Write-Host "Go MCP core:    $CoreOutput" -ForegroundColor Green
 } finally {
     Pop-Location
 }

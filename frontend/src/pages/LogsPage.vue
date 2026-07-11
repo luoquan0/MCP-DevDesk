@@ -23,6 +23,7 @@ const sources = [
   { id: "tunnel-out", label: "Tunnel 输出", icon: "network" },
   { id: "login", label: "Cloudflare 登录", icon: "key" },
   { id: "watchdog", label: "运行守护", icon: "activity" },
+  { id: "audit", label: "MCP 审计", icon: "shield" },
 ];
 
 const diagnosticRows = computed(() => Object.entries(app.diagnostics || {}).filter(([key]) => !key.endsWith("Path") && !key.endsWith("Url")));

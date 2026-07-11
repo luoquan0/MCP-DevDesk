@@ -58,6 +58,7 @@ func NewStore(rootDir, dataDir string) (*Store, error) {
 func (s *Store) defaults() model.Config {
 	workspace := s.rootDir
 	core := filepath.Join(s.rootDir, "coding-tools-mcp.exe")
+	goCore := defaultGoCoreExecutable(s.rootDir)
 	cloudflared := filepath.Join(s.rootDir, "cloudflared.exe")
 
 	return model.Config{
@@ -75,11 +76,27 @@ func (s *Store) defaults() model.Config {
 		TunnelName:              "mcp-devdesk",
 		AutoStart:               false,
 		Watchdog:                true,
+		CoreMode:                "legacy",
 		CoreExecutable:          core,
+		GoCoreExecutable:        goCore,
 		CloudflaredExecutable:   cloudflared,
 		OpenBrowserOnStart:      true,
 		HideChildProcessWindows: true,
 	}
+}
+
+func defaultGoCoreExecutable(rootDir string) string {
+	candidates := []string{
+		filepath.Join(rootDir, "mcp-core.exe"),
+		filepath.Join(rootDir, "dist", "mcp-core.exe"),
+		filepath.Join(rootDir, "dist", "mcp-core-amd64.exe"),
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return candidates[0]
 }
 
 func (s *Store) normalize(cfg *model.Config) {
@@ -116,8 +133,14 @@ func (s *Store) normalize(cfg *model.Config) {
 	if cfg.TunnelName == "" {
 		cfg.TunnelName = "mcp-devdesk"
 	}
+	if cfg.CoreMode == "" {
+		cfg.CoreMode = "legacy"
+	}
 	if cfg.CoreExecutable == "" {
 		cfg.CoreExecutable = filepath.Join(s.rootDir, "coding-tools-mcp.exe")
+	}
+	if cfg.GoCoreExecutable == "" {
+		cfg.GoCoreExecutable = defaultGoCoreExecutable(s.rootDir)
 	}
 	if cfg.CloudflaredExecutable == "" {
 		cfg.CloudflaredExecutable = filepath.Join(s.rootDir, "cloudflared.exe")
@@ -128,6 +151,7 @@ func (s *Store) normalize(cfg *model.Config) {
 		cfg.AllowedRoots[i] = cleanPath(cfg.AllowedRoots[i])
 	}
 	cfg.CoreExecutable = cleanPath(cfg.CoreExecutable)
+	cfg.GoCoreExecutable = cleanPath(cfg.GoCoreExecutable)
 	cfg.CloudflaredExecutable = cleanPath(cfg.CloudflaredExecutable)
 	cfg.Domain = strings.ToLower(strings.TrimSpace(cfg.Domain))
 	cfg.TunnelName = strings.TrimSpace(cfg.TunnelName)
@@ -189,6 +213,11 @@ func Validate(cfg model.Config) error {
 	case "full", "read-only", "compat-readonly-all":
 	default:
 		return errors.New("unsupported tool profile")
+	}
+	switch cfg.CoreMode {
+	case "legacy", "go":
+	default:
+		return errors.New("coreMode must be legacy or go")
 	}
 	if cfg.Domain != "" && !ValidDomain(cfg.Domain) {
 		return errors.New("invalid domain")
@@ -301,6 +330,9 @@ func applyUpdate(cfg *model.Config, update model.ConfigUpdate) {
 	}
 	if update.Watchdog != nil {
 		cfg.Watchdog = *update.Watchdog
+	}
+	if update.CoreMode != nil {
+		cfg.CoreMode = *update.CoreMode
 	}
 	if update.OpenBrowserOnStart != nil {
 		cfg.OpenBrowserOnStart = *update.OpenBrowserOnStart

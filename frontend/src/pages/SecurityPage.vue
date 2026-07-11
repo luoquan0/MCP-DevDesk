@@ -16,6 +16,7 @@ const form = reactive({
   permissionMode: "safe" as PermissionMode,
   fileScope: "workspace" as FileScope,
   allowNetwork: false,
+  allowedRootsText: "",
 });
 
 watch(() => app.config, (config) => {
@@ -23,6 +24,7 @@ watch(() => app.config, (config) => {
   form.permissionMode = config.permissionMode;
   form.fileScope = config.fileScope;
   form.allowNetwork = config.allowNetwork;
+  form.allowedRootsText = (config.allowedRoots ?? []).join("\n");
 }, { immediate: true, deep: true });
 
 const modes = [
@@ -46,7 +48,9 @@ async function save() {
       permissionMode: form.permissionMode,
       fileScope: form.fileScope,
       allowNetwork: form.permissionMode !== "safe" ? true : form.allowNetwork,
+      allowedRoots: form.allowedRootsText.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
     });
+    if (app.status?.mcp.running) await app.serviceAction("restart");
   } catch (error) {
     ui.toast("权限保存失败", error instanceof Error ? error.message : String(error), "danger");
   }
@@ -109,6 +113,11 @@ async function save() {
             <span><strong>整台电脑</strong><small>Shell 可访问当前 Windows 用户拥有权限的位置。</small></span>
           </label>
         </div>
+        <label class="field security-roots-field">
+          <span>授权根目录</span>
+          <textarea v-model="form.allowedRootsText" rows="4" spellcheck="false" placeholder="每行填写一个目录，例如 D:\\Projects" />
+          <small>仅在“授权根目录”范围下生效；当前工作区始终自动允许。</small>
+        </label>
       </AppCard>
 
       <AppCard>

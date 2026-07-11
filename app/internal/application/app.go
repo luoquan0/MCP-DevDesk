@@ -214,8 +214,9 @@ func (a *App) Status() model.ServiceStatus {
 	}
 	portOwner, _ := processmanager.FindTCPListener(cfg.MCPPort)
 	managedPort := false
+	coreExecutable := selectedCoreExecutable(cfg)
 	if portOwner.Occupied && mcp.Running {
-		managedPort = portOwner.PID == mcp.PID || samePath(portOwner.ProcessPath, cfg.CoreExecutable)
+		managedPort = portOwner.PID == mcp.PID || samePath(portOwner.ProcessPath, coreExecutable)
 	}
 	oauthClientID := "mcp-devdesk"
 	if oauthValues, err := a.secrets.GetOrCreate(); err == nil && oauthValues.ClientID != "" {
@@ -243,6 +244,7 @@ func (a *App) Status() model.ServiceStatus {
 		OAuthClientID:   oauthClientID,
 		OAuthClientType: "confidential",
 		OAuthTokenAuth:  "client_secret_post",
+		CoreMode:        cfg.CoreMode,
 		MCP:             mcp,
 		MCPPortOwner: model.PortOwner{
 			Occupied:    portOwner.Occupied,
@@ -335,7 +337,10 @@ func (a *App) TakeoverAndStart(ctx context.Context) error {
 		return err
 	}
 	if owner.Occupied {
-		if !strings.EqualFold(owner.ProcessName, "coding-tools-mcp.exe") {
+		expectedName := filepath.Base(selectedCoreExecutable(cfg))
+		if !strings.EqualFold(owner.ProcessName, expectedName) &&
+			!strings.EqualFold(owner.ProcessName, "coding-tools-mcp.exe") &&
+			!strings.HasPrefix(strings.ToLower(owner.ProcessName), "mcp-core") {
 			return fmt.Errorf("端口 %d 被 %s（PID %d）占用，出于安全考虑不会自动终止非 MCP 进程", cfg.MCPPort, owner.ProcessName, owner.PID)
 		}
 		if err := processmanager.KillPortOwner(owner); err != nil {
@@ -657,6 +662,7 @@ func (a *App) Logs(name string, maxLines int) (model.LogResponse, error) {
 		"login":        filepath.Join(a.dataDir, "logs", "cloudflare-login.log"),
 		"login-error":  filepath.Join(a.dataDir, "logs", "cloudflare-login-error.log"),
 		"watchdog":     filepath.Join(a.dataDir, "logs", "watchdog.log"),
+		"audit":        filepath.Join(a.dataDir, "logs", "mcp-audit.jsonl"),
 	}
 	path, ok := paths[name]
 	if !ok {
@@ -673,14 +679,19 @@ func (a *App) Diagnostics() map[string]any {
 	cfg := a.config.Get()
 	mcp, tunnelStatus, _ := a.process.Status()
 	owner, _ := processmanager.FindTCPListener(cfg.MCPPort)
-	portHealthy := !owner.Occupied || (mcp.Running && (owner.PID == mcp.PID || samePath(owner.ProcessPath, cfg.CoreExecutable)))
+	coreExecutable := selectedCoreExecutable(cfg)
+	portHealthy := !owner.Occupied || (mcp.Running && (owner.PID == mcp.PID || samePath(owner.ProcessPath, coreExecutable)))
 	tunnelInventory, _ := a.tunnelInventoryForConfig(cfg, tunnelStatus)
 	result := map[string]any{
 		"version":                 Version,
 		"rootDirectory":           a.rootDir,
 		"dataDirectory":           a.dataDir,
 		"workspaceExists":         pathIsDirectory(cfg.Workspace),
-		"coreExists":              pathIsFile(cfg.CoreExecutable),
+		"coreMode":                cfg.CoreMode,
+		"coreExecutable":          coreExecutable,
+		"coreExists":              pathIsFile(coreExecutable),
+		"legacyCoreExists":        pathIsFile(cfg.CoreExecutable),
+		"goCoreExists":            pathIsFile(cfg.GoCoreExecutable),
 		"cloudflaredExists":       pathIsFile(cfg.CloudflaredExecutable),
 		"cloudflareAuthenticated": pathIsFile(processmanager.CertificatePath()),
 		"credentialsExist":        cfg.TunnelID != "" && pathIsFile(processmanager.CredentialsPath(cfg.TunnelID)),
@@ -709,7 +720,7 @@ func (a *App) configurationStatus(cfg model.Config) (bool, string) {
 	if !pathIsDirectory(cfg.Workspace) {
 		problems = append(problems, "工作区不存在")
 	}
-	if !pathIsFile(cfg.CoreExecutable) {
+	if !pathIsFile(selectedCoreExecutable(cfg)) {
 		problems = append(problems, "MCP 核心程序不存在")
 	}
 	if !pathIsFile(cfg.CloudflaredExecutable) {
@@ -1005,6 +1016,13 @@ func (a *App) waitForMCP(ctx context.Context, cfg model.Config, timeout time.Dur
 		}
 	}
 	return fmt.Errorf("timeout waiting for %s", address)
+}
+
+func selectedCoreExecutable(cfg model.Config) string {
+	if cfg.CoreMode == "go" {
+		return cfg.GoCoreExecutable
+	}
+	return cfg.CoreExecutable
 }
 
 func samePath(left, right string) bool {

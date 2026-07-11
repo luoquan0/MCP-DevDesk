@@ -5,16 +5,16 @@
 ### 安全模式
 
 - 默认禁止联网命令。
-- 拒绝内联脚本和 shell 展开。
-- 文件限制在工作区。
+- Go 核心完全拒绝文件写入、删除和命令执行。
+- 文件读取仍受 `fileScope` 限制。
 - 危险命令拒绝或申请确认。
 
 ### 信任模式
 
-- 允许 npm、pip、Git 等联网开发命令。
-- 允许内联脚本和常规 shell 展开。
-- 文件默认仍限制在工作区。
-- 系统级危险操作应请求确认。
+- 允许文件写入和直接可执行文件命令。
+- 兼容旧调用时可显式使用 `cmd` 字符串，由平台 Shell 执行。
+- 删除、覆盖目标和补丁删除必须显式 `confirm=true`。
+- 是否联网继续由 `allowNetwork` 控制。
 
 ### 危险模式
 
@@ -23,7 +23,9 @@
 - 仍受当前 Windows 用户、UAC、NTFS 和防病毒软件限制。
 - 文件访问范围仍由独立的 `fileScope` 控制。
 
-### 兼容旧核心时的边界
+命令会话不是操作系统级强沙箱。即使文件工具限制在工作区，信任/危险模式下启动的外部程序仍拥有当前 Windows 用户的系统权限。需要强隔离时应使用 Windows Sandbox、虚拟机或受限账户。
+
+### 双核心边界
 
 MVP 阶段仍调用现有 `coding-tools-mcp.exe`：
 
@@ -31,7 +33,7 @@ MVP 阶段仍调用现有 `coding-tools-mcp.exe`：
 - `dangerous` 模式下的 Shell 命令可能访问工作区外的路径，因为命令门控已关闭。
 - `roots` 和 `computer` 是新版 Go MCP 核心的目标模型；在兼容核心中不能对所有工具提供完全一致的多根目录隔离。
 
-因此，在 Go MCP 核心完成前，“危险模式 + 仅工作区”不能被视为强沙箱。界面必须持续显示该风险。
+Go 核心会对直接文件工具实施同样的范围检查，并阻止通过 `..` 或符号链接越界。旧核心仍保留用于回退，其历史限制不变。两种核心下，“危险模式 + 仅工作区”都不能被视为操作系统级强沙箱。
 
 ## 2. 文件范围
 
@@ -53,12 +55,14 @@ MVP 阶段仍调用现有 `coding-tools-mcp.exe`：
 
 ## 4. 密钥存储
 
-MVP 暂时兼容旧版文件。正式版必须使用 Windows DPAPI 加密：
+Windows 正式版使用当前用户 DPAPI 加密 `secrets.json`：
 
 - OAuth owner password
 - OAuth client secret
 - Cloudflare API Token
 - 其他长期凭证
+
+旧版明文 `secrets.json` 会在首次成功读取后自动迁移为加密信封。动态注册的 OAuth 客户端在 Windows 下同样使用当前用户 DPAPI 加密存储，因此轮换 Token 签名密钥不会导致客户端数据无法解密。
 
 Cloudflare Tunnel JSON 凭据继续由 `cloudflared` 放在用户配置目录，并限制文件 ACL。
 
@@ -76,7 +80,19 @@ Cloudflare Tunnel JSON 凭据继续由 `cloudflared` 放在用户配置目录，
 
 日志默认不记录敏感环境变量和完整 Token。
 
-## 6. Tunnel 进程控制
+Go 核心还会过滤命令子进程继承的常见敏感环境变量，包括密码、Token、API Key、私钥和授权头。命令参数、Shell 字符串、文件内容、补丁和图片数据在审计日志中只保存长度与 SHA-256 摘要。
+
+## 6. OAuth 与远程访问
+
+- 授权码流程必须使用 PKCE S256。
+- OAuth Token 绑定到精确的 MCP `resource` 受众。
+- 回调地址必须精确匹配；只允许 HTTPS 或本机回环 HTTP。
+- 刷新令牌使用一次后立即轮换，旧令牌不能重复使用。
+- MCP 未授权响应返回受保护资源元数据地址。
+- 浏览器 Origin 只允许本机或已配置的公开服务源，降低 DNS rebinding 风险。
+- 管理后台继续只监听回环地址，不经过 Cloudflare Tunnel。
+
+## 7. Tunnel 进程控制
 
 - 关闭进程接口仍受本机管理 API、Host 和 Origin 检查保护。
 - 根据 PID 关闭前会重新枚举进程，并确认该 PID 当前确实属于 `cloudflared.exe`。

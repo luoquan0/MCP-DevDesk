@@ -12,18 +12,21 @@ import { useUiStore, type ThemeMode } from "@/stores/ui";
 const app = useAppStore();
 const ui = useUiStore();
 const secretsLoading = ref(false);
+const secretsEncrypted = ref(false);
 const restartAfterSave = ref(true);
 const secretForm = reactive({
   ownerPassword: "",
   clientId: "",
   clientSecret: "",
   tokenSecret: "",
+  redirectUrisText: "",
 });
 const visible = reactive<Record<keyof typeof secretForm, boolean>>({
   ownerPassword: false,
   clientId: true,
   clientSecret: false,
   tokenSecret: false,
+  redirectUrisText: true,
 });
 
 const themes: Array<{ id: ThemeMode; label: string; description: string; icon: string }> = [
@@ -48,6 +51,8 @@ async function loadSecrets() {
     secretForm.clientId = values.clientId ?? "";
     secretForm.clientSecret = values.clientSecret ?? "";
     secretForm.tokenSecret = values.tokenSecret ?? "";
+    secretForm.redirectUrisText = (values.redirectUris ?? []).join("\n");
+    secretsEncrypted.value = Boolean(values.encryptedAtRest);
   } catch (error) {
     ui.toast("读取凭据失败", error instanceof Error ? error.message : String(error), "danger");
   } finally {
@@ -55,7 +60,7 @@ async function loadSecrets() {
   }
 }
 
-async function generateSecret(field: keyof typeof secretForm | "all") {
+async function generateSecret(field: "ownerPassword" | "clientId" | "clientSecret" | "tokenSecret" | "all") {
   try {
     const values = await app.generateSecret(field);
     if (values.ownerPassword) secretForm.ownerPassword = values.ownerPassword;
@@ -85,8 +90,10 @@ async function saveSecrets() {
       clientId: secretForm.clientId,
       clientSecret: secretForm.clientSecret,
       tokenSecret: secretForm.tokenSecret,
+      redirectUris: secretForm.redirectUrisText.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
       restart: restartAfterSave.value,
     });
+    secretsEncrypted.value = Boolean(result.secrets.encryptedAtRest);
     if (result.restartError) {
       ui.toast("凭据已保存，但重启失败", result.restartError, "danger");
       return;
@@ -177,6 +184,7 @@ onMounted(loadSecrets);
           <p>可使用自定义值，也可以由系统安全随机生成。所有内容仅通过本机管理接口读取和修改。</p>
         </div>
         <div class="credentials-heading-actions">
+          <StatusPill :tone="secretsEncrypted ? 'success' : 'warning'">{{ secretsEncrypted ? 'DPAPI encrypted' : 'Platform fallback' }}</StatusPill>
           <AppButton tone="secondary" icon="refresh" :loading="secretsLoading" @click="loadSecrets">重新读取</AppButton>
           <AppButton tone="secondary" icon="key" @click="generateSecret('all')">全部随机生成</AppButton>
         </div>
@@ -219,6 +227,14 @@ onMounted(loadSecrets);
             <AppButton tone="quiet" compact @click="visible.tokenSecret = !visible.tokenSecret">{{ visible.tokenSecret ? '隐藏' : '显示' }}</AppButton>
             <AppButton tone="quiet" compact icon="copy" @click="copySecret('Token 签名密钥', secretForm.tokenSecret)">复制</AppButton>
             <AppButton tone="quiet" compact icon="refresh" @click="generateSecret('tokenSecret')">随机</AppButton>
+          </div>
+        </div>
+
+        <div class="credential-field">
+          <span class="credential-label"><strong>OAuth 回调地址</strong><small>静态客户端使用；每行一个，必须是 HTTPS 或本机回环 HTTP 地址。</small></span>
+          <div class="credential-input-row credential-textarea-row">
+            <textarea v-model="secretForm.redirectUrisText" rows="3" spellcheck="false" placeholder="https://example.com/oauth/callback" />
+            <AppButton tone="quiet" compact icon="copy" @click="copySecret('OAuth 回调地址', secretForm.redirectUrisText)">复制</AppButton>
           </div>
         </div>
 

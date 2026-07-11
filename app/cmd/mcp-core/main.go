@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,9 +21,19 @@ import (
 )
 
 func main() {
+	var allowedRoots stringListFlag
 	workspace := flag.String("workspace", ".", "workspace exposed by the Go MCP preview core")
 	host := flag.String("host", "127.0.0.1", "listen host")
 	port := flag.Int("port", 18765, "listen port")
+	permissionMode := flag.String("permission-mode", envOrDefault("CODING_TOOLS_MCP_PERMISSION_MODE", "safe"), "safe, trusted, or dangerous")
+	fileScope := flag.String("file-scope", envOrDefault("CODING_TOOLS_MCP_FILE_SCOPE", "workspace"), "workspace, roots, or computer")
+	flag.Var(&allowedRoots, "allowed-root", "additional allowed root directory; may be repeated")
+	allowNetwork := flag.Bool("allow-network", false, "allow command sessions to use network-capable tools")
+	oauthMode := flag.Bool("oauth-mode", false, "enable OAuth 2.1 authorization")
+	dataDir := flag.String("data-dir", "", "data directory for OAuth clients and audit logs")
+	serverURL := flag.String("server-url", os.Getenv("CODING_TOOLS_MCP_SERVER_URL"), "public server base URL used for OAuth metadata")
+	auditPath := flag.String("audit-path", "", "JSONL audit log path")
+	toolProfile := flag.String("tool-profile", envOrDefault("CODING_TOOLS_MCP_TOOL_PROFILE", "full"), "full, read-only, or compat-readonly-all")
 	flag.Parse()
 
 	resolvedWorkspace, err := filepath.Abs(*workspace)
@@ -39,12 +50,64 @@ func main() {
 	if ip := net.ParseIP(*host); ip == nil || !ip.IsLoopback() {
 		log.Fatalf("preview core host must be a loopback IP")
 	}
+	resolvedDataDir := strings.TrimSpace(*dataDir)
+	if resolvedDataDir == "" {
+		resolvedDataDir = filepath.Join(resolvedWorkspace, ".mcp-devdesk")
+	}
+	if absoluteDataDir, absErr := filepath.Abs(resolvedDataDir); absErr == nil {
+		resolvedDataDir = absoluteDataDir
+	}
+	if err := os.MkdirAll(resolvedDataDir, 0o700); err != nil {
+		log.Fatalf("create data directory: %v", err)
+	}
+	resolvedAuditPath := strings.TrimSpace(*auditPath)
+	if resolvedAuditPath == "" {
+		resolvedAuditPath = filepath.Join(resolvedDataDir, "logs", "mcp-audit.jsonl")
+	}
 
-	core := mcpcore.New(mcpcore.Options{
-		Name:      "mcp-devdesk-go-core",
-		Version:   buildinfo.Version,
-		Workspace: resolvedWorkspace,
+	baseURL := strings.TrimSuffix(strings.TrimSpace(*serverURL), "/")
+	if baseURL == "" {
+		baseURL = "http://" + net.JoinHostPort(*host, strconv.Itoa(*port))
+	}
+	resourceURL := baseURL
+	if !strings.HasSuffix(strings.ToLower(resourceURL), "/mcp") {
+		resourceURL += "/mcp"
+	}
+	issuerURL := strings.TrimSuffix(baseURL, "/mcp")
+	oauthOptions := mcpcore.OAuthOptions{}
+	if *oauthMode {
+		oauthOptions = mcpcore.OAuthOptions{
+			Enabled:         true,
+			Issuer:          issuerURL,
+			Resource:        resourceURL,
+			OwnerPassword:   os.Getenv("CODING_TOOLS_MCP_OAUTH_PASSWORD"),
+			ClientID:        envOrDefault("CODING_TOOLS_MCP_OAUTH_CLIENT_ID", "mcp-devdesk"),
+			ClientSecret:    os.Getenv("CODING_TOOLS_MCP_OAUTH_CLIENT_SECRET"),
+			RedirectURIs:    splitEnvLines(os.Getenv("CODING_TOOLS_MCP_OAUTH_REDIRECT_URIS")),
+			TokenSecret:     os.Getenv("CODING_TOOLS_MCP_OAUTH_TOKEN_SECRET"),
+			DataDir:         resolvedDataDir,
+			AccessTokenTTL:  durationFromEnv("CODING_TOOLS_MCP_ACCESS_TOKEN_TTL", time.Hour),
+			RefreshTokenTTL: durationFromEnv("CODING_TOOLS_MCP_REFRESH_TOKEN_TTL", 30*24*time.Hour),
+		}
+	}
+
+	core, err := mcpcore.New(mcpcore.Options{
+		Name:           "mcp-devdesk-go-core",
+		Version:        buildinfo.Version,
+		Workspace:      resolvedWorkspace,
+		PermissionMode: *permissionMode,
+		AllowNetwork:   *allowNetwork,
+		AuditPath:      resolvedAuditPath,
+		FileScope:      *fileScope,
+		AllowedRoots:   append([]string(nil), allowedRoots...),
+		ToolProfile:    *toolProfile,
+		OAuth:          oauthOptions,
+		AllowedOrigins: []string{issuerURL},
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer core.Close()
 	address := net.JoinHostPort(*host, strconv.Itoa(*port))
 	server := &http.Server{
 		Addr:              address,
@@ -83,4 +146,50 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+type stringListFlag []string
+
+func (values *stringListFlag) String() string {
+	return strings.Join(*values, ",")
+}
+
+func (values *stringListFlag) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		*values = append(*values, value)
+	}
+	return nil
+}
+
+func envOrDefault(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func durationFromEnv(name string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	if duration, err := time.ParseDuration(value); err == nil && duration > 0 {
+		return duration
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return fallback
+}
+
+func splitEnvLines(value string) []string {
+	result := make([]string, 0)
+	for _, line := range strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			result = append(result, line)
+		}
+	}
+	return result
 }

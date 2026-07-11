@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode/utf8"
 )
@@ -21,24 +22,32 @@ const (
 )
 
 type readFileArgs struct {
-	Path      string `json:"path"`
-	StartLine int    `json:"startLine,omitempty"`
-	EndLine   int    `json:"endLine,omitempty"`
-	MaxBytes  int    `json:"maxBytes,omitempty"`
+	Path           string `json:"path"`
+	StartLine      int    `json:"startLine,omitempty"`
+	StartLineSnake int    `json:"start_line,omitempty"`
+	EndLine        int    `json:"endLine,omitempty"`
+	EndLineSnake   int    `json:"end_line,omitempty"`
+	MaxBytes       int    `json:"maxBytes,omitempty"`
+	MaxBytesSnake  int    `json:"max_bytes,omitempty"`
 }
 
 type listDirArgs struct {
-	Path          string `json:"path,omitempty"`
-	IncludeHidden bool   `json:"includeHidden,omitempty"`
-	MaxEntries    int    `json:"maxEntries,omitempty"`
+	Path               string `json:"path,omitempty"`
+	IncludeHidden      bool   `json:"includeHidden,omitempty"`
+	IncludeHiddenSnake bool   `json:"include_hidden,omitempty"`
+	MaxEntries         int    `json:"maxEntries,omitempty"`
+	MaxEntriesSnake    int    `json:"max_entries,omitempty"`
 }
 
 type searchTextArgs struct {
-	Query         string `json:"query"`
-	Path          string `json:"path,omitempty"`
-	CaseSensitive bool   `json:"caseSensitive,omitempty"`
-	IncludeHidden bool   `json:"includeHidden,omitempty"`
-	MaxResults    int    `json:"maxResults,omitempty"`
+	Query              string `json:"query"`
+	Path               string `json:"path,omitempty"`
+	CaseSensitive      bool   `json:"caseSensitive,omitempty"`
+	CaseSensitiveSnake bool   `json:"case_sensitive,omitempty"`
+	IncludeHidden      bool   `json:"includeHidden,omitempty"`
+	IncludeHiddenSnake bool   `json:"include_hidden,omitempty"`
+	MaxResults         int    `json:"maxResults,omitempty"`
+	MaxResultsSnake    int    `json:"max_results,omitempty"`
 }
 
 type directoryEntry struct {
@@ -64,10 +73,13 @@ func previewFileTools() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path":      map[string]any{"type": "string", "description": "Workspace-relative or in-workspace absolute path."},
-					"startLine": map[string]any{"type": "integer", "minimum": 1, "default": 1},
-					"endLine":   map[string]any{"type": "integer", "minimum": 1},
-					"maxBytes":  map[string]any{"type": "integer", "minimum": 1, "maximum": maxToolOutputBytes, "default": defaultToolOutputBytes},
+					"path":       map[string]any{"type": "string", "description": "Workspace-relative or allowed absolute path."},
+					"startLine":  map[string]any{"type": "integer", "minimum": 1, "default": 1},
+					"start_line": map[string]any{"type": "integer", "minimum": 1, "description": "Legacy alias for startLine."},
+					"endLine":    map[string]any{"type": "integer", "minimum": 1},
+					"end_line":   map[string]any{"type": "integer", "minimum": 1, "description": "Legacy alias for endLine."},
+					"maxBytes":   map[string]any{"type": "integer", "minimum": 1, "maximum": maxToolOutputBytes, "default": defaultToolOutputBytes},
+					"max_bytes":  map[string]any{"type": "integer", "minimum": 1, "maximum": maxToolOutputBytes, "description": "Legacy alias for maxBytes."},
 				},
 				"required":             []string{"path"},
 				"additionalProperties": false,
@@ -80,9 +92,11 @@ func previewFileTools() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path":          map[string]any{"type": "string", "default": "."},
-					"includeHidden": map[string]any{"type": "boolean", "default": false},
-					"maxEntries":    map[string]any{"type": "integer", "minimum": 1, "maximum": 5000, "default": 500},
+					"path":           map[string]any{"type": "string", "default": "."},
+					"includeHidden":  map[string]any{"type": "boolean", "default": false},
+					"include_hidden": map[string]any{"type": "boolean", "description": "Legacy alias for includeHidden."},
+					"maxEntries":     map[string]any{"type": "integer", "minimum": 1, "maximum": 5000, "default": 500},
+					"max_entries":    map[string]any{"type": "integer", "minimum": 1, "maximum": 5000, "description": "Legacy alias for maxEntries."},
 				},
 				"additionalProperties": false,
 			},
@@ -94,11 +108,14 @@ func previewFileTools() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"query":         map[string]any{"type": "string", "minLength": 1},
-					"path":          map[string]any{"type": "string", "default": "."},
-					"caseSensitive": map[string]any{"type": "boolean", "default": false},
-					"includeHidden": map[string]any{"type": "boolean", "default": false},
-					"maxResults":    map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
+					"query":          map[string]any{"type": "string", "minLength": 1},
+					"path":           map[string]any{"type": "string", "default": "."},
+					"caseSensitive":  map[string]any{"type": "boolean", "default": false},
+					"case_sensitive": map[string]any{"type": "boolean", "description": "Legacy alias for caseSensitive."},
+					"includeHidden":  map[string]any{"type": "boolean", "default": false},
+					"include_hidden": map[string]any{"type": "boolean", "description": "Legacy alias for includeHidden."},
+					"maxResults":     map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
+					"max_results":    map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "description": "Legacy alias for maxResults."},
 				},
 				"required":             []string{"query"},
 				"additionalProperties": false,
@@ -108,6 +125,9 @@ func previewFileTools() []Tool {
 }
 
 func (s *Server) executeTool(name string, arguments map[string]any) (map[string]any, error) {
+	if s.toolProfile != "full" && isMutatingOrCommandTool(name) {
+		return nil, fmt.Errorf("tool %s is disabled by the %s tool profile", name, s.toolProfile)
+	}
 	switch name {
 	case "server_info":
 		return map[string]any{
@@ -115,9 +135,14 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 			"version":         s.version,
 			"protocolVersion": ProtocolVersion,
 			"transport":       "streamable-http",
-			"coreMode":        "go-preview",
+			"coreMode":        "go",
 			"workspace":       s.workspace,
 			"toolCount":       len(s.tools),
+			"permissionMode":  s.permissionMode,
+			"toolProfile":     s.toolProfile,
+			"allowNetwork":    s.allowNetwork,
+			"fileScope":       s.fileScope,
+			"oauthEnabled":    s.oauth != nil,
 			"uptimeSeconds":   s.uptimeSeconds(),
 		}, nil
 	case "get_workspace":
@@ -144,8 +169,28 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 			return nil, err
 		}
 		return s.searchText(args)
+	case "write_file", "replace_text", "apply_patch", "make_directory", "move_path", "delete_path":
+		return s.executeWriteTool(name, arguments)
+	case "exec_command", "read_output", "write_stdin", "kill_session":
+		return s.executeCommandTool(name, arguments)
+	case "git_status", "git_diff", "git_log", "git_show", "git_worktrees":
+		return s.executeGitTool(name, arguments)
+	case "permission_status", "request_permissions":
+		return s.executePermissionTool(name, arguments)
+	case "check_exec_environment", "get_default_cwd", "set_default_cwd", "list_files", "git_blame", "write_image", "save_chatgpt_image", "view_image":
+		return s.executeCompatibilityTool(name, arguments)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
+}
+
+func isMutatingOrCommandTool(name string) bool {
+	switch name {
+	case "write_file", "replace_text", "apply_patch", "make_directory", "move_path", "delete_path",
+		"exec_command", "read_output", "write_stdin", "kill_session", "write_image", "save_chatgpt_image":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -163,6 +208,15 @@ func decodeToolArguments(arguments map[string]any, target any) error {
 }
 
 func (s *Server) readFile(args readFileArgs) (map[string]any, error) {
+	if args.StartLine <= 0 {
+		args.StartLine = args.StartLineSnake
+	}
+	if args.EndLine <= 0 {
+		args.EndLine = args.EndLineSnake
+	}
+	if args.MaxBytes <= 0 {
+		args.MaxBytes = args.MaxBytesSnake
+	}
 	if strings.TrimSpace(args.Path) == "" {
 		return nil, errors.New("path is required")
 	}
@@ -240,6 +294,10 @@ func (s *Server) readFile(args readFileArgs) (map[string]any, error) {
 }
 
 func (s *Server) listDir(args listDirArgs) (map[string]any, error) {
+	args.IncludeHidden = args.IncludeHidden || args.IncludeHiddenSnake
+	if args.MaxEntries <= 0 {
+		args.MaxEntries = args.MaxEntriesSnake
+	}
 	if strings.TrimSpace(args.Path) == "" {
 		args.Path = "."
 	}
@@ -287,6 +345,11 @@ func (s *Server) listDir(args listDirArgs) (map[string]any, error) {
 }
 
 func (s *Server) searchText(args searchTextArgs) (map[string]any, error) {
+	args.CaseSensitive = args.CaseSensitive || args.CaseSensitiveSnake
+	args.IncludeHidden = args.IncludeHidden || args.IncludeHiddenSnake
+	if args.MaxResults <= 0 {
+		args.MaxResults = args.MaxResultsSnake
+	}
 	query := strings.TrimSpace(args.Query)
 	if query == "" {
 		return nil, errors.New("query is required")
@@ -405,7 +468,7 @@ func (s *Server) workspaceRoot() (string, error) {
 }
 
 func (s *Server) resolveWorkspacePath(value string) (root, target, relative string, err error) {
-	root, err = s.workspaceRoot()
+	workspace, err := s.workspaceRoot()
 	if err != nil {
 		return "", "", "", err
 	}
@@ -416,7 +479,7 @@ func (s *Server) resolveWorkspacePath(value string) (root, target, relative stri
 	if filepath.IsAbs(value) {
 		target = filepath.Clean(value)
 	} else {
-		target = filepath.Join(root, value)
+		target = filepath.Join(s.currentDefaultCWD(), value)
 	}
 	target, err = filepath.Abs(target)
 	if err != nil {
@@ -426,8 +489,9 @@ func (s *Server) resolveWorkspacePath(value string) (root, target, relative stri
 	if evaluated, evalErr := filepath.EvalSymlinks(target); evalErr == nil {
 		target = filepath.Clean(evaluated)
 	}
-	if !pathWithin(root, target) {
-		return "", "", "", errors.New("path escapes the configured workspace")
+	root, err = s.allowedRootFor(target)
+	if err != nil {
+		return "", "", "", err
 	}
 	relative, err = filepath.Rel(root, target)
 	if err != nil {
@@ -436,7 +500,56 @@ func (s *Server) resolveWorkspacePath(value string) (root, target, relative stri
 	if relative == "." {
 		return root, target, ".", nil
 	}
+	if !sameFilesystemPath(root, workspace) && s.fileScope != "workspace" {
+		return root, target, filepath.ToSlash(target), nil
+	}
 	return root, target, filepath.ToSlash(relative), nil
+}
+
+func (s *Server) allowedRootFor(target string) (string, error) {
+	workspace, err := s.workspaceRoot()
+	if err != nil {
+		return "", err
+	}
+	switch s.fileScope {
+	case "workspace":
+		if pathWithin(workspace, target) {
+			return workspace, nil
+		}
+		return "", errors.New("path escapes the configured workspace")
+	case "roots":
+		roots := append([]string{workspace}, s.allowedRoots...)
+		best := ""
+		for _, configured := range roots {
+			configured = strings.TrimSpace(configured)
+			if configured == "" {
+				continue
+			}
+			absolute, absErr := filepath.Abs(configured)
+			if absErr != nil {
+				continue
+			}
+			absolute = filepath.Clean(absolute)
+			if evaluated, evalErr := filepath.EvalSymlinks(absolute); evalErr == nil {
+				absolute = filepath.Clean(evaluated)
+			}
+			if pathWithin(absolute, target) && len(absolute) > len(best) {
+				best = absolute
+			}
+		}
+		if best == "" {
+			return "", errors.New("path is outside the configured allowed roots")
+		}
+		return best, nil
+	case "computer":
+		volume := filepath.VolumeName(target)
+		if volume != "" {
+			return filepath.Clean(volume + string(filepath.Separator)), nil
+		}
+		return string(filepath.Separator), nil
+	default:
+		return "", errors.New("invalid file scope")
+	}
 }
 
 func pathWithin(root, target string) bool {
@@ -445,6 +558,15 @@ func pathWithin(root, target string) bool {
 		return false
 	}
 	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+}
+
+func sameFilesystemPath(left, right string) bool {
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 func entryType(entry fs.DirEntry) string {

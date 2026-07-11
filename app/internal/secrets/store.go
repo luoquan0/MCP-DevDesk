@@ -2,10 +2,13 @@ package secrets
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,10 +19,17 @@ import (
 )
 
 type Values struct {
-	OwnerPassword string `json:"ownerPassword"`
-	ClientID      string `json:"clientId"`
-	ClientSecret  string `json:"clientSecret"`
-	TokenSecret   string `json:"tokenSecret"`
+	OwnerPassword string   `json:"ownerPassword"`
+	ClientID      string   `json:"clientId"`
+	ClientSecret  string   `json:"clientSecret"`
+	TokenSecret   string   `json:"tokenSecret"`
+	RedirectURIs  []string `json:"redirectUris,omitempty"`
+}
+
+type secretEnvelope struct {
+	Version    int    `json:"version"`
+	Protection string `json:"protection"`
+	Data       string `json:"data"`
 }
 
 type Store struct {
@@ -41,10 +51,35 @@ func (s *Store) GetOrCreate() (Values, error) {
 
 func (s *Store) getOrCreateLocked() (Values, error) {
 	if raw, err := os.ReadFile(s.path); err == nil {
-		var values Values
-		if err := json.Unmarshal(raw, &values); err == nil && validate(values) == nil {
+		var envelope secretEnvelope
+		if json.Unmarshal(raw, &envelope) == nil && envelope.Version == 2 && envelope.Data != "" {
+			protected, decodeErr := base64.StdEncoding.DecodeString(envelope.Data)
+			if decodeErr != nil {
+				return Values{}, fmt.Errorf("decode stored secrets: %w", decodeErr)
+			}
+			plain, unprotectErr := unprotectData(protected)
+			if unprotectErr != nil {
+				return Values{}, fmt.Errorf("decrypt stored secrets: %w", unprotectErr)
+			}
+			var values Values
+			if unmarshalErr := json.Unmarshal(plain, &values); unmarshalErr != nil {
+				return Values{}, fmt.Errorf("parse decrypted secrets: %w", unmarshalErr)
+			}
+			if validateErr := validate(values); validateErr != nil {
+				return Values{}, fmt.Errorf("validate decrypted secrets: %w", validateErr)
+			}
 			return values, nil
 		}
+		var values Values
+		if err := json.Unmarshal(raw, &values); err == nil && validate(values) == nil {
+			if saveErr := s.saveLocked(values); saveErr != nil {
+				return Values{}, fmt.Errorf("migrate plaintext secrets: %w", saveErr)
+			}
+			return values, nil
+		}
+		return Values{}, errors.New("stored secrets file is invalid and was not overwritten")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Values{}, fmt.Errorf("read secrets: %w", err)
 	}
 
 	ownerPassword, err := randomHex(24)
@@ -75,7 +110,20 @@ func (s *Store) saveLocked(values Values) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("create secrets directory: %w", err)
 	}
-	raw, err := json.MarshalIndent(values, "", "  ")
+	plain, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+	protected, err := protectData(plain)
+	if err != nil {
+		return fmt.Errorf("encrypt secrets: %w", err)
+	}
+	envelope := secretEnvelope{
+		Version:    2,
+		Protection: protectionName(),
+		Data:       base64.StdEncoding.EncodeToString(protected),
+	}
+	raw, err := json.MarshalIndent(envelope, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -95,7 +143,7 @@ func (s *Store) Summary(reveal bool) (model.SecretSummary, error) {
 		return model.SecretSummary{}, err
 	}
 	if !reveal {
-		return model.SecretSummary{ClientID: values.ClientID, Configured: true}, nil
+		return model.SecretSummary{ClientID: values.ClientID, Configured: true, EncryptedAtRest: encryptionAvailable()}, nil
 	}
 	return summary(values), nil
 }
@@ -119,6 +167,12 @@ func (s *Store) Update(request model.SecretUpdateRequest) (model.SecretSummary, 
 	}
 	if request.TokenSecret != nil {
 		values.TokenSecret = *request.TokenSecret
+	}
+	if request.RedirectURIs != nil {
+		values.RedirectURIs = append([]string(nil), (*request.RedirectURIs)...)
+	}
+	for index := range values.RedirectURIs {
+		values.RedirectURIs[index] = strings.TrimSpace(values.RedirectURIs[index])
 	}
 	if err := validate(values); err != nil {
 		return model.SecretSummary{}, err
@@ -175,11 +229,13 @@ func (s *Store) Generate(field string) (model.SecretSummary, error) {
 
 func summary(values Values) model.SecretSummary {
 	return model.SecretSummary{
-		OwnerPassword: values.OwnerPassword,
-		ClientID:      values.ClientID,
-		ClientSecret:  values.ClientSecret,
-		TokenSecret:   values.TokenSecret,
-		Configured:    true,
+		OwnerPassword:   values.OwnerPassword,
+		ClientID:        values.ClientID,
+		ClientSecret:    values.ClientSecret,
+		TokenSecret:     values.TokenSecret,
+		Configured:      true,
+		EncryptedAtRest: encryptionAvailable(),
+		RedirectURIs:    append([]string(nil), values.RedirectURIs...),
 	}
 }
 
@@ -205,6 +261,49 @@ func validate(values Values) error {
 	if _, err := hex.DecodeString(values.TokenSecret); err != nil {
 		return errors.New("token secret must contain exactly 64 hexadecimal characters")
 	}
+	if len(values.RedirectURIs) > 20 {
+		return errors.New("no more than 20 OAuth redirect URIs are allowed")
+	}
+	seen := make(map[string]struct{}, len(values.RedirectURIs))
+	for index, redirectURI := range values.RedirectURIs {
+		redirectURI = strings.TrimSpace(redirectURI)
+		if redirectURI == "" {
+			return fmt.Errorf("redirect URI %d is empty", index+1)
+		}
+		if _, exists := seen[redirectURI]; exists {
+			return fmt.Errorf("redirect URI %d is duplicated", index+1)
+		}
+		if err := validateRedirectURI(redirectURI); err != nil {
+			return fmt.Errorf("redirect URI %d: %w", index+1, err)
+		}
+		seen[redirectURI] = struct{}{}
+		values.RedirectURIs[index] = redirectURI
+	}
+	return nil
+}
+
+func validateRedirectURI(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("must be an absolute URI")
+	}
+	if parsed.Fragment != "" || parsed.User != nil {
+		return errors.New("must not contain a fragment or user info")
+	}
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return nil
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") {
+		return errors.New("must use HTTPS, except loopback HTTP callbacks")
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return errors.New("HTTP callback host must be loopback")
+	}
 	return nil
 }
 
@@ -224,3 +323,19 @@ func randomHex(bytesCount int) (string, error) {
 	}
 	return hex.EncodeToString(buffer), nil
 }
+
+// ProtectForCurrentUser protects arbitrary local application data using the
+// same platform mechanism as the secret store. On Windows this is current-user
+// DPAPI; non-Windows builds use the documented platform fallback.
+func ProtectForCurrentUser(value []byte) ([]byte, error) {
+	return protectData(value)
+}
+
+// UnprotectForCurrentUser reverses ProtectForCurrentUser.
+func UnprotectForCurrentUser(value []byte) ([]byte, error) {
+	return unprotectData(value)
+}
+
+func ProtectionName() string { return protectionName() }
+
+func EncryptionAvailable() bool { return encryptionAvailable() }
