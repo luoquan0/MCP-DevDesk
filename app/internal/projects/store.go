@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -28,14 +29,23 @@ type Store struct {
 
 func NewStore(dataDir, initialWorkspace string) (*Store, error) {
 	s := &Store{path: filepath.Join(dataDir, "projects.json")}
+	changed := false
 	if raw, err := os.ReadFile(s.path); err == nil {
 		if err := json.Unmarshal(raw, &s.data); err != nil {
 			return nil, fmt.Errorf("parse projects: %w", err)
 		}
+		original := append([]Project(nil), s.data...)
+		s.data = normalizeProjects(s.data)
+		changed = !reflect.DeepEqual(original, s.data)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read projects: %w", err)
 	}
-	if len(s.data) == 0 && initialWorkspace != "" {
+	if changed {
+		if err := s.saveLocked(); err != nil {
+			return nil, fmt.Errorf("migrate projects: %w", err)
+		}
+	}
+	if initialWorkspace != "" {
 		if _, err := s.Add("", initialWorkspace); err != nil {
 			return nil, err
 		}
@@ -52,11 +62,10 @@ func (s *Store) List() []Project {
 }
 
 func (s *Store) Add(name, path string) (Project, error) {
-	abs, err := filepath.Abs(strings.TrimSpace(path))
+	abs, err := canonicalPath(path)
 	if err != nil {
 		return Project{}, fmt.Errorf("resolve project path: %w", err)
 	}
-	abs = filepath.Clean(abs)
 	info, err := os.Stat(abs)
 	if err != nil || !info.IsDir() {
 		return Project{}, errors.New("project path must be an existing directory")
@@ -70,7 +79,7 @@ func (s *Store) Add(name, path string) (Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, item := range s.data {
-		if strings.EqualFold(item.Path, abs) {
+		if samePath(item.Path, abs) {
 			return item, nil
 		}
 	}
@@ -112,7 +121,7 @@ func (s *Store) Remove(id, activePath string) error {
 	defer s.mu.Unlock()
 	for i, item := range s.data {
 		if item.ID == id {
-			if strings.EqualFold(item.Path, activePath) {
+			if samePath(item.Path, activePath) {
 				return errors.New("cannot remove the active project")
 			}
 			s.data = append(s.data[:i], s.data[i+1:]...)
@@ -140,4 +149,56 @@ func projectID(path string) string {
 		value = (value ^ uint64(b)) * 1099511628211
 	}
 	return fmt.Sprintf("project-%016x", value)
+}
+
+func canonicalPath(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", errors.New("project path is required")
+	}
+	abs, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
+}
+
+func samePath(left, right string) bool {
+	leftPath, leftErr := canonicalPath(left)
+	rightPath, rightErr := canonicalPath(right)
+	if leftErr != nil || rightErr != nil {
+		return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+	}
+	return strings.EqualFold(leftPath, rightPath)
+}
+
+func normalizeProjects(items []Project) []Project {
+	result := make([]Project, 0, len(items))
+	indexes := make(map[string]int, len(items))
+	for _, item := range items {
+		path, err := canonicalPath(item.Path)
+		if err != nil {
+			continue
+		}
+		item.Path = path
+		item.ID = projectID(path)
+		item.Name = strings.TrimSpace(item.Name)
+		if item.Name == "" {
+			item.Name = filepath.Base(path)
+		}
+		key := strings.ToLower(path)
+		if index, exists := indexes[key]; exists {
+			existing := &result[index]
+			if item.LastOpenedAt.After(existing.LastOpenedAt) {
+				existing.LastOpenedAt = item.LastOpenedAt
+			}
+			if existing.AddedAt.IsZero() || (!item.AddedAt.IsZero() && item.AddedAt.Before(existing.AddedAt)) {
+				existing.AddedAt = item.AddedAt
+			}
+			continue
+		}
+		indexes[key] = len(result)
+		result = append(result, item)
+	}
+	return result
 }

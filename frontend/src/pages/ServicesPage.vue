@@ -53,7 +53,6 @@ async function save() {
     if (form.mcpPort === form.adminPort) throw new Error("MCP 端口和管理端口不能相同。");
     const oldPort = app.config?.mcpPort;
     await app.saveConfig({
-      workspace: form.workspace,
       adminPort: Number(form.adminPort),
       toolProfile: form.toolProfile as "full" | "read-only" | "compat-readonly-all",
       autoStart: form.autoStart,
@@ -141,8 +140,8 @@ async function save() {
         <div class="field-grid">
           <label class="field span-2">
             <span>工作目录</span>
-            <input v-model="form.workspace" type="text" spellcheck="false" />
-            <small>直接文件工具以此目录作为当前项目根。</small>
+            <input v-model="form.workspace" type="text" spellcheck="false" readonly />
+            <small>工作目录请在“项目”页面切换，确保 MCP 能安全热重启并在失败时回滚。</small>
           </label>
           <label class="field">
             <span>MCP 端口</span>

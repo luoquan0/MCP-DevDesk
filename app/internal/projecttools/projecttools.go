@@ -153,6 +153,7 @@ func git(path string, args ...string) (string, error) {
 func gitBytes(path string, args ...string) ([]byte, error) {
 	all := append([]string{"-C", path}, args...)
 	cmd := exec.Command("git", all...)
+	configureCommand(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

@@ -61,7 +61,7 @@ export const useAppStore = defineStore("app", {
         this.connectionError = "";
       } catch (error) {
         this.connectionError = error instanceof Error ? error.message : String(error);
-        if (!silent) throw error;
+        if (!silent) useUiStore().toast("刷新状态失败", this.connectionError, "danger");
       } finally {
         this.refreshing = false;
       }
@@ -100,6 +100,15 @@ export const useAppStore = defineStore("app", {
     async loadProjectDiff(id: string) {
       this.projectDiffs[id] = await api<ProjectDiff>(`/api/projects/${encodeURIComponent(id)}/diff`);
       return this.projectDiffs[id];
+    },
+    async inspectProject(id: string) {
+      const [details, diff] = await this.runAction(`inspect-${id}`, () => Promise.all([
+        api<ProjectDetails>(`/api/projects/${encodeURIComponent(id)}/details`),
+        api<ProjectDiff>(`/api/projects/${encodeURIComponent(id)}/diff`),
+      ]));
+      this.projectDetails[id] = details;
+      this.projectDiffs[id] = diff;
+      return details;
     },
     async createWorktree(id: string, path: string, branch: string, base = "HEAD") {
       this.projectDetails[id] = await this.runAction("create-worktree", () => api<ProjectDetails>(`/api/projects/${encodeURIComponent(id)}/worktrees`, {

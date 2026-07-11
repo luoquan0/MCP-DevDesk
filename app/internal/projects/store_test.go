@@ -1,9 +1,11 @@
 package projects
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStorePersistsAndProtectsActiveProject(t *testing.T) {
@@ -42,5 +44,37 @@ func TestStorePersistsAndProtectsActiveProject(t *testing.T) {
 	active := reloaded.List()[0]
 	if err := reloaded.Remove(active.ID, first); err == nil {
 		t.Fatal("expected active project removal to fail")
+	}
+}
+
+func TestStoreNormalizesAndDeduplicatesPersistedProjects(t *testing.T) {
+	dataDir := t.TempDir()
+	projectDir := filepath.Join(t.TempDir(), "project")
+	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	older := Project{ID: "old-a", Name: "Project", Path: projectDir, AddedAt: time.Unix(10, 0), LastOpenedAt: time.Unix(20, 0)}
+	newer := Project{ID: "old-b", Name: "Duplicate", Path: projectDir + string(filepath.Separator), AddedAt: time.Unix(15, 0), LastOpenedAt: time.Unix(30, 0)}
+	raw, err := json.Marshal([]Project{older, newer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "projects.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewStore(dataDir, projectDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := store.List()
+	if len(items) != 1 {
+		t.Fatalf("expected duplicate paths to be merged, got %d", len(items))
+	}
+	if items[0].ID != projectID(projectDir) {
+		t.Fatalf("expected regenerated stable ID, got %q", items[0].ID)
+	}
+	if !items[0].LastOpenedAt.Equal(newer.LastOpenedAt) {
+		t.Fatalf("expected newest last-opened timestamp, got %v", items[0].LastOpenedAt)
 	}
 }
