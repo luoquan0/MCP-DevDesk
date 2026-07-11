@@ -19,7 +19,7 @@ import (
 	"mcp-devdesk/internal/model"
 )
 
-//go:embed static/*
+//go:embed static
 var staticFiles embed.FS
 
 type Server struct {

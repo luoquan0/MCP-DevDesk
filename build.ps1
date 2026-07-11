@@ -7,11 +7,24 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppDir = Join-Path $Root "app"
+$FrontendDir = Join-Path $Root "frontend"
 $DistDir = Join-Path $Root "dist"
 
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $AppDir ".gocache") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $AppDir ".gotmp") | Out-Null
+
+if (Test-Path (Join-Path $FrontendDir "package.json")) {
+    Push-Location $FrontendDir
+    try {
+        if (-not (Test-Path (Join-Path $FrontendDir "node_modules"))) {
+            npm ci
+        }
+        npm run build
+    } finally {
+        Pop-Location
+    }
+}
 
 Push-Location $AppDir
 try {

@@ -10,6 +10,9 @@ app/.gopath/
 
 # Frontend dependencies and generated files
 node_modules/
+frontend/node_modules/
+frontend/dist/
+/ui-preview.png
 temp/node_modules/
 temp/dist/
 *.tsbuildinfo
