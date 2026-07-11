@@ -1,6 +1,6 @@
 # 开发路线图
 
-当前开发版本：`0.6.0-dev`。阶段 5 与 M3 已完成，下一阶段进入 M4 Go MCP 核心，并保留旧核心作为兼容回退。
+当前开发版本：`0.7.0-dev`。`0.6.0-dev` 已完成阶段 5 与 M3；当前进入 M4 Go MCP 核心，并保留旧核心作为兼容回退。
 
 ## M0：仓库和文档
 
@@ -80,7 +80,10 @@
 
 ## M4：Go MCP 核心
 
-- [ ] MCP Streamable HTTP
+- [x] 独立 Go MCP Preview 命令与构建产物
+- [x] Streamable HTTP JSON-RPC 基础端点、初始化与会话生命周期
+- [x] `tools/list`、`tools/call` 与首批只读诊断工具
+- [ ] SSE 恢复流与完整 Streamable HTTP 兼容
 - [ ] OAuth 2.1 + PKCE
 - [ ] 文件工具
 - [ ] 命令会话

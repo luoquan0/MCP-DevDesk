@@ -51,8 +51,12 @@ try {
     $CliOutput = Join-Path $DistDir "devdeskctl-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w" -o $CliOutput ./cmd/devdeskctl
 
+    $CorePreviewOutput = Join-Path $DistDir "mcp-core-preview-$Arch.exe"
+    go build -mod=vendor -trimpath -ldflags "-s -w" -o $CorePreviewOutput ./cmd/mcp-core
+
     Write-Host "Build complete: $Output" -ForegroundColor Green
     Write-Host "CLI complete:   $CliOutput" -ForegroundColor Green
+    Write-Host "Core preview:   $CorePreviewOutput" -ForegroundColor Green
 } finally {
     Pop-Location
 }

@@ -10,7 +10,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-当前 `0.6.0-dev` 已完成：
+稳定收尾版本 `0.6.0-dev` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -88,4 +88,21 @@ dist\devdeskctl-amd64.exe stop
 ```
 
 管理界面只监听本机地址。Cloudflare Tunnel 仅暴露 MCP/OAuth 服务，不暴露管理后台。
+
+## Go MCP Preview
+
+`0.7.0-dev` 开始提供独立 Go MCP 预览核心。它当前只用于协议与兼容性测试，不会替换默认的 `coding-tools-mcp.exe`：
+
+```powershell
+cd app
+go run ./cmd/mcp-core --workspace .. --port 18765
+```
+
+预览地址：
+
+```text
+http://127.0.0.1:18765/mcp
+```
+
+当前已支持初始化、会话 ID、`ping`、`tools/list`、`tools/call` 和会话删除。文件、命令、Git、OAuth 与图片工具在兼容测试完成前仍由旧核心提供。
 

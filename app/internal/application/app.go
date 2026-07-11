@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"mcp-devdesk/internal/buildinfo"
 	"mcp-devdesk/internal/config"
 	"mcp-devdesk/internal/model"
 	processmanager "mcp-devdesk/internal/process"
@@ -23,7 +24,7 @@ import (
 	"mcp-devdesk/internal/tunnel"
 )
 
-const Version = "0.6.0-dev"
+const Version = buildinfo.Version
 
 type App struct {
 	rootDir  string
