@@ -10,7 +10,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-当前版本 `0.7.3` 已完成：
+当前版本 `0.7.4` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -47,7 +47,9 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 - 刷新令牌 DPAPI 加密持久化，核心重启后仍可续签
 - 服务页工作目录安全热切换与失败自动回滚
 - 编译产物和便携包内核心的端到端自动验收
-- ChatGPT 生成图和附件通过正式 `openai/fileParams` 文件引用下载原始字节，不再依赖容易截断的 Base64
+- `save_chatgpt_image` 已与旧 Python 核心统一：只接受 `source_image` 文件参数并流式下载原始字节
+- `write_image` 独立保留 Base64/Data URL 小图写入，避免大图误走工具消息传输
+- 图片下载限制 HTTPS/443、拒绝私网解析、限制重定向和大小，并在校验 MIME、扩展名与解码结果后原子落盘
 
 详细文档见：
 
@@ -103,7 +105,7 @@ dist\devdeskctl-amd64.exe stop
 
 ## Go MCP 核心
 
-`0.7.3` 提供可直接使用的独立 Go MCP 核心。桌面管理器默认继续使用旧核心，用户可在“服务 → MCP 核心”中切换到 Go 核心，并在需要时一键切回：
+`0.7.4` 提供可直接使用的独立 Go MCP 核心。桌面管理器默认继续使用旧核心，用户可在“服务 → MCP 核心”中切换到 Go 核心，并在需要时一键切回：
 
 ```powershell
 cd app
@@ -117,6 +119,8 @@ http://127.0.0.1:18765/mcp
 ```
 
 Go 核心当前提供 30 个工具，覆盖文件读写、递归文件列表、文本搜索、多文件补丁、命令会话、Git、权限状态、审计和图片传输。旧核心已有的 22 个工具名称继续保留，并兼容常用的下划线参数和命令字符串格式。
+
+图片工具职责已拆分：ChatGPT 生成图或附件必须通过 `save_chatgpt_image.source_image` 文件引用传输；已经持有完整 Base64 或 Data URL 的传统客户端使用 `write_image`。可选环境变量 `MCP_DEV_DESK_IMAGE_DOWNLOAD_HOSTS` 可以设置逗号分隔的下载域名白名单，例如 `*.openai.com,*.oaiusercontent.com`；留空时允许所有可解析到公网地址的 HTTPS/443 主机。
 
 设置页支持管理两套核心共用的 OAuth 凭据：所有者密码、客户端 ID、客户端密钥、Token 签名密钥和静态客户端回调地址。每一项均可自定义、随机生成、显示或复制；保存时可自动重启 MCP。Windows 下 `secrets.json` 使用当前用户 DPAPI 加密，旧明文文件会在首次读取时自动迁移。
 

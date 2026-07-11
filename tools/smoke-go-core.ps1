@@ -80,7 +80,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.7.3") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.7.4") { return }
             }
         } catch {}
         if ($started.HasExited) { break }
@@ -218,13 +218,30 @@ try {
     $imageTool = $toolList | Where-Object { $_.name -eq "save_chatgpt_image" } | Select-Object -First 1
     if (-not $imageTool) { throw "save_chatgpt_image tool is missing" }
     $fileParams = @($imageTool._meta.'openai/fileParams')
-    if (-not $fileParams -or $fileParams.Count -ne 1 -or $fileParams[0] -ne "image") {
+    if (-not $fileParams -or $fileParams.Count -ne 1 -or $fileParams[0] -ne "source_image") {
         throw "save_chatgpt_image does not declare the OpenAI image file parameter"
     }
     $fileSchema = $imageTool.inputSchema.'$defs'.OpenAIFile
     if (-not $fileSchema.properties.download_url -or -not $fileSchema.properties.file_id -or
         -not $fileSchema.properties.mime_type -or -not $fileSchema.properties.file_name) {
         throw "save_chatgpt_image file schema is incomplete"
+    }
+    $imageProperties = $imageTool.inputSchema.properties
+    if (-not $imageProperties.source_image -or $imageProperties.data -or $imageProperties.dataUrl -or
+        $imageProperties.image -or $imageProperties.mimeType -or $imageProperties.createParents) {
+        throw "save_chatgpt_image must expose only the source_image file-transfer path"
+    }
+    if (-not $imageProperties.create_parents -or -not $imageProperties.max_bytes) {
+        throw "save_chatgpt_image transfer controls are incomplete"
+    }
+    $requiredImageFields = @($imageTool.inputSchema.required)
+    if ($requiredImageFields -notcontains "path" -or $requiredImageFields -notcontains "source_image") {
+        throw "save_chatgpt_image must require path and source_image"
+    }
+    $writeImageTool = $toolList | Where-Object { $_.name -eq "write_image" } | Select-Object -First 1
+    if (-not $writeImageTool -or -not $writeImageTool.inputSchema.properties.data -or
+        -not $writeImageTool.inputSchema.properties.dataUrl) {
+        throw "write_image must retain the legacy base64/data-URL path"
     }
 
     $call = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"server_info","arguments":{}}}'

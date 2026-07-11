@@ -56,13 +56,20 @@ type gitBlameArgs struct {
 }
 
 type writeImageArgs struct {
+	Path          string `json:"path"`
+	Data          string `json:"data,omitempty"`
+	DataURL       string `json:"dataUrl,omitempty"`
+	MIMEType      string `json:"mimeType,omitempty"`
+	Overwrite     bool   `json:"overwrite,omitempty"`
+	CreateParents bool   `json:"createParents,omitempty"`
+}
+
+type saveChatGPTImageArgs struct {
 	Path          string           `json:"path"`
-	Image         *openAIFileInput `json:"image,omitempty"`
-	Data          string           `json:"data,omitempty"`
-	DataURL       string           `json:"dataUrl,omitempty"`
-	MIMEType      string           `json:"mimeType,omitempty"`
+	SourceImage   *openAIFileInput `json:"source_image"`
 	Overwrite     bool             `json:"overwrite,omitempty"`
-	CreateParents bool             `json:"createParents,omitempty"`
+	CreateParents bool             `json:"create_parents,omitempty"`
+	MaxBytes      int64            `json:"max_bytes,omitempty"`
 }
 
 type openAIFileInput struct {
@@ -180,7 +187,7 @@ func chatGPTImageSaveTool() Tool {
 	return Tool{
 		Name:        "save_chatgpt_image",
 		Title:       "Save ChatGPT Image",
-		Description: "Save an image generated or attached in ChatGPT to a local workspace path. Pass the image through the top-level image file parameter; do not convert ChatGPT files to base64. Legacy data and dataUrl inputs remain available for non-ChatGPT clients.",
+		Description: "Download an image supplied through the source_image ChatGPT file parameter and atomically save the original bytes inside the configured file scope. Do not convert ChatGPT files to base64; use write_image only when complete base64 data already exists.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"$defs": map[string]any{
@@ -197,19 +204,19 @@ func chatGPTImageSaveTool() Tool {
 				},
 			},
 			"properties": map[string]any{
-				"path":          map[string]any{"type": "string", "minLength": 1},
-				"image":         map[string]any{"$ref": "#/$defs/OpenAIFile"},
-				"data":          map[string]any{"type": "string", "description": "Legacy raw base64 image data."},
-				"dataUrl":       map[string]any{"type": "string", "description": "Legacy data:image/...;base64 URL."},
-				"mimeType":      map[string]any{"type": "string"},
-				"overwrite":     map[string]any{"type": "boolean", "default": false},
-				"createParents": map[string]any{"type": "boolean", "default": false},
+				"path":           map[string]any{"type": "string", "minLength": 1},
+				"source_image":   map[string]any{"$ref": "#/$defs/OpenAIFile", "description": "The generated or attached ChatGPT image file."},
+				"overwrite":      map[string]any{"type": "boolean", "default": false},
+				"create_parents": map[string]any{"type": "boolean", "default": false},
+				"max_bytes":      map[string]any{"type": "integer", "minimum": 1024, "maximum": maxDownloadedImageBytes, "default": maxDownloadedImageBytes},
 			},
-			"required":             []string{"path"},
+			"required":             []string{"path", "source_image"},
 			"additionalProperties": false,
 		},
 		Meta: map[string]any{
-			"openai/fileParams": []string{"image"},
+			"openai/fileParams":              []string{"source_image"},
+			"openai/toolInvocation/invoking": "Saving image to the local workspace",
+			"openai/toolInvocation/invoked":  "Image saved to the local workspace",
 		},
 	}
 }
@@ -255,7 +262,7 @@ func (s *Server) executeCompatibilityTool(name string, arguments map[string]any)
 			return nil, err
 		}
 		return s.gitBlame(args)
-	case "write_image", "save_chatgpt_image":
+	case "write_image":
 		if err := s.requireWritePermission(false, true); err != nil {
 			return nil, err
 		}
@@ -263,7 +270,16 @@ func (s *Server) executeCompatibilityTool(name string, arguments map[string]any)
 		if err := decodeToolArguments(arguments, &args); err != nil {
 			return nil, err
 		}
-		return s.writeImage(args)
+		return s.writeInlineImage(args)
+	case "save_chatgpt_image":
+		if err := s.requireWritePermission(false, true); err != nil {
+			return nil, err
+		}
+		var args saveChatGPTImageArgs
+		if err := decodeToolArguments(arguments, &args); err != nil {
+			return nil, err
+		}
+		return s.saveChatGPTImage(args)
 	case "view_image":
 		var args viewImageArgs
 		if err := decodeToolArguments(arguments, &args); err != nil {
@@ -440,7 +456,7 @@ func (s *Server) gitBlame(args gitBlameArgs) (map[string]any, error) {
 	return map[string]any{"path": display, "revision": revision, "startLine": start, "endLine": end, "porcelain": output, "truncated": truncated}, nil
 }
 
-func (s *Server) writeImage(args writeImageArgs) (map[string]any, error) {
+func (s *Server) writeInlineImage(args writeImageArgs) (map[string]any, error) {
 	if strings.TrimSpace(args.Path) == "" {
 		return nil, errors.New("path is required")
 	}
@@ -448,12 +464,8 @@ func (s *Server) writeImage(args writeImageArgs) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	maxBytes := maxImageBytes
-	if args.Image != nil {
-		maxBytes = maxDownloadedImageBytes
-	}
-	if len(data) > maxBytes {
-		return nil, fmt.Errorf("image exceeds %d bytes", maxBytes)
+	if len(data) > maxImageBytes {
+		return nil, fmt.Errorf("image exceeds %d bytes", maxImageBytes)
 	}
 	detected := http.DetectContentType(data)
 	if !supportedImageMIME(detected) {
@@ -462,27 +474,12 @@ func (s *Server) writeImage(args writeImageArgs) (map[string]any, error) {
 	if declaredMIME != "" && normalizeImageMIME(declaredMIME) != normalizeImageMIME(detected) {
 		return nil, fmt.Errorf("declared MIME type %s does not match image bytes %s", declaredMIME, detected)
 	}
-	_, target, display, err := s.resolveWorkspacePathForCreate(args.Path)
+	_, target, display, err := s.prepareImageTarget(args.Path, args.Overwrite, args.CreateParents)
 	if err != nil {
 		return nil, err
 	}
-	if info, statErr := os.Lstat(target); statErr == nil {
-		if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
-			return nil, errors.New("image target must be a regular non-symlink file")
-		}
-		if !args.Overwrite {
-			return nil, errors.New("image already exists; set overwrite=true to replace it")
-		}
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return nil, statErr
-	}
-	if args.CreateParents {
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return nil, err
-		}
-	}
-	if info, statErr := os.Stat(filepath.Dir(target)); statErr != nil || !info.IsDir() {
-		return nil, errors.New("image parent directory does not exist; set createParents=true")
+	if err := validateImageExtension(target, detected); err != nil {
+		return nil, err
 	}
 	if err := atomicWriteFile(target, data, 0o600); err != nil {
 		return nil, err
@@ -494,12 +491,6 @@ func (s *Server) writeImage(args writeImageArgs) (map[string]any, error) {
 		"sizeBytes": len(data),
 		"sha256":    hex.EncodeToString(digest[:]),
 		"saved":     true,
-	}
-	if args.Image != nil {
-		result["sourceFileId"] = args.Image.FileID
-		if strings.TrimSpace(args.Image.FileName) != "" {
-			result["sourceFileName"] = args.Image.FileName
-		}
 	}
 	return result, nil
 }
@@ -537,9 +528,6 @@ func (s *Server) viewImage(args viewImageArgs) (map[string]any, error) {
 
 func (s *Server) decodeImageInput(args writeImageArgs) ([]byte, string, error) {
 	sourceCount := 0
-	if args.Image != nil {
-		sourceCount++
-	}
 	if strings.TrimSpace(args.DataURL) != "" {
 		sourceCount++
 	}
@@ -547,13 +535,10 @@ func (s *Server) decodeImageInput(args writeImageArgs) ([]byte, string, error) {
 		sourceCount++
 	}
 	if sourceCount == 0 {
-		return nil, "", errors.New("image, data, or dataUrl is required")
+		return nil, "", errors.New("data or dataUrl is required")
 	}
 	if sourceCount > 1 {
-		return nil, "", errors.New("provide exactly one image source: image, data, or dataUrl")
-	}
-	if args.Image != nil {
-		return s.downloadOpenAIFile(args.Image)
+		return nil, "", errors.New("provide exactly one image source: data or dataUrl")
 	}
 	if strings.TrimSpace(args.DataURL) != "" {
 		value := strings.TrimSpace(args.DataURL)
@@ -573,6 +558,52 @@ func (s *Server) decodeImageInput(args writeImageArgs) ([]byte, string, error) {
 		return nil, "", errors.New("data contains invalid base64")
 	}
 	return data, strings.TrimSpace(args.MIMEType), nil
+}
+
+func (s *Server) prepareImageTarget(path string, overwrite, createParents bool) (root, target, display string, err error) {
+	root, target, display, err = s.resolveWorkspacePathForCreate(path)
+	if err != nil {
+		return "", "", "", err
+	}
+	if info, statErr := os.Lstat(target); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+			return "", "", "", errors.New("image target must be a regular non-symlink file")
+		}
+		if !overwrite {
+			return "", "", "", errors.New("image already exists; set overwrite=true to replace it")
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return "", "", "", statErr
+	}
+	parent := filepath.Dir(target)
+	if createParents {
+		if err := os.MkdirAll(parent, 0o700); err != nil {
+			return "", "", "", fmt.Errorf("create image parent directory: %w", err)
+		}
+	}
+	if info, statErr := os.Stat(parent); statErr != nil || !info.IsDir() {
+		return "", "", "", errors.New("image parent directory does not exist; enable create_parents/createParents")
+	}
+	return root, target, display, nil
+}
+
+func validateImageExtension(path, mimeType string) error {
+	extension := strings.ToLower(filepath.Ext(path))
+	allowed := map[string][]string{
+		"image/png":  {".png"},
+		"image/jpeg": {".jpg", ".jpeg"},
+		"image/gif":  {".gif"},
+		"image/webp": {".webp"},
+	}
+	for _, candidate := range allowed[normalizeImageMIME(mimeType)] {
+		if extension == candidate {
+			return nil
+		}
+	}
+	if extension == "" {
+		return errors.New("image destination must include a .png, .jpg, .jpeg, .gif, or .webp extension")
+	}
+	return fmt.Errorf("image destination extension %s does not match %s", extension, normalizeImageMIME(mimeType))
 }
 
 func supportedImageMIME(value string) bool {
