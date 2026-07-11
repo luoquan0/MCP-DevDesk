@@ -74,7 +74,7 @@ func redactAuditArguments(arguments map[string]any) map[string]any {
 		switch {
 		case strings.Contains(lower, "password"), strings.Contains(lower, "secret"), strings.Contains(lower, "token"):
 			result[key] = "***"
-		case lower == "content", lower == "text", lower == "newtext", lower == "oldtext", lower == "stdin", lower == "chars", lower == "patch", lower == "data", lower == "dataurl", lower == "cmd":
+		case lower == "content", lower == "text", lower == "newtext", lower == "oldtext", lower == "stdin", lower == "chars", lower == "patch", lower == "data", lower == "dataurl", lower == "download_url", lower == "cmd":
 			text, _ := value.(string)
 			digest := sha256.Sum256([]byte(text))
 			result[key] = map[string]any{

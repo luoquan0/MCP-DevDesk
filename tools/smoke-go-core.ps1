@@ -80,7 +80,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.7.2") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.7.3") { return }
             }
         } catch {}
         if ($started.HasExited) { break }
@@ -215,6 +215,17 @@ try {
     if ($tools.Status -ne 200) { throw "tools/list failed: $($tools.Status) $($tools.Body)" }
     $toolList = ($tools.Body | ConvertFrom-Json).result.tools
     if ($toolList.Count -lt 20) { throw "tools/list returned too few tools: $($toolList.Count)" }
+    $imageTool = $toolList | Where-Object { $_.name -eq "save_chatgpt_image" } | Select-Object -First 1
+    if (-not $imageTool) { throw "save_chatgpt_image tool is missing" }
+    $fileParams = @($imageTool._meta.'openai/fileParams')
+    if (-not $fileParams -or $fileParams.Count -ne 1 -or $fileParams[0] -ne "image") {
+        throw "save_chatgpt_image does not declare the OpenAI image file parameter"
+    }
+    $fileSchema = $imageTool.inputSchema.'$defs'.OpenAIFile
+    if (-not $fileSchema.properties.download_url -or -not $fileSchema.properties.file_id -or
+        -not $fileSchema.properties.mime_type -or -not $fileSchema.properties.file_name) {
+        throw "save_chatgpt_image file schema is incomplete"
+    }
 
     $call = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"server_info","arguments":{}}}'
     if ($call.Status -ne 200 -or ($call.Body | ConvertFrom-Json).result.isError) { throw "tools/call failed: $($call.Status) $($call.Body)" }

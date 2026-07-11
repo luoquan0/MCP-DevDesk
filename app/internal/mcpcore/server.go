@@ -40,22 +40,23 @@ type Options struct {
 }
 
 type Server struct {
-	name           string
-	version        string
-	workspace      string
-	maxBodyBytes   int64
-	startedAt      time.Time
-	oauth          *oauthServer
-	allowedOrigins map[string]struct{}
-	permissionMode string
-	allowNetwork   bool
-	toolProfile    string
-	audit          *auditLogger
-	commands       *commandManager
-	fileScope      string
-	allowedRoots   []string
-	cwdMu          sync.RWMutex
-	defaultCWD     string
+	name            string
+	version         string
+	workspace       string
+	maxBodyBytes    int64
+	startedAt       time.Time
+	oauth           *oauthServer
+	allowedOrigins  map[string]struct{}
+	permissionMode  string
+	allowNetwork    bool
+	toolProfile     string
+	audit           *auditLogger
+	commands        *commandManager
+	imageHTTPClient *http.Client
+	fileScope       string
+	allowedRoots    []string
+	cwdMu           sync.RWMutex
+	defaultCWD      string
 
 	mu       sync.RWMutex
 	sessions map[string]*session
@@ -109,6 +110,7 @@ type Tool struct {
 	Title       string         `json:"title,omitempty"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
+	Meta        map[string]any `json:"_meta,omitempty"`
 }
 
 type toolCallParams struct {
@@ -206,22 +208,23 @@ func New(options Options) (*Server, error) {
 		}
 	}
 	server := &Server{
-		name:           options.Name,
-		version:        options.Version,
-		workspace:      options.Workspace,
-		maxBodyBytes:   options.MaxBodyBytes,
-		startedAt:      time.Now(),
-		oauth:          oauth,
-		allowedOrigins: allowedOrigins,
-		permissionMode: options.PermissionMode,
-		allowNetwork:   options.AllowNetwork,
-		toolProfile:    options.ToolProfile,
-		audit:          newAuditLogger(options.AuditPath),
-		fileScope:      options.FileScope,
-		allowedRoots:   append([]string(nil), options.AllowedRoots...),
-		defaultCWD:     options.Workspace,
-		sessions:       make(map[string]*session),
-		tools:          tools,
+		name:            options.Name,
+		version:         options.Version,
+		workspace:       options.Workspace,
+		maxBodyBytes:    options.MaxBodyBytes,
+		startedAt:       time.Now(),
+		oauth:           oauth,
+		allowedOrigins:  allowedOrigins,
+		permissionMode:  options.PermissionMode,
+		allowNetwork:    options.AllowNetwork,
+		toolProfile:     options.ToolProfile,
+		audit:           newAuditLogger(options.AuditPath),
+		imageHTTPClient: newImageDownloadClient(),
+		fileScope:       options.FileScope,
+		allowedRoots:    append([]string(nil), options.AllowedRoots...),
+		defaultCWD:      options.Workspace,
+		sessions:        make(map[string]*session),
+		tools:           tools,
 	}
 	server.commands = newCommandManager(server)
 	return server, nil
