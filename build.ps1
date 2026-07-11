@@ -11,6 +11,8 @@ $FrontendDir = Join-Path $Root "frontend"
 $DistDir = Join-Path $Root "dist"
 $BrandAssetScript = Join-Path $Root "tools\generate-brand-assets.ps1"
 $ExeIconScript = Join-Path $Root "tools\set-exe-icon.ps1"
+$SmokeScript = Join-Path $Root "tools\smoke-go-core.ps1"
+$PackageScript = Join-Path $Root "package-portable.ps1"
 
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $AppDir ".gocache") | Out-Null
@@ -60,6 +62,18 @@ try {
     Write-Host "Go MCP core:    $CoreOutput" -ForegroundColor Green
 } finally {
     Pop-Location
+}
+
+if ($RunTests -and (Test-Path -LiteralPath $SmokeScript)) {
+    & $SmokeScript -ExePath (Join-Path $DistDir "mcp-core-$Arch.exe") -Workspace $Root
+}
+
+if ($RunTests -and (Test-Path -LiteralPath $PackageScript)) {
+    & $PackageScript -Arch $Arch -SkipBuild
+    $PackagedCore = Join-Path $DistDir "MCP-DevDesk-Portable-$Arch\mcp-core.exe"
+    if (Test-Path -LiteralPath $PackagedCore) {
+        & $SmokeScript -ExePath $PackagedCore -Workspace $Root -Port 18767
+    }
 }
 
 

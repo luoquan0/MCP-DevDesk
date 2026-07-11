@@ -46,12 +46,14 @@ type OAuthOptions struct {
 type oauthServer struct {
 	issuer             string
 	resource           string
+	legacyResource     string
 	ownerPassword      string
 	staticClientID     string
 	staticSecret       string
 	staticRedirectURIs []string
 	tokenSecret        []byte
 	clientsPath        string
+	refreshTokensPath  string
 	accessTokenTTL     time.Duration
 	refreshTokenTTL    time.Duration
 
@@ -80,10 +82,10 @@ type authorizationCode struct {
 }
 
 type refreshGrant struct {
-	ClientID  string
-	Resource  string
-	Scope     string
-	ExpiresAt time.Time
+	ClientID  string    `json:"clientId"`
+	Resource  string    `json:"resource"`
+	Scope     string    `json:"scope"`
+	ExpiresAt time.Time `json:"expiresAt"`
 }
 
 type tokenClaims struct {
@@ -148,6 +150,7 @@ func newOAuthServer(options OAuthOptions) (*oauthServer, error) {
 	server := &oauthServer{
 		issuer:             issuer,
 		resource:           resource,
+		legacyResource:     issuer,
 		ownerPassword:      options.OwnerPassword,
 		staticClientID:     options.ClientID,
 		staticSecret:       options.ClientSecret,
@@ -161,7 +164,11 @@ func newOAuthServer(options OAuthOptions) (*oauthServer, error) {
 	}
 	if strings.TrimSpace(options.DataDir) != "" {
 		server.clientsPath = filepath.Join(options.DataDir, "oauth-clients.json")
+		server.refreshTokensPath = filepath.Join(options.DataDir, "oauth-refresh-tokens.json")
 		if err := server.loadClients(); err != nil {
+			return nil, err
+		}
+		if err := server.loadRefreshTokens(); err != nil {
 			return nil, err
 		}
 	}
@@ -172,6 +179,7 @@ func (s *oauthServer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource", s.handleProtectedResourceMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", s.handleProtectedResourceMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.handleAuthorizationServerMetadata)
+	mux.HandleFunc("GET /.well-known/openid-configuration", s.handleAuthorizationServerMetadata)
 	mux.HandleFunc("POST /oauth/register", s.handleDynamicRegistration)
 	mux.HandleFunc("GET /oauth/authorize", s.handleAuthorize)
 	mux.HandleFunc("POST /oauth/authorize", s.handleAuthorize)
@@ -194,7 +202,7 @@ func (s *oauthServer) protect(next http.Handler) http.Handler {
 			s.writeUnauthorized(w, "invalid_token", err.Error())
 			return
 		}
-		if claims.Audience != s.resource {
+		if !s.resourceAllowed(claims.Audience) {
 			s.writeUnauthorized(w, "invalid_token", "token audience does not match this MCP resource")
 			return
 		}
@@ -203,14 +211,18 @@ func (s *oauthServer) protect(next http.Handler) http.Handler {
 }
 
 func (s *oauthServer) writeUnauthorized(w http.ResponseWriter, code, description string) {
-	metadata := s.issuer + "/.well-known/oauth-protected-resource"
+	metadata := s.issuer + "/.well-known/oauth-protected-resource/mcp"
 	w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata=%q, error=%q, error_description=%q`, metadata, code, description))
 	writeJSON(w, http.StatusUnauthorized, map[string]any{"error": code, "error_description": description})
 }
 
-func (s *oauthServer) handleProtectedResourceMetadata(w http.ResponseWriter, _ *http.Request) {
+func (s *oauthServer) handleProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
+	resource := s.resource
+	if r.URL.Path == "/.well-known/oauth-protected-resource" {
+		resource = s.legacyResource
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"resource":                 s.resource,
+		"resource":                 resource,
 		"authorization_servers":    []string{s.issuer},
 		"bearer_methods_supported": []string{"header"},
 		"scopes_supported":         []string{"mcp"},
@@ -234,7 +246,6 @@ func (s *oauthServer) handleAuthorizationServerMetadata(w http.ResponseWriter, _
 func (s *oauthServer) handleDynamicRegistration(w http.ResponseWriter, r *http.Request) {
 	var request dynamicRegistrationRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", err.Error())
 		return
@@ -290,6 +301,8 @@ func (s *oauthServer) handleDynamicRegistration(w http.ResponseWriter, r *http.R
 		"redirect_uris":              client.RedirectURIs,
 		"token_endpoint_auth_method": client.TokenEndpointAuthMethod,
 		"client_id_issued_at":        client.CreatedAt,
+		"grant_types":                []string{"authorization_code", "refresh_token"},
+		"response_types":             []string{"code"},
 	}
 	if client.ClientSecret != "" {
 		response["client_secret"] = client.ClientSecret
@@ -374,15 +387,30 @@ func (s *oauthServer) validateAuthorizationRequest(values url.Values) (validated
 		return validatedAuthorizationRequest{}, errors.New("unknown client_id")
 	}
 	redirectURI := strings.TrimSpace(values.Get("redirect_uri"))
+	if redirectURI == "" {
+		return validatedAuthorizationRequest{}, errors.New("redirect_uri is required")
+	}
+	// Built-in desktop client compatibility: MCP clients may use a generated
+	// callback endpoint. Do not permanently bind the built-in client to an old
+	// callback saved by an earlier version, but keep URI validation enabled.
 	if !containsExact(client.RedirectURIs, redirectURI) {
-		return validatedAuthorizationRequest{}, errors.New("redirect_uri is not registered for this client")
+		if client.ClientID == s.staticClientID && len(s.staticRedirectURIs) == 0 {
+			// The built-in desktop client is intentionally not pinned to one
+			// callback. MCP desktop clients commonly allocate a local callback
+			// port during startup. Security comes from HTTPS/loopback validation.
+			if err := validateRedirectURI(redirectURI); err != nil {
+				return validatedAuthorizationRequest{}, errors.New("redirect_uri is not registered for this client")
+			}
+		} else {
+			return validatedAuthorizationRequest{}, errors.New("redirect_uri is not registered for this client")
+		}
 	}
 	challenge := strings.TrimSpace(values.Get("code_challenge"))
 	if values.Get("code_challenge_method") != "S256" || len(challenge) < 43 || len(challenge) > 128 {
 		return validatedAuthorizationRequest{}, errors.New("PKCE S256 code challenge is required")
 	}
 	resource, err := canonicalResourceURL(values.Get("resource"))
-	if err != nil || resource != s.resource {
+	if err != nil || !s.resourceAllowed(resource) {
 		return validatedAuthorizationRequest{}, errors.New("resource must identify this MCP server")
 	}
 	scope := normalizeScope(values.Get("scope"))
@@ -450,18 +478,30 @@ func (s *oauthServer) exchangeAuthorizationCode(w http.ResponseWriter, r *http.R
 
 func (s *oauthServer) exchangeRefreshToken(w http.ResponseWriter, r *http.Request, client oauthClient) {
 	token := strings.TrimSpace(r.Form.Get("refresh_token"))
+	tokenKey := refreshTokenKey(token)
+	resource, err := canonicalResourceURL(r.Form.Get("resource"))
+	if err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "resource does not match the refresh token")
+		return
+	}
 	s.mu.Lock()
-	grant, ok := s.refreshTokens[token]
-	delete(s.refreshTokens, token)
 	s.cleanupLocked(time.Now())
-	s.mu.Unlock()
+	grant, ok := s.refreshTokens[tokenKey]
 	if !ok || time.Now().After(grant.ExpiresAt) || grant.ClientID != client.ClientID {
+		s.mu.Unlock()
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh token is invalid or expired")
 		return
 	}
-	resource, err := canonicalResourceURL(r.Form.Get("resource"))
-	if err != nil || resource != grant.Resource {
+	if resource != grant.Resource {
+		s.mu.Unlock()
 		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "resource does not match the refresh token")
+		return
+	}
+	delete(s.refreshTokens, tokenKey)
+	persistErr := s.saveRefreshTokensLocked()
+	s.mu.Unlock()
+	if persistErr != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to persist refresh token rotation")
 		return
 	}
 	s.issueTokens(w, client.ClientID, grant.Resource, grant.Scope)
@@ -479,11 +519,20 @@ func (s *oauthServer) issueTokens(w http.ResponseWriter, clientID, resource, sco
 		return
 	}
 	s.mu.Lock()
-	s.refreshTokens[refreshToken] = refreshGrant{
+	refreshKey := refreshTokenKey(refreshToken)
+	s.refreshTokens[refreshKey] = refreshGrant{
 		ClientID: clientID, Resource: resource, Scope: scope,
 		ExpiresAt: time.Now().Add(s.refreshTokenTTL),
 	}
+	persistErr := s.saveRefreshTokensLocked()
+	if persistErr != nil {
+		delete(s.refreshTokens, refreshKey)
+	}
 	s.mu.Unlock()
+	if persistErr != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to persist refresh token")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token":  accessToken,
 		"token_type":    "Bearer",
@@ -593,6 +642,92 @@ func (s *oauthServer) cleanupLocked(now time.Time) {
 	}
 }
 
+func refreshTokenKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func (s *oauthServer) loadRefreshTokens() error {
+	if s.refreshTokensPath == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(s.refreshTokensPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read OAuth refresh tokens: %w", err)
+	}
+
+	var tokens map[string]refreshGrant
+	var envelope oauthClientsEnvelope
+	migrated := false
+	if json.Unmarshal(raw, &envelope) == nil && envelope.Version == 2 && envelope.Data != "" {
+		ciphertext, decodeErr := base64.StdEncoding.DecodeString(envelope.Data)
+		if decodeErr != nil {
+			return fmt.Errorf("decode OAuth refresh token data: %w", decodeErr)
+		}
+		plain, unprotectErr := secretstore.UnprotectForCurrentUser(ciphertext)
+		if unprotectErr != nil {
+			return fmt.Errorf("decrypt OAuth refresh tokens: %w", unprotectErr)
+		}
+		if err := json.Unmarshal(plain, &tokens); err != nil {
+			return fmt.Errorf("parse decrypted OAuth refresh tokens: %w", err)
+		}
+	} else {
+		if err := json.Unmarshal(raw, &tokens); err != nil {
+			return fmt.Errorf("parse OAuth refresh tokens: %w", err)
+		}
+		migrated = true
+	}
+	if tokens == nil {
+		tokens = make(map[string]refreshGrant)
+	}
+	now := time.Now()
+	for key, grant := range tokens {
+		if key == "" || grant.ClientID == "" || grant.Resource == "" || now.After(grant.ExpiresAt) {
+			delete(tokens, key)
+			migrated = true
+		}
+	}
+	s.refreshTokens = tokens
+	if migrated {
+		return s.saveRefreshTokensLocked()
+	}
+	return nil
+}
+
+func (s *oauthServer) saveRefreshTokensLocked() error {
+	if s.refreshTokensPath == "" {
+		return nil
+	}
+	plain, err := json.Marshal(s.refreshTokens)
+	if err != nil {
+		return err
+	}
+	ciphertext, err := secretstore.ProtectForCurrentUser(plain)
+	if err != nil {
+		return fmt.Errorf("encrypt OAuth refresh tokens: %w", err)
+	}
+	envelope := oauthClientsEnvelope{
+		Version:    2,
+		Protection: secretstore.ProtectionName(),
+		Data:       base64.StdEncoding.EncodeToString(ciphertext),
+	}
+	raw, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.refreshTokensPath), 0o700); err != nil {
+		return err
+	}
+	tmp := s.refreshTokensPath + ".tmp"
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.refreshTokensPath)
+}
+
 func (s *oauthServer) loadClients() error {
 	raw, err := os.ReadFile(s.clientsPath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -662,6 +797,14 @@ func (s *oauthServer) saveClientsLocked() error {
 		return err
 	}
 	return os.Rename(tmp, s.clientsPath)
+}
+
+func (s *oauthServer) resourceAllowed(value string) bool {
+	resource, err := canonicalResourceURL(value)
+	if err != nil {
+		return false
+	}
+	return resource == s.resource || resource == s.legacyResource
 }
 
 func canonicalBaseURL(value string) (string, error) {

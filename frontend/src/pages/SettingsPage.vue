@@ -233,7 +233,7 @@ onMounted(loadSecrets);
         <div class="credential-field">
           <span class="credential-label"><strong>OAuth 回调地址</strong><small>静态客户端使用；每行一个，必须是 HTTPS 或本机回环 HTTP 地址。</small></span>
           <div class="credential-input-row credential-textarea-row">
-            <textarea v-model="secretForm.redirectUrisText" rows="3" spellcheck="false" placeholder="https://example.com/oauth/callback" />
+            <textarea v-model="secretForm.redirectUrisText" rows="3" spellcheck="false" placeholder="留空：自动兼容 MCP 客户端回调；填写：强制固定回调地址" />
             <AppButton tone="quiet" compact icon="copy" @click="copySecret('OAuth 回调地址', secretForm.redirectUrisText)">复制</AppButton>
           </div>
         </div>

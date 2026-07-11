@@ -163,6 +163,15 @@ export const useAppStore = defineStore("app", {
       await this.loadConfig();
       ui.toast("端口已切换", `MCP 与 Cloudflare Tunnel 已同步到端口 ${port}。`, "success");
     },
+    async changeWorkspace(path: string) {
+      const ui = useUiStore();
+      this.status = await this.runAction("change-workspace", () => api<ServiceStatus>("/api/services/change-workspace", {
+        method: "POST",
+        body: { path } as unknown as BodyInit,
+      }));
+      await Promise.all([this.loadConfig(), this.loadProjects()]);
+      ui.toast("工作目录已切换", "MCP 已安全重启；如果新目录启动失败，系统会自动恢复原目录。", "success");
+    },
     async startCloudflareLogin() {
       const ui = useUiStore();
       await this.runAction("cloudflare-login", () => api("/api/cloudflare/login", { method: "POST" }));

@@ -22,7 +22,7 @@ import (
 
 func main() {
 	var allowedRoots stringListFlag
-	workspace := flag.String("workspace", ".", "workspace exposed by the Go MCP preview core")
+	workspace := flag.String("workspace", ".", "workspace exposed by the Go MCP core")
 	host := flag.String("host", "127.0.0.1", "listen host")
 	port := flag.Int("port", 18765, "listen port")
 	permissionMode := flag.String("permission-mode", envOrDefault("CODING_TOOLS_MCP_PERMISSION_MODE", "safe"), "safe, trusted, or dangerous")
@@ -48,7 +48,7 @@ func main() {
 		log.Fatalf("port must be between 1024 and 65535")
 	}
 	if ip := net.ParseIP(*host); ip == nil || !ip.IsLoopback() {
-		log.Fatalf("preview core host must be a loopback IP")
+		log.Fatalf("Go core host must be a loopback IP")
 	}
 	resolvedDataDir := strings.TrimSpace(*dataDir)
 	if resolvedDataDir == "" {
@@ -111,14 +111,14 @@ func main() {
 	address := net.JoinHostPort(*host, strconv.Itoa(*port))
 	server := &http.Server{
 		Addr:              address,
-		Handler:           core.Handler(),
+		Handler:           logRequests(core.Handler()),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		log.Printf("Go MCP preview core %s listening on http://%s/mcp", buildinfo.Version, address)
+		log.Printf("Go MCP core %s listening on http://%s/mcp", buildinfo.Version, address)
 		serverErrors <- server.ListenAndServe()
 	}()
 
@@ -146,6 +146,44 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *statusRecorder) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(recorder, r)
+		status := recorder.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		log.Printf("%s %s %d %s", r.Method, r.URL.Path, status, time.Since(started).Round(time.Millisecond))
+	})
 }
 
 type stringListFlag []string

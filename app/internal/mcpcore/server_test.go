@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -172,8 +173,108 @@ func TestSessionIsRequiredAndCanBeDeleted(t *testing.T) {
 		"method":  "ping",
 	})
 	defer afterDelete.Body.Close()
-	if afterDelete.StatusCode != http.StatusBadRequest {
+	if afterDelete.StatusCode != http.StatusNotFound {
 		t.Fatalf("deleted session status = %d", afterDelete.StatusCode)
+	}
+}
+
+func TestProtocolNegotiationAndNotificationStatus(t *testing.T) {
+	server := mustNewServer(t, Options{Workspace: t.TempDir()})
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	initialize := postRPC(t, httpServer.URL+"/mcp", "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2099-01-01",
+			"clientInfo":      map[string]any{"name": "future-client", "version": "1"},
+		},
+	})
+	defer initialize.Body.Close()
+	if initialize.StatusCode != http.StatusOK {
+		t.Fatalf("initialize status = %d, body = %s", initialize.StatusCode, readBody(t, initialize.Body))
+	}
+	var initialized struct {
+		Result struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		} `json:"result"`
+	}
+	decodeJSON(t, initialize.Body, &initialized)
+	if initialized.Result.ProtocolVersion != ProtocolVersion {
+		t.Fatalf("negotiated protocol = %q", initialized.Result.ProtocolVersion)
+	}
+
+	sessionID := initialize.Header.Get(SessionHeader)
+	request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set(SessionHeader, sessionID)
+	request.Header.Set(ProtocolVersionHeader, ProtocolVersion)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("notification status = %d, body = %s", response.StatusCode, readBody(t, response.Body))
+	}
+}
+
+func TestLegacyProtocolVersionIsNegotiated(t *testing.T) {
+	server := mustNewServer(t, Options{Workspace: t.TempDir()})
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	initialize := postRPC(t, httpServer.URL+"/mcp", "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": LegacyProtocolVersion,
+			"clientInfo":      map[string]any{"name": "legacy-client", "version": "1"},
+		},
+	})
+	defer initialize.Body.Close()
+	var initialized struct {
+		Result struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		} `json:"result"`
+	}
+	decodeJSON(t, initialize.Body, &initialized)
+	if initialized.Result.ProtocolVersion != LegacyProtocolVersion {
+		t.Fatalf("legacy protocol = %q", initialized.Result.ProtocolVersion)
+	}
+}
+
+func TestExposedToolSchemasAreValidAndUnique(t *testing.T) {
+	server := mustNewServer(t, Options{Workspace: t.TempDir(), ToolProfile: "full"})
+	namePattern := regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	seen := make(map[string]struct{}, len(server.tools))
+	for _, tool := range server.tools {
+		if !namePattern.MatchString(tool.Name) {
+			t.Fatalf("invalid tool name %q", tool.Name)
+		}
+		if _, exists := seen[tool.Name]; exists {
+			t.Fatalf("duplicate tool name %q", tool.Name)
+		}
+		seen[tool.Name] = struct{}{}
+		if tool.Description == "" {
+			t.Fatalf("tool %q has no description", tool.Name)
+		}
+		if tool.InputSchema["type"] != "object" {
+			t.Fatalf("tool %q input schema root type = %#v", tool.Name, tool.InputSchema["type"])
+		}
+		if _, err := json.Marshal(tool.InputSchema); err != nil {
+			t.Fatalf("tool %q input schema is not JSON encodable: %v", tool.Name, err)
+		}
+	}
+	if len(seen) != 30 {
+		t.Fatalf("tool count = %d", len(seen))
 	}
 }
 

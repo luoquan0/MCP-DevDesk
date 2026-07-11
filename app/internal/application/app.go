@@ -126,24 +126,40 @@ func (a *App) SwitchProject(ctx context.Context, id string) error {
 	if !ok {
 		return errors.New("project not found")
 	}
-	if !pathIsDirectory(project.Path) {
-		return errors.New("project directory is unavailable")
+	if err := a.SwitchWorkspace(ctx, project.Path); err != nil {
+		return err
+	}
+	return a.projects.Touch(id)
+}
+
+func (a *App) SwitchWorkspace(ctx context.Context, workspace string) error {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return errors.New("workspace is required")
+	}
+	absolute, err := filepath.Abs(workspace)
+	if err != nil {
+		return fmt.Errorf("resolve workspace: %w", err)
+	}
+	workspace = filepath.Clean(absolute)
+	if !pathIsDirectory(workspace) {
+		return errors.New("workspace directory is unavailable")
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	oldCfg := a.config.Get()
-	if strings.EqualFold(oldCfg.Workspace, project.Path) {
-		return a.projects.Touch(id)
+	if strings.EqualFold(oldCfg.Workspace, workspace) {
+		return nil
 	}
 	mcpStatus, _, _ := a.process.Status()
 	wasRunning := mcpStatus.Running && mcpStatus.Managed
 	if owner, err := processmanager.FindTCPListener(oldCfg.MCPPort); err == nil && owner.Occupied && !wasRunning {
-		return fmt.Errorf("MCP port is owned by an unmanaged process (PID %d); take over the service before switching projects", owner.PID)
+		return fmt.Errorf("MCP port is owned by an unmanaged process (PID %d); take over the service before switching workspace", owner.PID)
 	}
 	newCfg := oldCfg
-	newCfg.Workspace = project.Path
-	newCfg.AllowedRoots = []string{project.Path}
+	newCfg.Workspace = workspace
+	newCfg.AllowedRoots = []string{workspace}
 
 	if wasRunning {
 		if err := a.process.StopMCP(); err != nil {
@@ -170,13 +186,13 @@ func (a *App) SwitchProject(ctx context.Context, id string) error {
 	}
 	if wasRunning {
 		if err := a.process.StartMCP(newCfg); err != nil {
-			return rollback(fmt.Errorf("start MCP for project: %w", err))
+			return rollback(fmt.Errorf("start MCP for workspace: %w", err))
 		}
 		if err := a.waitForMCP(ctx, newCfg, 15*time.Second); err != nil {
-			return rollback(fmt.Errorf("project MCP not ready: %w", err))
+			return rollback(fmt.Errorf("workspace MCP not ready: %w", err))
 		}
 	}
-	return a.projects.Touch(id)
+	return nil
 }
 
 func (a *App) Config() model.PublicConfig {

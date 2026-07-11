@@ -62,6 +62,7 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/services/restart", s.handleRestartServices)
 	mux.HandleFunc("POST /api/services/takeover", s.handleTakeoverServices)
 	mux.HandleFunc("POST /api/services/change-port", s.handleChangeMCPPort)
+	mux.HandleFunc("POST /api/services/change-workspace", s.handleChangeWorkspace)
 	mux.HandleFunc("POST /api/cloudflare/login", s.handleCloudflareLogin)
 	mux.HandleFunc("POST /api/cloudflare/configure", s.handleCloudflareConfigure)
 	mux.HandleFunc("GET /api/tunnels/processes", s.handleTunnelProcesses)
@@ -135,6 +136,23 @@ func (s *Server) handleActivateProject(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
 	defer cancel()
 	if err := s.app.SwitchProject(ctx, r.PathValue("id")); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.app.Status())
+}
+
+func (s *Server) handleChangeWorkspace(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Path string `json:"path"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	if err := s.app.SwitchWorkspace(ctx, request.Path); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}

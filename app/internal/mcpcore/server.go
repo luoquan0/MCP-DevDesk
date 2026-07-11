@@ -18,6 +18,7 @@ import (
 
 const (
 	ProtocolVersion       = "2025-06-18"
+	LegacyProtocolVersion = "2025-03-26"
 	SessionHeader         = "Mcp-Session-Id"
 	ProtocolVersionHeader = "MCP-Protocol-Version"
 	defaultMaxBodyBytes   = int64(1 << 20)
@@ -65,6 +66,7 @@ type session struct {
 	CreatedAt     time.Time
 	ClientName    string
 	ClientVer     string
+	Protocol      string
 	EventSequence uint64
 	Events        []sseEvent
 }
@@ -165,13 +167,13 @@ func New(options Options) (*Server, error) {
 		{
 			Name:        "server_info",
 			Title:       "Go Core Server Info",
-			Description: "Return protocol, version, transport, workspace, and uptime details for the Go MCP preview core.",
+			Description: "Return protocol, version, transport, workspace, and uptime details for the Go MCP core.",
 			InputSchema: emptyObjectSchema,
 		},
 		{
 			Name:        "get_workspace",
 			Title:       "Get Workspace",
-			Description: "Return the workspace currently assigned to the Go MCP preview core.",
+			Description: "Return the workspace currently assigned to the Go MCP core.",
 			InputSchema: emptyObjectSchema,
 		},
 	}
@@ -324,13 +326,25 @@ func (s *Server) handlePostJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, ok := s.validateSession(r)
-	if !ok {
-		writeRPCError(w, http.StatusBadRequest, responseID(request.ID), -32001, "missing or invalid MCP session", nil)
+	sessionID, negotiatedVersion, sessionStatus := s.validateSession(r)
+	if sessionStatus != 0 {
+		message := "missing MCP session"
+		if sessionStatus == http.StatusNotFound {
+			message = "unknown MCP session"
+		}
+		writeRPCError(w, sessionStatus, responseID(request.ID), -32001, message, nil)
 		return
 	}
-	if requestedVersion := strings.TrimSpace(r.Header.Get(ProtocolVersionHeader)); requestedVersion != "" && requestedVersion != ProtocolVersion {
-		writeRPCError(w, http.StatusBadRequest, responseID(request.ID), -32602, "unsupported protocol version", map[string]any{"supported": ProtocolVersion})
+	requestedVersion := strings.TrimSpace(r.Header.Get(ProtocolVersionHeader))
+	if requestedVersion == "" {
+		requestedVersion = negotiatedVersion
+	}
+	if !isSupportedProtocolVersion(requestedVersion) || requestedVersion != negotiatedVersion {
+		writeRPCError(w, http.StatusBadRequest, responseID(request.ID), -32602, "unsupported protocol version", map[string]any{
+			"supported":  []string{ProtocolVersion, LegacyProtocolVersion},
+			"negotiated": negotiatedVersion,
+			"requested":  requestedVersion,
+		})
 		return
 	}
 
@@ -368,10 +382,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, request rpcRequest) {
 		writeRPCError(w, http.StatusBadRequest, request.ID, -32602, "invalid initialize params", err.Error())
 		return
 	}
-	if params.ProtocolVersion != ProtocolVersion {
-		writeRPCError(w, http.StatusBadRequest, request.ID, -32602, "unsupported protocol version", map[string]any{"supported": ProtocolVersion})
-		return
-	}
+	negotiatedVersion := negotiateProtocolVersion(params.ProtocolVersion)
 
 	sessionID, err := newSessionID()
 	if err != nil {
@@ -383,13 +394,14 @@ func (s *Server) handleInitialize(w http.ResponseWriter, request rpcRequest) {
 		CreatedAt:  time.Now(),
 		ClientName: params.ClientInfo.Name,
 		ClientVer:  params.ClientInfo.Version,
+		Protocol:   negotiatedVersion,
 		Events:     make([]sseEvent, 0, 16),
 	}
 	s.mu.Unlock()
 
 	w.Header().Set(SessionHeader, sessionID)
 	writeRPCResult(w, request.ID, map[string]any{
-		"protocolVersion": ProtocolVersion,
+		"protocolVersion": negotiatedVersion,
 		"capabilities": map[string]any{
 			"tools": map[string]any{"listChanged": false},
 		},
@@ -397,7 +409,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, request rpcRequest) {
 			"name":    s.name,
 			"version": s.version,
 		},
-		"instructions": "Go MCP preview core. The legacy core remains the default until compatibility testing is complete.",
+		"instructions": "MCP DevDesk Go core. Use the exposed tools only within the configured workspace and permission policy.",
 	})
 }
 
@@ -473,15 +485,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) validateSession(r *http.Request) (string, bool) {
+func (s *Server) validateSession(r *http.Request) (string, string, int) {
 	sessionID := strings.TrimSpace(r.Header.Get(SessionHeader))
 	if sessionID == "" {
-		return "", false
+		return "", "", http.StatusBadRequest
 	}
 	s.mu.RLock()
-	_, ok := s.sessions[sessionID]
+	current, ok := s.sessions[sessionID]
 	s.mu.RUnlock()
-	return sessionID, ok
+	if !ok {
+		return sessionID, "", http.StatusNotFound
+	}
+	return sessionID, current.Protocol, 0
 }
 
 func (s *Server) handleGetSSE(w http.ResponseWriter, r *http.Request) {
@@ -490,9 +505,17 @@ func (s *Server) handleGetSSE(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotAcceptable, map[string]any{"error": "Accept must include text/event-stream"})
 		return
 	}
-	sessionID, ok := s.validateSession(r)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "MCP session not found"})
+	sessionID, negotiatedVersion, sessionStatus := s.validateSession(r)
+	if sessionStatus != 0 {
+		writeJSON(w, sessionStatus, map[string]any{"error": "MCP session not found"})
+		return
+	}
+	requestedVersion := strings.TrimSpace(r.Header.Get(ProtocolVersionHeader))
+	if requestedVersion == "" {
+		requestedVersion = negotiatedVersion
+	}
+	if !isSupportedProtocolVersion(requestedVersion) || requestedVersion != negotiatedVersion {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unsupported protocol version"})
 		return
 	}
 	events := s.eventsAfter(sessionID, strings.TrimSpace(r.Header.Get("Last-Event-ID")))
@@ -610,6 +633,18 @@ func normalizeOrigin(value string) string {
 		return ""
 	}
 	return strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host)
+}
+
+func negotiateProtocolVersion(requested string) string {
+	requested = strings.TrimSpace(requested)
+	if isSupportedProtocolVersion(requested) {
+		return requested
+	}
+	return ProtocolVersion
+}
+
+func isSupportedProtocolVersion(version string) bool {
+	return version == ProtocolVersion || version == LegacyProtocolVersion
 }
 
 func acceptsOnlySSE(value string) bool {

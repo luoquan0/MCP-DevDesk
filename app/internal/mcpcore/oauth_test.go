@@ -146,6 +146,113 @@ func TestOAuthPKCEAndProtectedMCP(t *testing.T) {
 	}
 }
 
+func TestOAuthLegacyRootResourceAndDiscoveryCompatibility(t *testing.T) {
+	const issuer = "http://127.0.0.1:18765"
+	const resource = issuer + "/mcp"
+	const redirectURI = "http://127.0.0.1:43210/callback"
+	server := mustNewServer(t, Options{
+		Workspace: t.TempDir(),
+		OAuth: OAuthOptions{
+			Enabled:       true,
+			Issuer:        issuer,
+			Resource:      resource,
+			OwnerPassword: "owner-password-long-enough",
+			ClientID:      "mcp-devdesk",
+			TokenSecret:   strings.Repeat("ac", 32),
+			DataDir:       t.TempDir(),
+		},
+	})
+	handler := server.Handler()
+
+	rootMetadata := httptest.NewRecorder()
+	handler.ServeHTTP(rootMetadata, httptest.NewRequest(http.MethodGet, issuer+"/.well-known/oauth-protected-resource", nil))
+	if rootMetadata.Code != http.StatusOK || !strings.Contains(rootMetadata.Body.String(), `"resource":"`+issuer+`"`) {
+		t.Fatalf("root metadata = %d %s", rootMetadata.Code, rootMetadata.Body.String())
+	}
+	pathMetadata := httptest.NewRecorder()
+	handler.ServeHTTP(pathMetadata, httptest.NewRequest(http.MethodGet, issuer+"/.well-known/oauth-protected-resource/mcp", nil))
+	if pathMetadata.Code != http.StatusOK || !strings.Contains(pathMetadata.Body.String(), `"resource":"`+resource+`"`) {
+		t.Fatalf("path metadata = %d %s", pathMetadata.Code, pathMetadata.Body.String())
+	}
+	openid := httptest.NewRecorder()
+	handler.ServeHTTP(openid, httptest.NewRequest(http.MethodGet, issuer+"/.well-known/openid-configuration", nil))
+	if openid.Code != http.StatusOK {
+		t.Fatalf("openid metadata status = %d", openid.Code)
+	}
+
+	registerBody := `{"client_name":"ChatGPT","redirect_uris":["http://127.0.0.1:43210/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"scope":"mcp"}`
+	registerRecorder := httptest.NewRecorder()
+	registerRequest := httptest.NewRequest(http.MethodPost, issuer+"/oauth/register", strings.NewReader(registerBody))
+	registerRequest.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(registerRecorder, registerRequest)
+	if registerRecorder.Code != http.StatusCreated {
+		t.Fatalf("registration with standard extra fields = %d %s", registerRecorder.Code, registerRecorder.Body.String())
+	}
+
+	verifier := strings.Repeat("c", 43)
+	authorizeValues := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {"mcp-devdesk"},
+		"redirect_uri":          {redirectURI},
+		"code_challenge":        {pkceChallenge(verifier)},
+		"code_challenge_method": {"S256"},
+		"resource":              {issuer},
+		"scope":                 {"mcp"},
+		"owner_password":        {"owner-password-long-enough"},
+	}
+	authorizeRecorder := httptest.NewRecorder()
+	authorizeRequest := httptest.NewRequest(http.MethodPost, issuer+"/oauth/authorize", strings.NewReader(authorizeValues.Encode()))
+	authorizeRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(authorizeRecorder, authorizeRequest)
+	if authorizeRecorder.Code != http.StatusFound {
+		t.Fatalf("legacy resource authorize = %d %s", authorizeRecorder.Code, authorizeRecorder.Body.String())
+	}
+	redirect, err := url.Parse(authorizeRecorder.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := redirect.Query().Get("code")
+	tokenValues := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {"mcp-devdesk"},
+		"code":          {code},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
+		"resource":      {issuer},
+	}
+	tokenRecorder := httptest.NewRecorder()
+	tokenRequest := httptest.NewRequest(http.MethodPost, issuer+"/oauth/token", strings.NewReader(tokenValues.Encode()))
+	tokenRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(tokenRecorder, tokenRequest)
+	if tokenRecorder.Code != http.StatusOK {
+		t.Fatalf("legacy resource token = %d %s", tokenRecorder.Code, tokenRecorder.Body.String())
+	}
+	var tokens struct {
+		AccessToken string `json:"access_token"`
+	}
+	decodeJSON(t, tokenRecorder.Body, &tokens)
+
+	initializeBody := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"chatgpt","version":"1"}}}`
+	authorized := httptest.NewRecorder()
+	authorizedRequest := httptest.NewRequest(http.MethodPost, resource, strings.NewReader(initializeBody))
+	authorizedRequest.Header.Set("Content-Type", "application/json")
+	authorizedRequest.Header.Set("Accept", "application/json, text/event-stream")
+	authorizedRequest.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
+	handler.ServeHTTP(authorized, authorizedRequest)
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("legacy audience protected request = %d %s", authorized.Code, authorized.Body.String())
+	}
+
+	unauthorized := httptest.NewRecorder()
+	requestWithoutToken := httptest.NewRequest(http.MethodPost, resource, strings.NewReader(initializeBody))
+	requestWithoutToken.Header.Set("Content-Type", "application/json")
+	requestWithoutToken.Header.Set("Accept", "application/json, text/event-stream")
+	handler.ServeHTTP(unauthorized, requestWithoutToken)
+	if !strings.Contains(unauthorized.Header().Get("WWW-Authenticate"), "/.well-known/oauth-protected-resource/mcp") {
+		t.Fatalf("resource metadata challenge = %q", unauthorized.Header().Get("WWW-Authenticate"))
+	}
+}
+
 func TestStreamableHTTPSSEAndReplay(t *testing.T) {
 	server := mustNewServer(t, Options{Workspace: t.TempDir()})
 	httpServer := httptest.NewServer(server.Handler())
@@ -288,6 +395,65 @@ func TestStaticOAuthClientUsesConfiguredRedirectURI(t *testing.T) {
 	handler.ServeHTTP(badRecorder, badRequest)
 	if badRecorder.Code != http.StatusBadRequest {
 		t.Fatalf("unregistered static redirect status = %d", badRecorder.Code)
+	}
+}
+
+func TestUnpinnedStaticClientAllowsValidatedHTTPSCallback(t *testing.T) {
+	const issuer = "http://127.0.0.1:18765"
+	const resource = issuer + "/mcp"
+	const redirectURI = "https://chatgpt.com/connector/oauth/callback"
+	server := mustNewServer(t, Options{
+		Workspace: t.TempDir(),
+		OAuth: OAuthOptions{
+			Enabled:       true,
+			Issuer:        issuer,
+			Resource:      resource,
+			OwnerPassword: "owner-password-long-enough",
+			ClientID:      "mcp-devdesk",
+			ClientSecret:  "static-client-secret-value",
+			TokenSecret:   strings.Repeat("56", 32),
+			DataDir:       t.TempDir(),
+		},
+	})
+	handler := server.Handler()
+	verifier := strings.Repeat("d", 43)
+	authorizeValues := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {"mcp-devdesk"},
+		"redirect_uri":          {redirectURI},
+		"code_challenge":        {pkceChallenge(verifier)},
+		"code_challenge_method": {"S256"},
+		"resource":              {issuer},
+		"scope":                 {"mcp"},
+		"owner_password":        {"owner-password-long-enough"},
+	}
+	authorizeRecorder := httptest.NewRecorder()
+	authorizeRequest := httptest.NewRequest(http.MethodPost, issuer+"/oauth/authorize", strings.NewReader(authorizeValues.Encode()))
+	authorizeRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(authorizeRecorder, authorizeRequest)
+	if authorizeRecorder.Code != http.StatusFound {
+		t.Fatalf("unpinned static authorize status = %d, body = %s", authorizeRecorder.Code, authorizeRecorder.Body.String())
+	}
+	redirect, err := url.Parse(authorizeRecorder.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := redirect.Query().Get("code")
+	tokenValues := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {"mcp-devdesk"},
+		"client_secret": {"static-client-secret-value"},
+		"code":          {code},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
+		"resource":      {issuer},
+	}
+	tokenRecorder := httptest.NewRecorder()
+	tokenRequest := httptest.NewRequest(http.MethodPost, issuer+"/oauth/token", strings.NewReader(tokenValues.Encode()))
+	tokenRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(tokenRecorder, tokenRequest)
+	if tokenRecorder.Code != http.StatusOK {
+		t.Fatalf("unpinned static token status = %d, body = %s", tokenRecorder.Code, tokenRecorder.Body.String())
 	}
 }
 
