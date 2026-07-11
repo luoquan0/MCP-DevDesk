@@ -41,6 +41,7 @@ func New(app *application.App, address string) (*Server, error) {
 	mux.HandleFunc("POST /api/services/start", s.handleStartServices)
 	mux.HandleFunc("POST /api/services/stop", s.handleStopServices)
 	mux.HandleFunc("POST /api/services/restart", s.handleRestartServices)
+	mux.HandleFunc("POST /api/services/takeover", s.handleTakeoverServices)
 	mux.HandleFunc("POST /api/cloudflare/login", s.handleCloudflareLogin)
 	mux.HandleFunc("POST /api/cloudflare/configure", s.handleCloudflareConfigure)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
@@ -117,6 +118,16 @@ func (s *Server) handleRestartServices(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if err := s.app.RestartServices(ctx); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.app.Status())
+}
+
+func (s *Server) handleTakeoverServices(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	if err := s.app.TakeoverAndStart(ctx); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}

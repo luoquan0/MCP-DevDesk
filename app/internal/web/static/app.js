@@ -75,6 +75,7 @@ function bindActions() {
   });
 
   $("#startAllButton").addEventListener("click", (event) => serviceAction(event.currentTarget, "start", "服务已启动"));
+  $("#takeoverButton").addEventListener("click", takeoverOldInstance);
   $("#stopAllButton").addEventListener("click", (event) => serviceAction(event.currentTarget, "stop", "服务已停止"));
   $("#restartAllButton").addEventListener("click", (event) => serviceAction(event.currentTarget, "restart", "服务已重新启动"));
   $("#testAndStartButton").addEventListener("click", (event) => serviceAction(event.currentTarget, "start", "服务已启动，请使用最终 URL 连接"));
@@ -172,10 +173,18 @@ function renderStatus(status) {
   $("#rootDirectory").textContent = status.rootDirectory;
   $("#dataDirectory").textContent = status.dataDirectory;
 
-  setServiceBadge("mcpBadge", status.mcp.running, status.mcp.running ? "运行中" : "已停止");
-  $("#mcpDetail").textContent = status.mcp.running
-    ? `PID ${status.mcp.pid} · MCP 端点已启动`
-    : status.mcp.lastError || "服务当前未运行";
+  const portConflict = Boolean(status.mcpPortOwner?.occupied && !status.mcpPortOwner?.managed && !status.mcp.running);
+  if (portConflict) {
+    const badge = $("#mcpBadge");
+    badge.textContent = "端口冲突";
+    badge.className = "badge warning";
+    $("#mcpDetail").textContent = `${status.mcpPortOwner.processName || "旧进程"} · PID ${status.mcpPortOwner.pid} 正在占用端口`;
+  } else {
+    setServiceBadge("mcpBadge", status.mcp.running, status.mcp.running ? "运行中" : "已停止");
+    $("#mcpDetail").textContent = status.mcp.running
+      ? `PID ${status.mcp.pid} · MCP 端点已启动`
+      : status.mcp.lastError || "服务当前未运行";
+  }
   $("#mcpPort").textContent = status.localMcpUrl.replace(/^.*:/, "").replace("/mcp", "");
 
   setServiceBadge("tunnelBadge", status.tunnel.running, status.tunnel.running ? "已连接" : "未连接");
@@ -192,6 +201,9 @@ function renderStatus(status) {
 
   $("#remoteUrl").textContent = status.remoteMcpUrl || "尚未配置域名";
   $("#authorizeUrl").textContent = status.authorizeUrl || "尚未配置域名";
+  $("#clientId").textContent = status.oauthClientId || "mcp-devdesk";
+  $("#oauthClientSecretMode").textContent = status.oauthClientType === "public" ? "留空（公共客户端）" : "请填写管理器提供的密钥";
+  $("#oauthTokenAuth").textContent = status.oauthTokenAuth || "none";
 
   const bothRunning = status.mcp.running && (!status.cloudflare.tunnelId || status.tunnel.running);
   const partlyRunning = status.mcp.running || status.tunnel.running;
@@ -200,7 +212,11 @@ function renderStatus(status) {
   $("#sidebarStatusText").textContent = bothRunning ? "服务运行中" : partlyRunning ? "部分服务运行" : "服务已停止";
 
   const heroBadge = $("#heroBadge");
-  if (bothRunning) {
+  if (portConflict) {
+    heroBadge.textContent = "Old instance detected";
+    heroBadge.className = "hero-badge warning";
+    $("#heroMessage").textContent = `端口被旧实例 ${status.mcpPortOwner.processName || "coding-tools-mcp.exe"}（PID ${status.mcpPortOwner.pid}）占用。它可能注册了不同的 OAuth client_id，导致 Unknown client_id。`;
+  } else if (bothRunning) {
     heroBadge.textContent = "All systems operational";
     heroBadge.className = "hero-badge success";
     $("#heroMessage").textContent = "本地 MCP 与固定域名通道正在运行，可以直接从 ChatGPT 连接和操作项目。";
@@ -214,7 +230,9 @@ function renderStatus(status) {
     $("#heroMessage").textContent = "配置已经就绪，点击启动即可运行 MCP 服务和 Cloudflare Tunnel。";
   }
 
-  $("#startAllButton").disabled = status.mcp.running && (status.tunnel.running || !status.cloudflare.tunnelId);
+  const takeoverButton = $("#takeoverButton");
+  takeoverButton.hidden = !portConflict || String(status.mcpPortOwner?.processName || "").toLowerCase() !== "coding-tools-mcp.exe";
+  $("#startAllButton").disabled = portConflict || (status.mcp.running && (status.tunnel.running || !status.cloudflare.tunnelId));
   $("#stopAllButton").disabled = !status.mcp.running && !status.tunnel.running;
 
   renderCloudflareStatus(status.cloudflare, status);
@@ -291,6 +309,20 @@ async function serviceAction(button, action, successMessage) {
     await api(`/api/services/${action}`, { method: "POST" });
     await refreshStatus();
     toast(successMessage, action === "stop" ? "所有受管理的子进程已停止。" : "状态已更新，可在仪表盘查看连接信息。", "success");
+  });
+}
+
+async function takeoverOldInstance(event) {
+  const owner = state.status?.mcpPortOwner;
+  const accepted = await confirmAction(
+    "接管旧 MCP 实例",
+    `将终止当前占用 8765 端口的 ${owner?.processName || "coding-tools-mcp.exe"}（PID ${owner?.pid || "未知"}），然后用本管理器的 OAuth client_id 重新启动。旧实例未保存的会话会中断。`
+  );
+  if (!accepted) return;
+  await withBusy(event.currentTarget, async () => {
+    await api("/api/services/takeover", { method: "POST" });
+    await Promise.all([refreshStatus(), runDiagnostics()]);
+    toast("旧实例已接管", "新的 MCP 服务已使用当前 OAuth 配置启动。请回到 ChatGPT 重新创建连接。", "success");
   });
 }
 

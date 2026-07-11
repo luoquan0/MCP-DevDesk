@@ -116,6 +116,15 @@ type ProcessStatus struct {
 	StderrPath string     `json:"stderrPath,omitempty"`
 }
 
+type PortOwner struct {
+	Occupied    bool   `json:"occupied"`
+	PID         int    `json:"pid,omitempty"`
+	ParentPID   int    `json:"parentPid,omitempty"`
+	ProcessName string `json:"processName,omitempty"`
+	ProcessPath string `json:"processPath,omitempty"`
+	Managed     bool   `json:"managed"`
+}
+
 type CloudflareStatus struct {
 	Installed       bool   `json:"installed"`
 	Authenticated   bool   `json:"authenticated"`
@@ -135,7 +144,11 @@ type ServiceStatus struct {
 	LocalMCPURL      string           `json:"localMcpUrl"`
 	RemoteMCPURL     string           `json:"remoteMcpUrl,omitempty"`
 	AuthorizeURL     string           `json:"authorizeUrl,omitempty"`
+	OAuthClientID    string           `json:"oauthClientId"`
+	OAuthClientType  string           `json:"oauthClientType"`
+	OAuthTokenAuth   string           `json:"oauthTokenAuth"`
 	MCP              ProcessStatus    `json:"mcp"`
+	MCPPortOwner     PortOwner        `json:"mcpPortOwner"`
 	Tunnel           ProcessStatus    `json:"tunnel"`
 	Cloudflare       CloudflareStatus `json:"cloudflare"`
 	PermissionMode   string           `json:"permissionMode"`

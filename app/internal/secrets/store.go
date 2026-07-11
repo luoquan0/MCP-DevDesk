@@ -69,7 +69,6 @@ func (s *Store) Summary(reveal bool) (model.SecretSummary, error) {
 	return model.SecretSummary{
 		OwnerPassword: values.OwnerPassword,
 		ClientID:      values.ClientID,
-		ClientSecret:  values.ClientSecret,
 	}, nil
 }
 

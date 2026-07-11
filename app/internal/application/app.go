@@ -21,7 +21,7 @@ import (
 	"mcp-devdesk/internal/tunnel"
 )
 
-const Version = "0.1.0-dev"
+const Version = "0.1.1-dev"
 
 type App struct {
 	rootDir string
@@ -84,6 +84,15 @@ func (a *App) UpdateConfig(update model.ConfigUpdate) (model.PublicConfig, error
 func (a *App) Status() model.ServiceStatus {
 	cfg := a.config.Get()
 	mcp, tunnelStatus, login := a.process.Status()
+	portOwner, _ := processmanager.FindTCPListener(cfg.MCPPort)
+	managedPort := false
+	if portOwner.Occupied && mcp.Running {
+		managedPort = portOwner.PID == mcp.PID || samePath(portOwner.ProcessPath, cfg.CoreExecutable)
+	}
+	oauthClientID := "mcp-devdesk"
+	if oauthValues, err := a.secrets.GetOrCreate(); err == nil && oauthValues.ClientID != "" {
+		oauthClientID = oauthValues.ClientID
+	}
 	cf := a.tunnel.Status(cfg, login)
 	adminURL := "http://" + cfg.AdminHost + ":" + strconv.Itoa(cfg.AdminPort)
 	localMCPURL := "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort) + "/mcp"
@@ -96,14 +105,25 @@ func (a *App) Status() model.ServiceStatus {
 	ok, message := a.configurationStatus(cfg)
 
 	return model.ServiceStatus{
-		Version:          Version,
-		RootDirectory:    a.rootDir,
-		DataDirectory:    a.dataDir,
-		AdminURL:         adminURL,
-		LocalMCPURL:      localMCPURL,
-		RemoteMCPURL:     remoteMCPURL,
-		AuthorizeURL:     authorizeURL,
-		MCP:              mcp,
+		Version:         Version,
+		RootDirectory:   a.rootDir,
+		DataDirectory:   a.dataDir,
+		AdminURL:        adminURL,
+		LocalMCPURL:     localMCPURL,
+		RemoteMCPURL:    remoteMCPURL,
+		AuthorizeURL:    authorizeURL,
+		OAuthClientID:   oauthClientID,
+		OAuthClientType: "public",
+		OAuthTokenAuth:  "none",
+		MCP:             mcp,
+		MCPPortOwner: model.PortOwner{
+			Occupied:    portOwner.Occupied,
+			PID:         portOwner.PID,
+			ParentPID:   portOwner.ParentPID,
+			ProcessName: portOwner.ProcessName,
+			ProcessPath: portOwner.ProcessPath,
+			Managed:     managedPort,
+		},
 		Tunnel:           tunnelStatus,
 		Cloudflare:       cf,
 		PermissionMode:   cfg.PermissionMode,
@@ -123,11 +143,24 @@ func (a *App) StartServices(ctx context.Context) error {
 	cfg := a.config.Get()
 	mcp, tunnelStatus, _ := a.process.Status()
 	if !mcp.Running {
+		owner, err := processmanager.FindTCPListener(cfg.MCPPort)
+		if err != nil {
+			a.desiredRunning = false
+			return fmt.Errorf("检查 MCP 端口失败: %w", err)
+		}
+		if owner.Occupied {
+			a.desiredRunning = false
+			name := owner.ProcessName
+			if name == "" {
+				name = "未知进程"
+			}
+			return fmt.Errorf("MCP 端口 %d 已被 %s（PID %d）占用；当前公网域名可能仍连接到旧实例，请使用“接管旧实例并启动”", cfg.MCPPort, name, owner.PID)
+		}
 		if err := a.process.StartMCP(cfg); err != nil {
 			a.desiredRunning = false
 			return err
 		}
-		if err := waitForPort(ctx, cfg.MCPHost, cfg.MCPPort, 15*time.Second); err != nil {
+		if err := a.waitForMCP(ctx, cfg, 15*time.Second); err != nil {
 			_ = a.process.StopMCP()
 			a.desiredRunning = false
 			return fmt.Errorf("MCP 服务未能监听端口: %w", err)
@@ -140,6 +173,41 @@ func (a *App) StartServices(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (a *App) TakeoverAndStart(ctx context.Context) error {
+	cfg := a.config.Get()
+	mcp, _, _ := a.process.Status()
+	if mcp.Running {
+		return a.RestartServices(ctx)
+	}
+	owner, err := processmanager.FindTCPListener(cfg.MCPPort)
+	if err != nil {
+		return err
+	}
+	if owner.Occupied {
+		if !strings.EqualFold(owner.ProcessName, "coding-tools-mcp.exe") {
+			return fmt.Errorf("端口 %d 被 %s（PID %d）占用，出于安全考虑不会自动终止非 MCP 进程", cfg.MCPPort, owner.ProcessName, owner.PID)
+		}
+		if err := processmanager.KillPortOwner(owner); err != nil {
+			return err
+		}
+		deadline := time.Now().Add(8 * time.Second)
+		for time.Now().Before(deadline) {
+			if portAvailable(cfg.MCPHost, cfg.MCPPort) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		if !portAvailable(cfg.MCPHost, cfg.MCPPort) {
+			return fmt.Errorf("旧 MCP 进程已终止，但端口 %d 仍未释放", cfg.MCPPort)
+		}
+	}
+	return a.StartServices(ctx)
 }
 
 func (a *App) StopServices() error {
@@ -215,6 +283,9 @@ func (a *App) Logs(name string, maxLines int) (model.LogResponse, error) {
 
 func (a *App) Diagnostics() map[string]any {
 	cfg := a.config.Get()
+	mcp, _, _ := a.process.Status()
+	owner, _ := processmanager.FindTCPListener(cfg.MCPPort)
+	portHealthy := !owner.Occupied || (mcp.Running && (owner.PID == mcp.PID || samePath(owner.ProcessPath, cfg.CoreExecutable)))
 	result := map[string]any{
 		"version":                 Version,
 		"rootDirectory":           a.rootDir,
@@ -224,7 +295,11 @@ func (a *App) Diagnostics() map[string]any {
 		"cloudflaredExists":       pathIsFile(cfg.CloudflaredExecutable),
 		"cloudflareAuthenticated": pathIsFile(processmanager.CertificatePath()),
 		"credentialsExist":        cfg.TunnelID != "" && pathIsFile(processmanager.CredentialsPath(cfg.TunnelID)),
-		"mcpPortAvailable":        portAvailable(cfg.MCPHost, cfg.MCPPort),
+		"mcpPortAvailable":        portHealthy,
+		"mcpPortConflict":         owner.Occupied && !portHealthy,
+		"mcpPortOwnerPid":         owner.PID,
+		"mcpPortOwnerName":        owner.ProcessName,
+		"mcpPortOwnerPath":        owner.ProcessPath,
 		"adminHostLoopback":       isLoopbackHost(cfg.AdminHost),
 	}
 	return result
@@ -288,12 +363,21 @@ func (a *App) watchdogTick(ctx context.Context) {
 
 	mcp, tunnelStatus, _ := a.process.Status()
 	if !mcp.Running {
+		owner, err := processmanager.FindTCPListener(cfg.MCPPort)
+		if err != nil {
+			a.logWatchdog("MCP 端口检查失败: " + err.Error())
+			return
+		}
+		if owner.Occupied {
+			a.logWatchdog(fmt.Sprintf("MCP 端口 %d 被 %s (PID %d) 占用，watchdog 不会接管旧实例", cfg.MCPPort, owner.ProcessName, owner.PID))
+			return
+		}
 		a.logWatchdog("MCP 进程退出，正在重启")
 		if err := a.process.StartMCP(cfg); err != nil {
 			a.logWatchdog("MCP 重启失败: " + err.Error())
 			return
 		}
-		if err := waitForPort(ctx, cfg.MCPHost, cfg.MCPPort, 12*time.Second); err != nil {
+		if err := a.waitForMCP(ctx, cfg, 12*time.Second); err != nil {
 			a.logWatchdog("MCP 端口检测失败: " + err.Error())
 			return
 		}
@@ -316,10 +400,17 @@ func (a *App) logWatchdog(message string) {
 	_, _ = fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.RFC3339), message)
 }
 
-func waitForPort(ctx context.Context, host string, port int, timeout time.Duration) error {
+func (a *App) waitForMCP(ctx context.Context, cfg model.Config, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	address := net.JoinHostPort(host, strconv.Itoa(port))
+	address := net.JoinHostPort(cfg.MCPHost, strconv.Itoa(cfg.MCPPort))
 	for time.Now().Before(deadline) {
+		mcp, _, _ := a.process.Status()
+		if !mcp.Running {
+			if mcp.LastError != "" {
+				return errors.New(mcp.LastError)
+			}
+			return errors.New("MCP 进程在端口就绪前退出")
+		}
 		connection, err := net.DialTimeout("tcp", address, 250*time.Millisecond)
 		if err == nil {
 			_ = connection.Close()
@@ -332,6 +423,18 @@ func waitForPort(ctx context.Context, host string, port int, timeout time.Durati
 		}
 	}
 	return fmt.Errorf("timeout waiting for %s", address)
+}
+
+func samePath(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	if leftErr != nil || rightErr != nil {
+		return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+	}
+	return strings.EqualFold(filepath.Clean(leftAbs), filepath.Clean(rightAbs))
 }
 
 func tailLines(path string, limit int) ([]string, bool, error) {

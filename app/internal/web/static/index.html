@@ -80,6 +80,7 @@
               <p id="heroMessage">正在读取本机配置与服务状态……</p>
               <div class="hero-actions">
                 <button class="button primary" id="startAllButton">启动全部服务</button>
+                <button class="button danger" id="takeoverButton" hidden>接管旧实例并启动</button>
                 <button class="button secondary" id="restartAllButton">重新启动</button>
                 <button class="button danger-subtle" id="stopAllButton">停止全部</button>
               </div>
@@ -138,6 +139,16 @@
                   <span>Client ID</span>
                   <code id="clientId">mcp-devdesk</code>
                   <button class="copy-button" data-copy-target="clientId">复制</button>
+                </div>
+                <div class="url-row">
+                  <span>Client Secret</span>
+                  <code id="oauthClientSecretMode">留空（公共客户端）</code>
+                  <button class="copy-button" data-copy-target="oauthClientSecretMode" disabled>无需填写</button>
+                </div>
+                <div class="url-row">
+                  <span>令牌认证方法</span>
+                  <code id="oauthTokenAuth">none</code>
+                  <button class="copy-button" data-copy-target="oauthTokenAuth">复制</button>
                 </div>
               </div>
             </article>

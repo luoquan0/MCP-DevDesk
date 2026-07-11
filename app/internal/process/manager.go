@@ -83,7 +83,6 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 		"CODING_TOOLS_MCP_SERVER_URL="+baseURL,
 		"CODING_TOOLS_MCP_OAUTH_PASSWORD="+values.OwnerPassword,
 		"CODING_TOOLS_MCP_OAUTH_CLIENT_ID="+values.ClientID,
-		"CODING_TOOLS_MCP_OAUTH_CLIENT_SECRET="+values.ClientSecret,
 		"CODING_TOOLS_MCP_OAUTH_TOKEN_SECRET="+values.TokenSecret,
 		"CODING_TOOLS_MCP_TOOL_PROFILE="+cfg.ToolProfile,
 	)

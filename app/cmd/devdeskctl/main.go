@@ -70,10 +70,10 @@ func commandRequest(command string) (method, path string, body io.Reader, err er
 		return http.MethodGet, "/api/config", nil, nil
 	case "diagnostics", "diag":
 		return http.MethodGet, "/api/diagnostics", nil, nil
-	case "start", "stop", "restart":
+	case "start", "stop", "restart", "takeover":
 		return http.MethodPost, "/api/services/" + command, bytes.NewReader([]byte("{}")), nil
 	default:
-		return "", "", nil, errors.New("usage: devdeskctl [status|health|config|diagnostics|start|stop|restart]")
+		return "", "", nil, errors.New("usage: devdeskctl [status|health|config|diagnostics|start|stop|restart|takeover]")
 	}
 }
 
