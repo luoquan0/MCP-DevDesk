@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -171,6 +172,56 @@ func TestFolderPickerEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"path":"D:\\Projects\\selected-app"`) || !strings.Contains(recorder.Body.String(), `"canceled":false`) {
 		t.Fatalf("unexpected folder picker response: %s", recorder.Body.String())
+	}
+}
+
+func TestProjectPathCanBeUpdatedFromProjectsAPI(t *testing.T) {
+	server := newTestServer(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	freePort := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	if _, err := server.app.UpdateConfig(model.ConfigUpdate{MCPPort: &freePort}); err != nil {
+		t.Fatal(err)
+	}
+	projects := server.app.Projects()
+	if len(projects) == 0 {
+		t.Fatal("expected the active workspace to be registered as a project")
+	}
+	active := projects[0]
+	for _, project := range projects {
+		if strings.EqualFold(filepath.Clean(project.Path), filepath.Clean(server.app.Config().Workspace)) {
+			active = project
+			break
+		}
+	}
+	target := filepath.Join(t.TempDir(), "updated-workspace")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]string{"path": target})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/api/projects/"+active.ID, bytes.NewReader(body))
+	request.SetPathValue("id", active.ID)
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("project path update failed: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.EqualFold(filepath.Clean(server.app.Config().Workspace), filepath.Clean(target)) {
+		t.Fatalf("active workspace = %q, want %q", server.app.Config().Workspace, target)
+	}
+	if !strings.Contains(recorder.Body.String(), `"path":`) {
+		t.Fatalf("unexpected project update response: %s", recorder.Body.String())
 	}
 }
 

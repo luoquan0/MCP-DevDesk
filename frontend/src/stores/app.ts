@@ -84,6 +84,18 @@ export const useAppStore = defineStore("app", {
       await this.loadProjects();
       ui.toast("项目已添加", path, "success");
     },
+    async updateProjectPath(id: string, path: string) {
+      const ui = useUiStore();
+      const project = await this.runAction(`update-${id}`, () => api<Project>(`/api/projects/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { path } as unknown as BodyInit,
+      }));
+      delete this.projectDetails[id];
+      delete this.projectDiffs[id];
+      await Promise.all([this.loadProjects(), this.loadConfig(), this.refreshStatus(true)]);
+      ui.toast("项目路径已更新", project.path, "success");
+      return project;
+    },
     async activateProject(id: string) {
       const ui = useUiStore();
       this.status = await this.runAction(`activate-${id}`, () => api<ServiceStatus>(`/api/projects/${encodeURIComponent(id)}/activate`, { method: "POST" }));

@@ -7,6 +7,7 @@ import PageHeader from "@/components/ui/PageHeader.vue";
 import StatusPill from "@/components/ui/StatusPill.vue";
 import { useAppStore } from "@/stores/app";
 import { useUiStore } from "@/stores/ui";
+import type { Project } from "@/types/api";
 
 const app = useAppStore();
 const ui = useUiStore();
@@ -15,6 +16,9 @@ const projectPath = ref("");
 const projectLabel = ref("");
 const showAdd = ref(false);
 const browsingProject = ref(false);
+const editingId = ref("");
+const editingPath = ref("");
+const browsingEditId = ref("");
 const selectedId = ref("");
 const worktreePath = ref("");
 const worktreeBranch = ref("");
@@ -45,6 +49,68 @@ async function browseProject() {
     ui.toast("无法打开文件夹选择器", errorMessage(error), "danger");
   } finally {
     browsingProject.value = false;
+  }
+}
+
+function cancelAddProject() {
+  projectPath.value = "";
+  projectLabel.value = "";
+  showAdd.value = false;
+}
+
+function startEditProject(project: Project) {
+  editingId.value = project.id;
+  editingPath.value = project.path;
+}
+
+function cancelEditProject() {
+  editingId.value = "";
+  editingPath.value = "";
+}
+
+async function browseEditProject(project: Project) {
+  browsingEditId.value = project.id;
+  try {
+    const result = await app.pickFolder(editingPath.value || project.path, `选择“${project.name}”的新目录`);
+    if (!result.canceled && result.path) editingPath.value = result.path;
+  } catch (error) {
+    ui.toast("无法打开文件夹选择器", errorMessage(error), "danger");
+  } finally {
+    browsingEditId.value = "";
+  }
+}
+
+async function saveProjectPath(project: Project) {
+  const path = editingPath.value.trim();
+  if (!path) {
+    ui.toast("项目路径不能为空", "请选择一个存在的本地文件夹。", "danger");
+    return;
+  }
+  if (normalizePath(path) === normalizePath(project.path)) {
+    cancelEditProject();
+    return;
+  }
+
+  const active = isActive(project.path);
+  const accepted = await ui.ask({
+    title: active ? "修改当前项目路径" : "修改项目路径",
+    message: active
+      ? `当前 MCP 工作目录将切换为 ${path}。MCP 会安全重启，启动失败时会自动恢复原目录。`
+      : `项目“${project.name}”的目录引用将修改为 ${path}，不会移动或修改磁盘中的文件。`,
+    confirmLabel: active ? "修改并切换" : "修改路径",
+  });
+  if (!accepted) return;
+
+  try {
+    const wasSelected = selectedId.value === project.id;
+    const updated = await app.updateProjectPath(project.id, path);
+    cancelEditProject();
+    if (wasSelected) {
+      await app.inspectProject(updated.id);
+      selectedId.value = updated.id;
+    }
+  } catch (error) {
+    ui.toast("项目路径修改失败", errorMessage(error), "danger");
   }
 }
 
@@ -145,7 +211,13 @@ async function removeWorktree(path: string) {
           </div>
         </label>
         <label class="field"><span>显示名称（可选）</span><input v-model="projectLabel" placeholder="默认使用文件夹名称" /></label>
-        <div class="form-footer"><small>只保存目录引用，不会移动或修改项目文件。</small><AppButton type="submit" tone="primary" :loading="app.actionPending === 'add-project'">添加</AppButton></div>
+        <div class="form-footer">
+          <small>只保存目录引用，不会移动或修改项目文件。</small>
+          <div class="form-footer-actions">
+            <AppButton tone="quiet" @click="cancelAddProject">取消添加</AppButton>
+            <AppButton type="submit" tone="primary" :loading="app.actionPending === 'add-project'">添加</AppButton>
+          </div>
+        </div>
       </form>
     </AppCard>
 
@@ -154,13 +226,27 @@ async function removeWorktree(path: string) {
         <div class="current-project-icon"><AppIcon name="folder" :size="24" /></div>
         <div class="current-project-copy">
           <div class="current-project-title"><h3>{{ project.name }}</h3><StatusPill v-if="isActive(project.path)" tone="success">当前活动</StatusPill></div>
-          <p class="mono">{{ project.path }}</p>
+          <div v-if="editingId === project.id" class="project-path-editor">
+            <div class="path-picker-row">
+              <input v-model="editingPath" :aria-label="`${project.name} 项目路径`" spellcheck="false" />
+              <AppButton tone="secondary" icon="folder" :loading="browsingEditId === project.id" @click="browseEditProject(project)">浏览</AppButton>
+            </div>
+            <small>修改当前活动项目时会同步切换 MCP 工作目录；其他项目只更新目录引用。</small>
+          </div>
+          <p v-else class="mono">{{ project.path }}</p>
           <small>最近打开 {{ new Date(project.lastOpenedAt).toLocaleString() }}</small>
         </div>
         <div class="project-row-actions">
-          <AppButton tone="secondary" icon="info" :loading="app.actionPending === `inspect-${project.id}`" @click="inspect(project.id)">详情</AppButton>
-          <AppButton v-if="!isActive(project.path)" tone="primary" icon="restart" :loading="app.actionPending === `activate-${project.id}`" @click="switchProject(project.id)">切换</AppButton>
-          <AppButton v-if="!isActive(project.path)" tone="quiet" :loading="app.actionPending === `remove-${project.id}`" @click="removeProject(project.id, project.name)">移除</AppButton>
+          <template v-if="editingId === project.id">
+            <AppButton tone="quiet" @click="cancelEditProject">取消</AppButton>
+            <AppButton tone="primary" :loading="app.actionPending === `update-${project.id}`" @click="saveProjectPath(project)">保存路径</AppButton>
+          </template>
+          <template v-else>
+            <AppButton tone="secondary" icon="folder" @click="startEditProject(project)">修改路径</AppButton>
+            <AppButton tone="secondary" icon="info" :loading="app.actionPending === `inspect-${project.id}`" @click="inspect(project.id)">详情</AppButton>
+            <AppButton v-if="!isActive(project.path)" tone="primary" icon="restart" :loading="app.actionPending === `activate-${project.id}`" @click="switchProject(project.id)">切换</AppButton>
+            <AppButton v-if="!isActive(project.path)" tone="quiet" :loading="app.actionPending === `remove-${project.id}`" @click="removeProject(project.id, project.name)">移除</AppButton>
+          </template>
         </div>
       </AppCard>
     </section>

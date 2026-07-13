@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from "vue";
+import { reactive, watch } from "vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
@@ -11,7 +11,6 @@ import { useUiStore } from "@/stores/ui";
 
 const app = useAppStore();
 const ui = useUiStore();
-const browsingWorkspace = ref(false);
 
 const form = reactive({
   workspace: "",
@@ -51,24 +50,10 @@ async function run(action: "start" | "stop" | "restart" | "takeover") {
   }
 }
 
-async function browseWorkspace() {
-  browsingWorkspace.value = true;
-  try {
-    const result = await app.pickFolder(form.workspace, "选择 MCP 工作目录");
-    if (!result.canceled && result.path) form.workspace = result.path;
-  } catch (error) {
-    ui.toast("无法打开文件夹选择器", error instanceof Error ? error.message : String(error), "danger");
-  } finally {
-    browsingWorkspace.value = false;
-  }
-}
-
 async function save() {
   try {
-    const requestedWorkspace = form.workspace.trim();
     const requestedMcpPort = Number(form.mcpPort);
     const requestedAdminPort = Number(form.adminPort);
-    if (!requestedWorkspace) throw new Error("工作目录不能为空。");
     if (!Number.isInteger(requestedMcpPort) || requestedMcpPort < 1024 || requestedMcpPort > 65535) {
       throw new Error("MCP 端口必须是 1024 到 65535 之间的整数。");
     }
@@ -77,23 +62,11 @@ async function save() {
     }
     if (requestedMcpPort === requestedAdminPort) throw new Error("MCP 端口和管理端口不能相同。");
 
-    const oldWorkspace = app.config?.workspace;
     const oldPort = app.config?.mcpPort;
     const oldCoreMode = app.config?.coreMode;
     const oldToolProfile = app.config?.toolProfile;
     const runtimeWasRunning = Boolean(app.status?.mcp.running);
 
-    if (oldWorkspace && oldWorkspace.toLowerCase() !== requestedWorkspace.toLowerCase()) {
-      const accepted = await ui.ask({
-        title: "切换 MCP 工作目录",
-        message: `工作目录将切换为 ${requestedWorkspace}。MCP 会安全重启；如果启动失败，系统会自动恢复原目录。`,
-        confirmLabel: "切换目录",
-      });
-      if (!accepted) {
-        form.workspace = oldWorkspace;
-        return;
-      }
-    }
     if (oldPort && oldPort !== requestedMcpPort) {
       const accepted = await ui.ask({
         title: "切换 MCP 与 Tunnel 端口",
@@ -128,13 +101,11 @@ async function save() {
       watchdog: form.watchdog,
     });
 
-    const workspaceChanged = Boolean(oldWorkspace && oldWorkspace.toLowerCase() !== requestedWorkspace.toLowerCase());
     const portChanged = Boolean(oldPort && oldPort !== requestedMcpPort);
-    if (workspaceChanged) await app.changeWorkspace(requestedWorkspace);
     if (portChanged) await app.changePort(requestedMcpPort);
 
     const runtimeConfigChanged = oldCoreMode !== form.coreMode || oldToolProfile !== form.toolProfile;
-    if (!workspaceChanged && !portChanged && runtimeConfigChanged && runtimeWasRunning) {
+    if (!portChanged && runtimeConfigChanged && runtimeWasRunning) {
       await app.serviceAction("restart");
     }
   } catch (error) {
@@ -210,11 +181,8 @@ async function save() {
         <div class="field-grid">
           <label class="field span-2">
             <span>工作目录</span>
-            <div class="path-picker-row">
-              <input v-model="form.workspace" type="text" spellcheck="false" />
-              <AppButton tone="secondary" icon="folder" :loading="browsingWorkspace" @click="browseWorkspace">浏览</AppButton>
-            </div>
-            <small>可浏览选择或直接输入目录；保存后会安全热切换，并在启动失败时自动回滚。</small>
+            <input v-model="form.workspace" type="text" spellcheck="false" readonly aria-readonly="true" />
+            <small>工作目录只能在“项目”页面修改；当前页面仅显示正在使用的目录。</small>
           </label>
           <label class="field">
             <span>MCP 端口</span>

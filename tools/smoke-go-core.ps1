@@ -80,7 +80,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.7.5") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.7.6") { return }
             }
         } catch {}
         if ($started.HasExited) { break }

@@ -52,6 +52,7 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("PUT /api/config", s.handleUpdateConfig)
 	mux.HandleFunc("GET /api/projects", s.handleListProjects)
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
+	mux.HandleFunc("PATCH /api/projects/{id}", s.handleUpdateProject)
 	mux.HandleFunc("POST /api/projects/{id}/activate", s.handleActivateProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
 	mux.HandleFunc("GET /api/projects/{id}/details", s.handleProjectDetails)
@@ -132,6 +133,24 @@ func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, project)
+}
+
+func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Path string `json:"path"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	project, err := s.app.UpdateProjectPath(ctx, r.PathValue("id"), request.Path)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, project)
 }
 
 func (s *Server) handleActivateProject(w http.ResponseWriter, r *http.Request) {

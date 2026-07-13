@@ -85,6 +85,42 @@ func (a *App) AddProject(name, path string) (projectstore.Project, error) {
 	return a.projects.Add(name, path)
 }
 
+func (a *App) UpdateProjectPath(ctx context.Context, id, path string) (projectstore.Project, error) {
+	current, ok := a.projects.Get(id)
+	if !ok {
+		return projectstore.Project{}, errors.New("project not found")
+	}
+	candidate, err := a.projects.PreparePathUpdate(id, path)
+	if err != nil {
+		return projectstore.Project{}, err
+	}
+	if strings.EqualFold(filepath.Clean(current.Path), filepath.Clean(candidate.Path)) {
+		return current, nil
+	}
+
+	active := strings.EqualFold(filepath.Clean(a.config.Get().Workspace), filepath.Clean(current.Path))
+	if active {
+		if err := a.SwitchWorkspace(ctx, candidate.Path); err != nil {
+			return projectstore.Project{}, err
+		}
+	}
+
+	updated, err := a.projects.UpdatePath(id, candidate.Path)
+	if err == nil {
+		return updated, nil
+	}
+	if !active {
+		return projectstore.Project{}, err
+	}
+
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	if rollbackErr := a.SwitchWorkspace(rollbackCtx, current.Path); rollbackErr != nil {
+		return projectstore.Project{}, fmt.Errorf("update project path: %w; workspace rollback failed: %v", err, rollbackErr)
+	}
+	return projectstore.Project{}, err
+}
+
 func (a *App) RemoveProject(id string) error {
 	return a.projects.Remove(id, a.config.Get().Workspace)
 }

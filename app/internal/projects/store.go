@@ -104,6 +104,76 @@ func (s *Store) Get(id string) (Project, bool) {
 	return Project{}, false
 }
 
+func (s *Store) PreparePathUpdate(id, path string) (Project, error) {
+	abs, err := canonicalPath(path)
+	if err != nil {
+		return Project{}, fmt.Errorf("resolve project path: %w", err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.IsDir() {
+		return Project{}, errors.New("project path must be an existing directory")
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.preparePathUpdateLocked(id, abs)
+}
+
+func (s *Store) UpdatePath(id, path string) (Project, error) {
+	abs, err := canonicalPath(path)
+	if err != nil {
+		return Project{}, fmt.Errorf("resolve project path: %w", err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.IsDir() {
+		return Project{}, errors.New("project path must be an existing directory")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	updated, err := s.preparePathUpdateLocked(id, abs)
+	if err != nil {
+		return Project{}, err
+	}
+	for i := range s.data {
+		if s.data[i].ID != id {
+			continue
+		}
+		if samePath(s.data[i].Path, updated.Path) {
+			return s.data[i], nil
+		}
+		previous := s.data[i]
+		s.data[i] = updated
+		if err := s.saveLocked(); err != nil {
+			s.data[i] = previous
+			return Project{}, err
+		}
+		return updated, nil
+	}
+	return Project{}, errors.New("project not found")
+}
+
+func (s *Store) preparePathUpdateLocked(id, abs string) (Project, error) {
+	var current Project
+	found := false
+	for _, item := range s.data {
+		if item.ID == id {
+			current = item
+			found = true
+			continue
+		}
+		if samePath(item.Path, abs) {
+			return Project{}, errors.New("another project already uses this path")
+		}
+	}
+	if !found {
+		return Project{}, errors.New("project not found")
+	}
+	current.Path = abs
+	current.ID = projectID(abs)
+	return current, nil
+}
+
 func (s *Store) Touch(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

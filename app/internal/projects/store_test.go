@@ -78,3 +78,43 @@ func TestStoreNormalizesAndDeduplicatesPersistedProjects(t *testing.T) {
 		t.Fatalf("expected newest last-opened timestamp, got %v", items[0].LastOpenedAt)
 	}
 }
+
+func TestStoreUpdatesProjectPathAndRejectsDuplicates(t *testing.T) {
+	dataDir := t.TempDir()
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	third := filepath.Join(t.TempDir(), "third")
+	for _, path := range []string{first, second, third} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store, err := NewStore(dataDir, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.Add("Second project", second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.UpdatePath(project.ID, third)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Path != filepath.Clean(third) {
+		t.Fatalf("updated path = %q, want %q", updated.Path, filepath.Clean(third))
+	}
+	if updated.ID == project.ID {
+		t.Fatal("expected project ID to change with the path")
+	}
+	if updated.Name != project.Name {
+		t.Fatalf("project name changed from %q to %q", project.Name, updated.Name)
+	}
+	if _, ok := store.Get(updated.ID); !ok {
+		t.Fatal("updated project was not persisted under its new ID")
+	}
+	if _, err := store.UpdatePath(updated.ID, first); err == nil {
+		t.Fatal("expected duplicate project path to be rejected")
+	}
+}
