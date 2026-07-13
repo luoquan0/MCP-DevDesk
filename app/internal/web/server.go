@@ -30,6 +30,7 @@ type Server struct {
 
 type DesktopController interface {
 	Open() error
+	PickFolder(initialPath, title string) (path string, canceled bool, err error)
 	Status() model.DesktopStatus
 	SetStartup(enabled bool) error
 }
@@ -74,6 +75,7 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/secrets/generate", s.handleGenerateSecret)
 	mux.HandleFunc("GET /api/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("GET /api/system/desktop", s.handleDesktopStatus)
+	mux.HandleFunc("POST /api/system/pick-folder", s.handlePickFolder)
 	mux.HandleFunc("PUT /api/system/startup", s.handleStartup)
 	mux.HandleFunc("POST /api/ui/open", s.handleOpenUI)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -409,6 +411,27 @@ func (s *Server) handleDesktopStatus(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.desktop.Status())
+}
+
+func (s *Server) handlePickFolder(w http.ResponseWriter, r *http.Request) {
+	if s.desktop == nil {
+		writeError(w, http.StatusNotImplemented, errors.New("desktop folder selection is unavailable"))
+		return
+	}
+	var request struct {
+		InitialPath string `json:"initialPath"`
+		Title       string `json:"title"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	path, canceled, err := s.desktop.PickFolder(request.InitialPath, request.Title)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": path, "canceled": canceled})
 }
 
 func (s *Server) handleStartup(w http.ResponseWriter, r *http.Request) {

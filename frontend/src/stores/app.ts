@@ -7,6 +7,7 @@ import type {
   ConfigureTunnelResult,
   DesktopStatus,
   Diagnostics,
+  FolderPickerResult,
   LogResponse,
   Project,
   ProjectDetails,
@@ -123,6 +124,12 @@ export const useAppStore = defineStore("app", {
     },
     async loadDesktop() {
       this.desktop = await api<DesktopStatus>("/api/system/desktop");
+    },
+    async pickFolder(initialPath = "", title = "选择本地项目文件夹") {
+      return api<FolderPickerResult>("/api/system/pick-folder", {
+        method: "POST",
+        body: { initialPath, title } as unknown as BodyInit,
+      });
     },
     async loadDiagnostics() {
       this.diagnostics = await api<Diagnostics>("/api/diagnostics");

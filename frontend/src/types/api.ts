@@ -122,6 +122,11 @@ export interface DesktopStatus {
   windowModeLabel: string;
 }
 
+export interface FolderPickerResult {
+  path: string;
+  canceled: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;

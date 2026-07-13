@@ -16,9 +16,13 @@ import (
 )
 
 type fakeDesktop struct {
-	status  model.DesktopStatus
-	opened  bool
-	startup bool
+	status         model.DesktopStatus
+	opened         bool
+	startup        bool
+	pickedPath     string
+	pickerCanceled bool
+	pickerInitial  string
+	pickerTitle    string
 }
 
 func (f *fakeDesktop) Open() error {
@@ -35,6 +39,12 @@ func (f *fakeDesktop) Status() model.DesktopStatus {
 func (f *fakeDesktop) SetStartup(enabled bool) error {
 	f.startup = enabled
 	return nil
+}
+
+func (f *fakeDesktop) PickFolder(initialPath, title string) (string, bool, error) {
+	f.pickerInitial = initialPath
+	f.pickerTitle = title
+	return f.pickedPath, f.pickerCanceled, nil
 }
 
 func newTestServer(t *testing.T) *Server {
@@ -138,6 +148,29 @@ func TestDesktopStatusAndStartupEndpoints(t *testing.T) {
 	server.server.Handler.ServeHTTP(openRecorder, openRequest)
 	if openRecorder.Code != http.StatusAccepted || !desktop.opened {
 		t.Fatalf("open UI failed: %d %s", openRecorder.Code, openRecorder.Body.String())
+	}
+}
+
+func TestFolderPickerEndpoint(t *testing.T) {
+	server := newTestServer(t)
+	desktop := &fakeDesktop{pickedPath: `D:\Projects\selected-app`}
+	server.desktop = desktop
+
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/system/pick-folder", bytes.NewBufferString(`{"initialPath":"D:\\Projects","title":"选择项目目录"}`))
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("folder picker failed: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if desktop.pickerInitial != `D:\Projects` || desktop.pickerTitle != "选择项目目录" {
+		t.Fatalf("unexpected picker request: initial=%q title=%q", desktop.pickerInitial, desktop.pickerTitle)
+	}
+	if !strings.Contains(recorder.Body.String(), `"path":"D:\\Projects\\selected-app"`) || !strings.Contains(recorder.Body.String(), `"canceled":false`) {
+		t.Fatalf("unexpected folder picker response: %s", recorder.Body.String())
 	}
 }
 

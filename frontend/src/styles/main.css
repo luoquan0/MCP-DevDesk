@@ -866,6 +866,18 @@ kbd {
   gap: 7px;
 }
 
+.path-picker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.path-picker-row .app-button {
+  min-width: 88px;
+  height: 40px;
+}
+
 .field > span {
   font-size: 11px;
   font-weight: 640;
@@ -2905,6 +2917,10 @@ kbd {
   .field select {
     height: 43px;
     font-size: 13px;
+  }
+
+  .path-picker-row .app-button {
+    height: 43px;
   }
 
   .field small,

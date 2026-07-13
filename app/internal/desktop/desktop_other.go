@@ -3,6 +3,7 @@
 package desktop
 
 import (
+	"errors"
 	"os/exec"
 
 	"mcp-devdesk/internal/model"
@@ -21,6 +22,9 @@ func AcquireSingleInstance() (bool, func(), error) { return false, func() {}, ni
 func OpenDashboard(url string) error               { return exec.Command("xdg-open", url).Start() }
 func (c *otherController) Start() error            { return nil }
 func (c *otherController) Open() error             { return OpenDashboard(c.url) }
+func (c *otherController) PickFolder(_, _ string) (string, bool, error) {
+	return "", false, errors.New("folder selection is only available in the Windows desktop application")
+}
 func (c *otherController) Status() model.DesktopStatus {
 	return model.DesktopStatus{Available: false, DashboardURL: c.url, WindowModeLabel: "系统默认浏览器"}
 }

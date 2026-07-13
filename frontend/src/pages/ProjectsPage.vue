@@ -14,6 +14,7 @@ const projectName = computed(() => app.config?.workspace?.split(/[\\/]/).filter(
 const projectPath = ref("");
 const projectLabel = ref("");
 const showAdd = ref(false);
+const browsingProject = ref(false);
 const selectedId = ref("");
 const worktreePath = ref("");
 const worktreeBranch = ref("");
@@ -32,6 +33,18 @@ async function addProject() {
     showAdd.value = false;
   } catch (error) {
     ui.toast("添加项目失败", errorMessage(error), "danger");
+  }
+}
+
+async function browseProject() {
+  browsingProject.value = true;
+  try {
+    const result = await app.pickFolder(projectPath.value || app.config?.workspace || "", "选择要添加的本地项目");
+    if (!result.canceled && result.path) projectPath.value = result.path;
+  } catch (error) {
+    ui.toast("无法打开文件夹选择器", errorMessage(error), "danger");
+  } finally {
+    browsingProject.value = false;
   }
 }
 
@@ -124,7 +137,13 @@ async function removeWorktree(path: string) {
     <AppCard v-if="showAdd" class="project-add-card">
       <div class="card-heading"><div><span class="eyebrow">Add workspace</span><h3>添加本地项目</h3></div></div>
       <form class="stack-form" @submit.prevent="addProject">
-        <label class="field"><span>项目目录</span><input v-model="projectPath" placeholder="D:\Projects\my-app" /></label>
+        <label class="field">
+          <span>项目目录</span>
+          <div class="path-picker-row">
+            <input v-model="projectPath" placeholder="D:\Projects\my-app" />
+            <AppButton tone="secondary" icon="folder" :loading="browsingProject" @click="browseProject">浏览</AppButton>
+          </div>
+        </label>
         <label class="field"><span>显示名称（可选）</span><input v-model="projectLabel" placeholder="默认使用文件夹名称" /></label>
         <div class="form-footer"><small>只保存目录引用，不会移动或修改项目文件。</small><AppButton type="submit" tone="primary" :loading="app.actionPending === 'add-project'">添加</AppButton></div>
       </form>

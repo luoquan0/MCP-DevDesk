@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, watch } from "vue";
+import { reactive, ref, watch } from "vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
@@ -11,6 +11,7 @@ import { useUiStore } from "@/stores/ui";
 
 const app = useAppStore();
 const ui = useUiStore();
+const browsingWorkspace = ref(false);
 
 const form = reactive({
   workspace: "",
@@ -47,6 +48,18 @@ async function run(action: "start" | "stop" | "restart" | "takeover") {
     await app.serviceAction(action);
   } catch (error) {
     ui.toast("服务操作失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
+async function browseWorkspace() {
+  browsingWorkspace.value = true;
+  try {
+    const result = await app.pickFolder(form.workspace, "选择 MCP 工作目录");
+    if (!result.canceled && result.path) form.workspace = result.path;
+  } catch (error) {
+    ui.toast("无法打开文件夹选择器", error instanceof Error ? error.message : String(error), "danger");
+  } finally {
+    browsingWorkspace.value = false;
   }
 }
 
@@ -197,8 +210,11 @@ async function save() {
         <div class="field-grid">
           <label class="field span-2">
             <span>工作目录</span>
-            <input v-model="form.workspace" type="text" spellcheck="false" />
-            <small>可直接输入目录；保存后会安全热切换，并在启动失败时自动回滚。</small>
+            <div class="path-picker-row">
+              <input v-model="form.workspace" type="text" spellcheck="false" />
+              <AppButton tone="secondary" icon="folder" :loading="browsingWorkspace" @click="browseWorkspace">浏览</AppButton>
+            </div>
+            <small>可浏览选择或直接输入目录；保存后会安全热切换，并在启动失败时自动回滚。</small>
           </label>
           <label class="field">
             <span>MCP 端口</span>

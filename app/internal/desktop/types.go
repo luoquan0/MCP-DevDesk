@@ -12,6 +12,7 @@ type Callbacks struct {
 type Controller interface {
 	Start() error
 	Open() error
+	PickFolder(initialPath, title string) (path string, canceled bool, err error)
 	Status() model.DesktopStatus
 	SetStartup(enabled bool) error
 	Done() <-chan struct{}

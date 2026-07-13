@@ -170,6 +170,7 @@ type windowsController struct {
 	hwndMu     sync.RWMutex
 	hwnd       uintptr
 	native     nativeWindowState
+	pickerMu   sync.Mutex
 }
 
 func New(url, executable, dataPath string, callbacks Callbacks) Controller {
