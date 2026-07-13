@@ -61,6 +61,16 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/projects/{id}/git/rollback", s.handleProjectRollback)
 	mux.HandleFunc("POST /api/projects/{id}/worktrees", s.handleCreateWorktree)
 	mux.HandleFunc("DELETE /api/projects/{id}/worktrees", s.handleRemoveWorktree)
+	mux.HandleFunc("GET /api/instances", s.handleListInstances)
+	mux.HandleFunc("POST /api/instances", s.handleCreateInstance)
+	mux.HandleFunc("GET /api/instances/{id}", s.handleGetInstance)
+	mux.HandleFunc("PATCH /api/instances/{id}", s.handleUpdateInstance)
+	mux.HandleFunc("DELETE /api/instances/{id}", s.handleDeleteInstance)
+	mux.HandleFunc("POST /api/instances/{id}/start", s.handleStartInstance)
+	mux.HandleFunc("POST /api/instances/{id}/stop", s.handleStopInstance)
+	mux.HandleFunc("POST /api/instances/{id}/restart", s.handleRestartInstance)
+	mux.HandleFunc("POST /api/instances/{id}/cloudflare/configure", s.handleConfigureInstanceTunnel)
+	mux.HandleFunc("GET /api/instances/{id}/logs", s.handleInstanceLogs)
 	mux.HandleFunc("POST /api/services/start", s.handleStartServices)
 	mux.HandleFunc("POST /api/services/stop", s.handleStopServices)
 	mux.HandleFunc("POST /api/services/restart", s.handleRestartServices)
@@ -258,6 +268,116 @@ func (s *Server) handleRemoveWorktree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListInstances(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.app.Instances())
+}
+
+func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
+	var request model.MCPInstanceCreateRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+	defer cancel()
+	instance, err := s.app.CreateInstance(ctx, request)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, instance)
+}
+
+func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
+	instance, err := s.app.Instance(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, instance)
+}
+
+func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
+	var request model.MCPInstanceUpdateRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 55*time.Second)
+	defer cancel()
+	instance, err := s.app.UpdateInstance(ctx, r.PathValue("id"), request)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, instance)
+}
+
+func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.DeleteInstance(r.PathValue("id")); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleStartInstance(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	instance, err := s.app.StartInstance(ctx, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, instance)
+}
+
+func (s *Server) handleStopInstance(w http.ResponseWriter, r *http.Request) {
+	instance, err := s.app.StopInstance(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, instance)
+}
+
+func (s *Server) handleRestartInstance(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+	defer cancel()
+	instance, err := s.app.RestartInstance(ctx, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, instance)
+}
+
+func (s *Server) handleConfigureInstanceTunnel(w http.ResponseWriter, r *http.Request) {
+	var request model.ConfigureTunnelRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	result, err := s.app.ConfigureInstanceTunnel(ctx, r.PathValue("id"), request)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleInstanceLogs(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	result, err := s.app.InstanceLogs(r.PathValue("id"), r.URL.Query().Get("name"), limit)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {

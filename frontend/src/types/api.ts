@@ -165,6 +165,73 @@ export interface GitRollbackResult {
   backupBranch?: string;
 }
 
+export interface MCPInstance {
+  id: string;
+  name: string;
+  projectId?: string;
+  primary: boolean;
+  tunnelMode: "independent";
+  workspace: string;
+  mcpHost: string;
+  mcpPort: number;
+  localMcpUrl: string;
+  remoteMcpUrl?: string;
+  authorizeUrl?: string;
+  domain?: string;
+  tunnelName?: string;
+  tunnelId?: string;
+  coreMode: CoreMode;
+  permissionMode: PermissionMode;
+  fileScope: FileScope;
+  toolProfile: ToolProfile;
+  allowNetwork: boolean;
+  autoStart: boolean;
+  watchdog: boolean;
+  loggingEnabled: boolean;
+  dataDirectory: string;
+  mcp: ProcessStatus;
+  tunnel: ProcessStatus;
+  mcpPortOwner: PortOwner;
+  configurationOk: boolean;
+  configurationMessage?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface MCPInstanceCreateRequest {
+  name: string;
+  projectId?: string;
+  workspace: string;
+  mcpPort?: number;
+  domain?: string;
+  tunnelName?: string;
+  coreMode?: CoreMode;
+  permissionMode?: PermissionMode;
+  fileScope?: FileScope;
+  toolProfile?: ToolProfile;
+  allowNetwork?: boolean;
+  autoStart?: boolean;
+  watchdog?: boolean;
+  loggingEnabled?: boolean;
+}
+
+export interface MCPInstanceUpdateRequest {
+  name?: string;
+  projectId?: string;
+  workspace?: string;
+  mcpPort?: number;
+  domain?: string;
+  tunnelName?: string;
+  coreMode?: CoreMode;
+  permissionMode?: PermissionMode;
+  fileScope?: FileScope;
+  toolProfile?: ToolProfile;
+  allowNetwork?: boolean;
+  autoStart?: boolean;
+  watchdog?: boolean;
+  loggingEnabled?: boolean;
+}
+
 export interface LogResponse {
   name: string;
   path: string;

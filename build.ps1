@@ -66,6 +66,16 @@ try {
 
 if ($RunTests -and (Test-Path -LiteralPath $SmokeScript)) {
     & $SmokeScript -ExePath (Join-Path $DistDir "mcp-core-$Arch.exe") -Workspace $Root
+
+    Push-Location $AppDir
+    try {
+        $PreviousE2ECore = $env:MCP_DEV_DESK_E2E_CORE
+        $env:MCP_DEV_DESK_E2E_CORE = Join-Path $DistDir "mcp-core-$Arch.exe"
+        go test -mod=vendor ./internal/application -run TestRealMultiInstanceStart -count=1
+    } finally {
+        $env:MCP_DEV_DESK_E2E_CORE = $PreviousE2ECore
+        Pop-Location
+    }
 }
 
 if ($RunTests -and (Test-Path -LiteralPath $PackageScript)) {

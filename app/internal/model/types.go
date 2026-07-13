@@ -267,3 +267,76 @@ type DesktopStatus struct {
 	DashboardURL    string `json:"dashboardUrl"`
 	WindowModeLabel string `json:"windowModeLabel"`
 }
+
+const PrimaryInstanceID = "primary"
+
+// MCPInstance is the management-plane view of one independently running MCP
+// service. The primary instance is backed by the legacy top-level config so
+// existing installations and APIs remain compatible. Additional instances
+// keep their own config and logs under data/devdesk/instances/<id>.
+type MCPInstance struct {
+	ID                   string        `json:"id"`
+	Name                 string        `json:"name"`
+	ProjectID            string        `json:"projectId,omitempty"`
+	Primary              bool          `json:"primary"`
+	TunnelMode           string        `json:"tunnelMode"`
+	Workspace            string        `json:"workspace"`
+	MCPHost              string        `json:"mcpHost"`
+	MCPPort              int           `json:"mcpPort"`
+	LocalMCPURL          string        `json:"localMcpUrl"`
+	RemoteMCPURL         string        `json:"remoteMcpUrl,omitempty"`
+	AuthorizeURL         string        `json:"authorizeUrl,omitempty"`
+	Domain               string        `json:"domain,omitempty"`
+	TunnelName           string        `json:"tunnelName,omitempty"`
+	TunnelID             string        `json:"tunnelId,omitempty"`
+	CoreMode             string        `json:"coreMode"`
+	PermissionMode       string        `json:"permissionMode"`
+	FileScope            string        `json:"fileScope"`
+	ToolProfile          string        `json:"toolProfile"`
+	AllowNetwork         bool          `json:"allowNetwork"`
+	AutoStart            bool          `json:"autoStart"`
+	Watchdog             bool          `json:"watchdog"`
+	LoggingEnabled       bool          `json:"loggingEnabled"`
+	DataDirectory        string        `json:"dataDirectory"`
+	MCP                  ProcessStatus `json:"mcp"`
+	Tunnel               ProcessStatus `json:"tunnel"`
+	MCPPortOwner         PortOwner     `json:"mcpPortOwner"`
+	ConfigurationOK      bool          `json:"configurationOk"`
+	ConfigurationMessage string        `json:"configurationMessage,omitempty"`
+	CreatedAt            *time.Time    `json:"createdAt,omitempty"`
+	UpdatedAt            *time.Time    `json:"updatedAt,omitempty"`
+}
+
+type MCPInstanceCreateRequest struct {
+	Name           string `json:"name"`
+	ProjectID      string `json:"projectId"`
+	Workspace      string `json:"workspace"`
+	MCPPort        int    `json:"mcpPort"`
+	Domain         string `json:"domain"`
+	TunnelName     string `json:"tunnelName"`
+	CoreMode       string `json:"coreMode"`
+	PermissionMode string `json:"permissionMode"`
+	FileScope      string `json:"fileScope"`
+	ToolProfile    string `json:"toolProfile"`
+	AllowNetwork   *bool  `json:"allowNetwork"`
+	AutoStart      *bool  `json:"autoStart"`
+	Watchdog       *bool  `json:"watchdog"`
+	LoggingEnabled *bool  `json:"loggingEnabled"`
+}
+
+type MCPInstanceUpdateRequest struct {
+	Name           *string `json:"name"`
+	ProjectID      *string `json:"projectId"`
+	Workspace      *string `json:"workspace"`
+	MCPPort        *int    `json:"mcpPort"`
+	Domain         *string `json:"domain"`
+	TunnelName     *string `json:"tunnelName"`
+	CoreMode       *string `json:"coreMode"`
+	PermissionMode *string `json:"permissionMode"`
+	FileScope      *string `json:"fileScope"`
+	ToolProfile    *string `json:"toolProfile"`
+	AllowNetwork   *bool   `json:"allowNetwork"`
+	AutoStart      *bool   `json:"autoStart"`
+	Watchdog       *bool   `json:"watchdog"`
+	LoggingEnabled *bool   `json:"loggingEnabled"`
+}

@@ -114,6 +114,13 @@ func main() {
 			}
 		}()
 	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		for _, err := range app.StartAutoInstances(ctx) {
+			log.Printf("instance auto-start failed: %v", err)
+		}
+	}()
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)

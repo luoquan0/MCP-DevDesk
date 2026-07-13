@@ -226,6 +226,76 @@ func TestProjectPathCanBeUpdatedFromProjectsAPI(t *testing.T) {
 	}
 }
 
+func TestMultiInstanceLifecycleAPI(t *testing.T) {
+	server := newTestServer(t)
+	workspace := filepath.Join(t.TempDir(), "secondary-workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+
+	createBody, err := json.Marshal(map[string]any{
+		"name":      "secondary",
+		"workspace": workspace,
+		"mcpPort":   port,
+		"coreMode":  "go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/instances", bytes.NewReader(createBody))
+	createRequest.RemoteAddr = "127.0.0.1:45678"
+	createRequest.Host = "127.0.0.1:17860"
+	createRequest.Header.Set("Content-Type", "application/json")
+	createRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create instance failed: %d %s", createRecorder.Code, createRecorder.Body.String())
+	}
+	var created model.MCPInstance
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == "" || created.Primary || created.MCPPort != port || created.Workspace != workspace {
+		t.Fatalf("unexpected created instance: %+v", created)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/instances", nil)
+	listRequest.RemoteAddr = "127.0.0.1:45678"
+	listRequest.Host = "127.0.0.1:17860"
+	listRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusOK || !strings.Contains(listRecorder.Body.String(), created.ID) || !strings.Contains(listRecorder.Body.String(), `"primary":true`) {
+		t.Fatalf("unexpected instance list: %d %s", listRecorder.Code, listRecorder.Body.String())
+	}
+
+	patchRequest := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/api/instances/"+created.ID, bytes.NewBufferString(`{"name":"secondary-renamed","loggingEnabled":false}`))
+	patchRequest.SetPathValue("id", created.ID)
+	patchRequest.RemoteAddr = "127.0.0.1:45678"
+	patchRequest.Host = "127.0.0.1:17860"
+	patchRequest.Header.Set("Content-Type", "application/json")
+	patchRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(patchRecorder, patchRequest)
+	if patchRecorder.Code != http.StatusOK || !strings.Contains(patchRecorder.Body.String(), `"name":"secondary-renamed"`) || !strings.Contains(patchRecorder.Body.String(), `"loggingEnabled":false`) {
+		t.Fatalf("update instance failed: %d %s", patchRecorder.Code, patchRecorder.Body.String())
+	}
+
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/instances/"+created.ID, nil)
+	deleteRequest.SetPathValue("id", created.ID)
+	deleteRequest.RemoteAddr = "127.0.0.1:45678"
+	deleteRequest.Host = "127.0.0.1:17860"
+	deleteRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(deleteRecorder, deleteRequest)
+	if deleteRecorder.Code != http.StatusNoContent {
+		t.Fatalf("delete instance failed: %d %s", deleteRecorder.Code, deleteRecorder.Body.String())
+	}
+}
+
 func TestProjectGitHistoryAndRollbackEndpoints(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")

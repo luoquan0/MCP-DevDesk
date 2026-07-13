@@ -16,6 +16,7 @@ import (
 
 	"mcp-devdesk/internal/buildinfo"
 	"mcp-devdesk/internal/config"
+	instancestore "mcp-devdesk/internal/instances"
 	devlogging "mcp-devdesk/internal/logging"
 	"mcp-devdesk/internal/model"
 	processmanager "mcp-devdesk/internal/process"
@@ -28,18 +29,21 @@ import (
 const Version = buildinfo.Version
 
 type App struct {
-	rootDir  string
-	dataDir  string
-	config   *config.Store
-	secrets  *secrets.Store
-	process  *processmanager.Manager
-	projects *projectstore.Store
-	tunnel   *tunnel.Client
+	rootDir   string
+	dataDir   string
+	config    *config.Store
+	secrets   *secrets.Store
+	process   *processmanager.Manager
+	projects  *projectstore.Store
+	instances *instancestore.Store
+	tunnel    *tunnel.Client
 
-	mu             sync.RWMutex
-	desiredRunning bool
-	tunnelDesired  bool
-	watchdogCancel context.CancelFunc
+	mu              sync.RWMutex
+	desiredRunning  bool
+	tunnelDesired   bool
+	watchdogCancel  context.CancelFunc
+	instanceMu      sync.RWMutex
+	instanceRuntime map[string]*managedInstance
 }
 
 func New(rootDir, dataDir string) (*App, error) {
@@ -67,6 +71,10 @@ func New(rootDir, dataDir string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	instanceStore, err := instancestore.NewStore(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	app := &App{
 		rootDir: rootDir,
 		dataDir: dataDir,
@@ -75,8 +83,13 @@ func New(rootDir, dataDir string) (*App, error) {
 		process: processmanager.NewManager(rootDir, dataDir, secretStore, func() bool {
 			return configStore.Get().LoggingEnabled
 		}),
-		projects: projectsStore,
-		tunnel:   tunnel.NewClient(),
+		projects:        projectsStore,
+		instances:       instanceStore,
+		tunnel:          tunnel.NewClient(),
+		instanceRuntime: map[string]*managedInstance{},
+	}
+	if err := app.loadManagedInstances(); err != nil {
+		return nil, err
 	}
 	app.startWatchdog()
 	return app, nil
@@ -258,8 +271,13 @@ func (a *App) Config() model.PublicConfig {
 }
 
 func (a *App) UpdateConfig(update model.ConfigUpdate) (model.PublicConfig, error) {
+	oldCfg := a.config.Get()
 	cfg, err := a.config.Update(update)
 	if err != nil {
+		return model.PublicConfig{}, err
+	}
+	if err := a.validateInstanceUniqueness(model.PrimaryInstanceID, cfg); err != nil {
+		_, _ = a.config.Replace(oldCfg)
 		return model.PublicConfig{}, err
 	}
 	return cfg.Public(), nil
@@ -563,6 +581,9 @@ func (a *App) ChangeMCPPort(ctx context.Context, port int) error {
 	if err := config.Validate(newCfg); err != nil {
 		return err
 	}
+	if err := a.validateInstanceUniqueness(model.PrimaryInstanceID, newCfg); err != nil {
+		return err
+	}
 	owner, err := processmanager.FindTCPListener(port)
 	if err != nil {
 		return fmt.Errorf("检查新端口失败: %w", err)
@@ -679,6 +700,16 @@ func (a *App) StartCloudflareLogin() error {
 
 func (a *App) ConfigureTunnel(ctx context.Context, request model.ConfigureTunnelRequest) (model.ConfigureTunnelResult, error) {
 	cfg := a.config.Get()
+	if strings.TrimSpace(request.TunnelName) == "" {
+		request.TunnelName = cfg.TunnelName
+	}
+	candidate := cfg
+	candidate.Domain = request.Domain
+	candidate.TunnelName = request.TunnelName
+	normalizeInstanceConfig(&candidate)
+	if err := a.validateInstanceUniqueness(model.PrimaryInstanceID, candidate); err != nil {
+		return model.ConfigureTunnelResult{}, err
+	}
 	result, err := a.tunnel.Configure(ctx, cfg, request)
 	if err != nil {
 		return model.ConfigureTunnelResult{}, err
@@ -747,6 +778,17 @@ func (a *App) Diagnostics() map[string]any {
 	coreExecutable := selectedCoreExecutable(cfg)
 	portHealthy := !owner.Occupied || (mcp.Running && (owner.PID == mcp.PID || samePath(owner.ProcessPath, coreExecutable)))
 	tunnelInventory, _ := a.tunnelInventoryForConfig(cfg, tunnelStatus)
+	instances := a.Instances()
+	runningInstances := 0
+	runningInstanceTunnels := 0
+	for _, instance := range instances {
+		if instance.MCP.Running {
+			runningInstances++
+		}
+		if instance.Tunnel.Running {
+			runningInstanceTunnels++
+		}
+	}
 	result := map[string]any{
 		"version":                 Version,
 		"rootDirectory":           a.rootDir,
@@ -771,6 +813,9 @@ func (a *App) Diagnostics() map[string]any {
 		"adminHostLoopback":       isLoopbackHost(cfg.AdminHost),
 		"loggingEnabled":          cfg.LoggingEnabled,
 		"logRetentionEntries":     devlogging.MaxEntries,
+		"mcpInstanceCount":        len(instances),
+		"mcpInstancesRunning":     runningInstances,
+		"instanceTunnelsRunning":  runningInstanceTunnels,
 	}
 	return result
 }
@@ -779,7 +824,17 @@ func (a *App) Close() error {
 	if a.watchdogCancel != nil {
 		a.watchdogCancel()
 	}
-	return a.StopServices()
+	var failures []string
+	if err := a.StopAllInstances(); err != nil {
+		failures = append(failures, err.Error())
+	}
+	if err := a.StopServices(); err != nil {
+		failures = append(failures, err.Error())
+	}
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, "; "))
+	}
+	return nil
 }
 
 func (a *App) configurationStatus(cfg model.Config) (bool, string) {
@@ -814,6 +869,7 @@ func (a *App) startWatchdog() {
 				return
 			case <-ticker.C:
 				a.watchdogTick(ctx)
+				a.watchdogInstances(ctx)
 			}
 		}
 	}()

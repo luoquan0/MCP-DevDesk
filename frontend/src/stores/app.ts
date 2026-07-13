@@ -11,6 +11,9 @@ import type {
   GitHistory,
   GitRollbackResult,
   LogResponse,
+  MCPInstance,
+  MCPInstanceCreateRequest,
+  MCPInstanceUpdateRequest,
   Project,
   ProjectDetails,
   ProjectDiff,
@@ -31,6 +34,7 @@ export const useAppStore = defineStore("app", {
     projectDetails: {} as Record<string, ProjectDetails>,
     projectDiffs: {} as Record<string, ProjectDiff>,
     projectHistories: {} as Record<string, GitHistory>,
+    instances: [] as MCPInstance[],
     loading: true,
     refreshing: false,
     actionPending: "" as string,
@@ -54,6 +58,7 @@ export const useAppStore = defineStore("app", {
           this.loadDesktop(),
           this.loadDiagnostics(),
           this.loadProjects(),
+          this.loadInstances(),
         ]);
       } finally {
         this.loading = false;
@@ -62,7 +67,12 @@ export const useAppStore = defineStore("app", {
     async refreshStatus(silent = false) {
       if (!silent) this.refreshing = true;
       try {
-        this.status = await api<ServiceStatus>("/api/status");
+        const [status, instances] = await Promise.all([
+          api<ServiceStatus>("/api/status"),
+          api<MCPInstance[]>("/api/instances"),
+        ]);
+        this.status = status;
+        this.instances = instances;
         this.lastUpdatedAt = new Date();
         this.connectionError = "";
       } catch (error) {
@@ -77,6 +87,60 @@ export const useAppStore = defineStore("app", {
     },
     async loadProjects() {
       this.projects = await api<Project[]>("/api/projects");
+    },
+    async loadInstances() {
+      this.instances = await api<MCPInstance[]>("/api/instances");
+      return this.instances;
+    },
+    async createInstance(request: MCPInstanceCreateRequest) {
+      const ui = useUiStore();
+      const instance = await this.runAction("create-instance", () => api<MCPInstance>("/api/instances", {
+        method: "POST",
+        body: request as unknown as BodyInit,
+      }));
+      await this.loadInstances();
+      ui.toast("MCP 实例已创建", `${instance.name} · 端口 ${instance.mcpPort}`, "success");
+      return instance;
+    },
+    async updateInstance(id: string, request: MCPInstanceUpdateRequest) {
+      const ui = useUiStore();
+      const instance = await this.runAction(`update-instance-${id}`, () => api<MCPInstance>(`/api/instances/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: request as unknown as BodyInit,
+      }));
+      await this.loadInstances();
+      ui.toast("MCP 实例已更新", instance.name, "success");
+      return instance;
+    },
+    async deleteInstance(id: string) {
+      const ui = useUiStore();
+      await this.runAction(`delete-instance-${id}`, () => api(`/api/instances/${encodeURIComponent(id)}`, { method: "DELETE" }));
+      await this.loadInstances();
+      ui.toast("MCP 实例已删除", "项目文件不会被删除。", "success");
+    },
+    async instanceAction(id: string, action: "start" | "stop" | "restart") {
+      const ui = useUiStore();
+      const instance = await this.runAction(`${action}-instance-${id}`, () => api<MCPInstance>(`/api/instances/${encodeURIComponent(id)}/${action}`, { method: "POST" }));
+      await Promise.all([this.loadInstances(), id === "primary" ? this.refreshStatus(true) : Promise.resolve()]);
+      ui.toast(
+        action === "stop" ? "实例已停止" : action === "restart" ? "实例已重启" : "实例已启动",
+        instance.name,
+        "success",
+      );
+      return instance;
+    },
+    async configureInstanceTunnel(id: string, request: ConfigureTunnelRequest) {
+      const ui = useUiStore();
+      const result = await this.runAction(`configure-instance-tunnel-${id}`, () => api<ConfigureTunnelResult>(`/api/instances/${encodeURIComponent(id)}/cloudflare/configure`, {
+        method: "POST",
+        body: request as unknown as BodyInit,
+      }));
+      await this.loadInstances();
+      ui.toast("实例 Tunnel 已配置", result.remoteMcpUrl, "success");
+      return result;
+    },
+    async loadInstanceLog(id: string, name: string, limit = 100) {
+      return api<LogResponse>(`/api/instances/${encodeURIComponent(id)}/logs?name=${encodeURIComponent(name)}&limit=${limit}`);
     },
     async addProject(path: string, name = "") {
       const ui = useUiStore();

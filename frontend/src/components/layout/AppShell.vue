@@ -14,6 +14,7 @@ const ui = useUiStore();
 const navigation = [
   { to: "/", label: "概览", icon: "overview" },
   { to: "/projects", label: "项目", icon: "projects" },
+  { to: "/instances", label: "MCP 实例", icon: "server" },
   { to: "/services", label: "服务", icon: "services" },
   { to: "/cloudflare", label: "Cloudflare", icon: "cloud" },
   { to: "/logs", label: "日志与诊断", icon: "logs" },
@@ -24,6 +25,8 @@ const navigation = [
 const connectionTone = computed(() => app.connectionError ? "danger" : app.healthy ? "success" : "warning");
 const connectionLabel = computed(() => app.connectionError ? "管理器离线" : app.healthy ? "系统正常" : "需要处理");
 const lastUpdated = computed(() => app.lastUpdatedAt?.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) ?? "--:--:--");
+const runningInstances = computed(() => app.instances.filter((instance) => instance.mcp.running).length);
+const runningTunnels = computed(() => app.instances.filter((instance) => instance.tunnel.running).length);
 
 function handleShortcut(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -122,8 +125,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleShortcut));
 
       <footer class="app-statusbar">
         <div class="statusbar-group">
-          <span><i :class="app.status?.mcp.running ? 'is-success' : 'is-muted'" /> MCP {{ app.status?.mcp.running ? '运行中' : '已停止' }}</span>
-          <span><i :class="app.status?.tunnel.running ? 'is-success' : 'is-muted'" /> Tunnel {{ app.status?.tunnelInventory.count ?? 0 }} 个进程</span>
+          <span><i :class="runningInstances ? 'is-success' : 'is-muted'" /> MCP 实例 {{ runningInstances }}/{{ app.instances.length || 1 }} 运行中</span>
+          <span><i :class="runningTunnels ? 'is-success' : 'is-muted'" /> Tunnel {{ runningTunnels }} 个在线</span>
           <span v-if="app.status?.tunnelInventory.duplicateCount" class="is-warning-text">重复 {{ app.status.tunnelInventory.duplicateCount }} 个</span>
         </div>
         <div class="statusbar-group">
