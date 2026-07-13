@@ -43,6 +43,14 @@ async function setStartup(enabled: boolean) {
   }
 }
 
+async function setLogging(enabled: boolean) {
+  try {
+    await app.updateLogging(enabled);
+  } catch (error) {
+    ui.toast("日志设置失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
 async function loadSecrets() {
   secretsLoading.value = true;
   try {
@@ -167,6 +175,14 @@ onMounted(loadSecrets);
       <AppCard>
         <div class="card-heading">
           <div><span class="eyebrow">Local storage</span><h3>数据位置</h3></div>
+        </div>
+        <div class="toggle-list settings-log-toggle">
+          <ToggleSwitch
+            :model-value="app.config?.loggingEnabled !== false"
+            label="记录运行日志"
+            description="开启后每个日志文件只保留最新 100 条，并限制单文件最大 2 MB；关闭后不再写入新日志。"
+            @update:model-value="setLogging"
+          />
         </div>
         <div class="path-list settings-paths">
           <div><span>程序根目录</span><code>{{ app.status?.rootDirectory || '--' }}</code></div>

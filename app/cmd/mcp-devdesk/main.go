@@ -16,6 +16,7 @@ import (
 
 	"mcp-devdesk/internal/application"
 	"mcp-devdesk/internal/desktop"
+	devlogging "mcp-devdesk/internal/logging"
 	"mcp-devdesk/internal/web"
 )
 
@@ -26,13 +27,13 @@ func main() {
 		log.Fatal(err)
 	}
 	dataDir := filepath.Join(rootDir, "data", "devdesk")
-	closeLog := configureLogging(dataDir)
-	defer closeLog()
 
 	app, err := application.New(rootDir, dataDir)
 	if err != nil {
 		log.Fatalf("initialize application: %v", err)
 	}
+	closeLog := configureLogging(dataDir, func() bool { return app.Config().LoggingEnabled })
+	defer closeLog()
 	defer app.Close()
 
 	cfg := app.Config()
@@ -143,11 +144,8 @@ func hasArgument(wanted string) bool {
 	return false
 }
 
-func configureLogging(dataDir string) func() {
-	if err := os.MkdirAll(filepath.Join(dataDir, "logs"), 0o700); err != nil {
-		return func() {}
-	}
-	file, err := os.OpenFile(filepath.Join(dataDir, "logs", "manager.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+func configureLogging(dataDir string, enabled devlogging.EnabledFunc) func() {
+	file, err := devlogging.NewFileWriter(filepath.Join(dataDir, "logs", "manager.log"), enabled)
 	if err != nil {
 		return func() {}
 	}

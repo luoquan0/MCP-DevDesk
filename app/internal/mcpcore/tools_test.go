@@ -381,6 +381,26 @@ func TestAuditLogRedactsContent(t *testing.T) {
 	}
 }
 
+func TestAuditLogHonorsDisabledLoggingConfig(t *testing.T) {
+	workspace := t.TempDir()
+	dataDir := t.TempDir()
+	auditPath := filepath.Join(dataDir, "audit.jsonl")
+	configPath := filepath.Join(dataDir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"loggingEnabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := mustNewServer(t, Options{
+		Workspace:      workspace,
+		PermissionMode: "trusted",
+		AuditPath:      auditPath,
+		LoggingConfig:  configPath,
+	})
+	server.audit.log("read_file", map[string]any{"path": "missing.txt"}, time.Now(), nil)
+	if _, err := os.Stat(auditPath); !os.IsNotExist(err) {
+		t.Fatalf("audit log was created while logging was disabled: %v", err)
+	}
+}
+
 func runTestGit(t *testing.T, cwd string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

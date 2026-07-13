@@ -9,11 +9,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	devlogging "mcp-devdesk/internal/logging"
 )
 
 type auditLogger struct {
-	mu   sync.Mutex
-	path string
+	mu         sync.Mutex
+	path       string
+	configPath string
 }
 
 type auditRecord struct {
@@ -25,16 +28,20 @@ type auditRecord struct {
 	DurationMS int64          `json:"durationMs"`
 }
 
-func newAuditLogger(path string) *auditLogger {
+func newAuditLogger(path, configPath string) *auditLogger {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
 	}
-	return &auditLogger{path: filepath.Clean(path)}
+	configPath = strings.TrimSpace(configPath)
+	if configPath != "" {
+		configPath = filepath.Clean(configPath)
+	}
+	return &auditLogger{path: filepath.Clean(path), configPath: configPath}
 }
 
 func (l *auditLogger) log(tool string, arguments map[string]any, started time.Time, err error) {
-	if l == nil {
+	if l == nil || !l.enabled() {
 		return
 	}
 	record := auditRecord{
@@ -53,15 +60,24 @@ func (l *auditLogger) log(tool string, arguments map[string]any, started time.Ti
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if os.MkdirAll(filepath.Dir(l.path), 0o700) != nil {
-		return
+	_ = devlogging.AppendLine(l.path, raw)
+}
+
+func (l *auditLogger) enabled() bool {
+	if l.configPath == "" {
+		return true
 	}
-	file, openErr := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if openErr != nil {
-		return
+	raw, err := os.ReadFile(l.configPath)
+	if err != nil {
+		return true
 	}
-	defer file.Close()
-	_, _ = file.Write(append(raw, '\n'))
+	state := struct {
+		LoggingEnabled *bool `json:"loggingEnabled"`
+	}{}
+	if json.Unmarshal(raw, &state) != nil || state.LoggingEnabled == nil {
+		return true
+	}
+	return *state.LoggingEnabled
 }
 
 func redactAuditArguments(arguments map[string]any) map[string]any {

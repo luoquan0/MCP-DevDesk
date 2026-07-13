@@ -40,6 +40,25 @@ func TestTrustedModeForcesNetwork(t *testing.T) {
 	}
 }
 
+func TestLoggingIsEnabledByDefaultAndCanBeDisabled(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.Get().LoggingEnabled {
+		t.Fatal("logging must be enabled by default")
+	}
+	disabled := false
+	cfg, err := store.Update(model.ConfigUpdate{LoggingEnabled: &disabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LoggingEnabled {
+		t.Fatal("logging setting was not disabled")
+	}
+}
+
 func TestDefaultCoreModeKeepsLegacyFallback(t *testing.T) {
 	root := t.TempDir()
 	dist := filepath.Join(root, "dist")

@@ -2298,6 +2298,12 @@ kbd {
   max-width: 66%;
 }
 
+.settings-log-toggle {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+
 .about-card {
   display: grid;
   grid-template-columns: 54px minmax(0, 1fr) auto;

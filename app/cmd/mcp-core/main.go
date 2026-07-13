@@ -33,6 +33,7 @@ func main() {
 	dataDir := flag.String("data-dir", "", "data directory for OAuth clients and audit logs")
 	serverURL := flag.String("server-url", os.Getenv("CODING_TOOLS_MCP_SERVER_URL"), "public server base URL used for OAuth metadata")
 	auditPath := flag.String("audit-path", "", "JSONL audit log path")
+	loggingConfig := flag.String("logging-config", "", "MCP DevDesk config file used to enable or disable audit logging")
 	toolProfile := flag.String("tool-profile", envOrDefault("CODING_TOOLS_MCP_TOOL_PROFILE", "full"), "full, read-only, or compat-readonly-all")
 	flag.Parse()
 
@@ -98,6 +99,7 @@ func main() {
 		PermissionMode: *permissionMode,
 		AllowNetwork:   *allowNetwork,
 		AuditPath:      resolvedAuditPath,
+		LoggingConfig:  strings.TrimSpace(*loggingConfig),
 		FileScope:      *fileScope,
 		AllowedRoots:   append([]string(nil), allowedRoots...),
 		ToolProfile:    *toolProfile,

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	devlogging "mcp-devdesk/internal/logging"
 	"mcp-devdesk/internal/model"
 	"mcp-devdesk/internal/secrets"
 )
@@ -25,16 +26,17 @@ type managedProcess struct {
 }
 
 type Manager struct {
-	rootDir string
-	dataDir string
-	secrets *secrets.Store
-	mcp     managedProcess
-	tunnel  managedProcess
-	login   managedProcess
+	rootDir        string
+	dataDir        string
+	secrets        *secrets.Store
+	loggingEnabled devlogging.EnabledFunc
+	mcp            managedProcess
+	tunnel         managedProcess
+	login          managedProcess
 }
 
-func NewManager(rootDir, dataDir string, secretStore *secrets.Store) *Manager {
-	m := &Manager{rootDir: rootDir, dataDir: dataDir, secrets: secretStore}
+func NewManager(rootDir, dataDir string, secretStore *secrets.Store, loggingEnabled devlogging.EnabledFunc) *Manager {
+	m := &Manager{rootDir: rootDir, dataDir: dataDir, secrets: secretStore, loggingEnabled: loggingEnabled}
 	m.mcp.status.Name = "mcp"
 	m.tunnel.status.Name = "tunnel"
 	m.login.status.Name = "cloudflare-login"
@@ -93,6 +95,7 @@ func mcpArguments(cfg model.Config, dataDir, baseURL string) []string {
 			"--data-dir", dataDir,
 			"--server-url", baseURL,
 			"--audit-path", filepath.Join(dataDir, "logs", "mcp-audit.jsonl"),
+			"--logging-config", filepath.Join(dataDir, "config.json"),
 			"--file-scope", cfg.FileScope,
 		)
 		for _, root := range cfg.AllowedRoots {
@@ -191,14 +194,11 @@ func (m *Manager) start(target *managedProcess, executable string, args []string
 		return fmt.Errorf("%s is already running", target.status.Name)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(stdoutPath), 0o700); err != nil {
-		return err
-	}
-	stdout, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	stdout, err := devlogging.NewFileWriter(stdoutPath, m.loggingEnabled)
 	if err != nil {
 		return err
 	}
-	stderr, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	stderr, err := devlogging.NewFileWriter(stderrPath, m.loggingEnabled)
 	if err != nil {
 		_ = stdout.Close()
 		return err

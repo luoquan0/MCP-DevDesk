@@ -34,6 +34,7 @@ type Options struct {
 	PermissionMode string
 	AllowNetwork   bool
 	AuditPath      string
+	LoggingConfig  string
 	FileScope      string
 	AllowedRoots   []string
 	ToolProfile    string
@@ -219,7 +220,7 @@ func New(options Options) (*Server, error) {
 		permissionMode: options.PermissionMode,
 		allowNetwork:   options.AllowNetwork,
 		toolProfile:    options.ToolProfile,
-		audit:          newAuditLogger(options.AuditPath),
+		audit:          newAuditLogger(options.AuditPath, options.LoggingConfig),
 		fileScope:      options.FileScope,
 		allowedRoots:   append([]string(nil), options.AllowedRoots...),
 		defaultCWD:     options.Workspace,

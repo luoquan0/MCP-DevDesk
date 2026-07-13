@@ -16,6 +16,7 @@ import (
 
 	"mcp-devdesk/internal/buildinfo"
 	"mcp-devdesk/internal/config"
+	devlogging "mcp-devdesk/internal/logging"
 	"mcp-devdesk/internal/model"
 	processmanager "mcp-devdesk/internal/process"
 	projectstore "mcp-devdesk/internal/projects"
@@ -59,16 +60,21 @@ func New(rootDir, dataDir string) (*App, error) {
 		return nil, err
 	}
 	secretStore := secrets.NewStore(dataDir)
+	for _, path := range applicationLogPaths(dataDir) {
+		_ = devlogging.TrimFile(path)
+	}
 	projectsStore, err := projectstore.NewStore(dataDir, configStore.Get().Workspace)
 	if err != nil {
 		return nil, err
 	}
 	app := &App{
-		rootDir:  rootDir,
-		dataDir:  dataDir,
-		config:   configStore,
-		secrets:  secretStore,
-		process:  processmanager.NewManager(rootDir, dataDir, secretStore),
+		rootDir: rootDir,
+		dataDir: dataDir,
+		config:  configStore,
+		secrets: secretStore,
+		process: processmanager.NewManager(rootDir, dataDir, secretStore, func() bool {
+			return configStore.Get().LoggingEnabled
+		}),
 		projects: projectsStore,
 		tunnel:   tunnel.NewClient(),
 	}
@@ -702,24 +708,15 @@ func (a *App) UpdateSecrets(ctx context.Context, request model.SecretUpdateReque
 }
 
 func (a *App) Logs(name string, maxLines int) (model.LogResponse, error) {
-	if maxLines <= 0 || maxLines > 2000 {
-		maxLines = 300
+	if maxLines <= 0 || maxLines > devlogging.MaxEntries {
+		maxLines = devlogging.MaxEntries
 	}
-	paths := map[string]string{
-		"manager":      filepath.Join(a.dataDir, "logs", "manager.log"),
-		"mcp-out":      filepath.Join(a.dataDir, "logs", "mcp-stdout.log"),
-		"mcp-error":    filepath.Join(a.dataDir, "logs", "mcp-stderr.log"),
-		"tunnel-out":   filepath.Join(a.dataDir, "logs", "tunnel-stdout.log"),
-		"tunnel-error": filepath.Join(a.dataDir, "logs", "tunnel-stderr.log"),
-		"login":        filepath.Join(a.dataDir, "logs", "cloudflare-login.log"),
-		"login-error":  filepath.Join(a.dataDir, "logs", "cloudflare-login-error.log"),
-		"watchdog":     filepath.Join(a.dataDir, "logs", "watchdog.log"),
-		"audit":        filepath.Join(a.dataDir, "logs", "mcp-audit.jsonl"),
-	}
+	paths := applicationLogPaths(a.dataDir)
 	path, ok := paths[name]
 	if !ok {
 		return model.LogResponse{}, errors.New("unknown log name")
 	}
+	_ = devlogging.TrimFile(path)
 	lines, truncated, err := tailLines(path, maxLines)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return model.LogResponse{}, err
@@ -756,6 +753,8 @@ func (a *App) Diagnostics() map[string]any {
 		"tunnelDuplicateCount":    tunnelInventory.DuplicateCount,
 		"tunnelExpectedLocalUrl":  tunnelInventory.ExpectedLocalURL,
 		"adminHostLoopback":       isLoopbackHost(cfg.AdminHost),
+		"loggingEnabled":          cfg.LoggingEnabled,
+		"logRetentionEntries":     devlogging.MaxEntries,
 	}
 	return result
 }
@@ -1036,13 +1035,25 @@ func waitForManagedProcessStopped(manager *processmanager.Manager, mcp bool, tim
 }
 
 func (a *App) logWatchdog(message string) {
-	path := filepath.Join(a.dataDir, "logs", "watchdog.log")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
+	if !a.config.Get().LoggingEnabled {
 		return
 	}
-	defer file.Close()
-	_, _ = fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.RFC3339), message)
+	path := filepath.Join(a.dataDir, "logs", "watchdog.log")
+	_ = devlogging.AppendLine(path, []byte(fmt.Sprintf("[%s] %s", time.Now().Format(time.RFC3339), message)))
+}
+
+func applicationLogPaths(dataDir string) map[string]string {
+	return map[string]string{
+		"manager":      filepath.Join(dataDir, "logs", "manager.log"),
+		"mcp-out":      filepath.Join(dataDir, "logs", "mcp-stdout.log"),
+		"mcp-error":    filepath.Join(dataDir, "logs", "mcp-stderr.log"),
+		"tunnel-out":   filepath.Join(dataDir, "logs", "tunnel-stdout.log"),
+		"tunnel-error": filepath.Join(dataDir, "logs", "tunnel-stderr.log"),
+		"login":        filepath.Join(dataDir, "logs", "cloudflare-login.log"),
+		"login-error":  filepath.Join(dataDir, "logs", "cloudflare-login-error.log"),
+		"watchdog":     filepath.Join(dataDir, "logs", "watchdog.log"),
+		"audit":        filepath.Join(dataDir, "logs", "mcp-audit.jsonl"),
+	}
 }
 
 func (a *App) waitForMCP(ctx context.Context, cfg model.Config, timeout time.Duration) error {

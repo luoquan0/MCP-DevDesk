@@ -32,7 +32,7 @@ async function loadLog(name = activeLog.value) {
   loading.value = true;
   activeLog.value = name;
   try {
-    logData.value = await app.loadLog(name, 1200);
+    logData.value = await app.loadLog(name, 100);
   } catch (error) {
     ui.toast("日志读取失败", error instanceof Error ? error.message : String(error), "danger");
   } finally {
@@ -52,7 +52,7 @@ onMounted(() => loadLog());
     <PageHeader
       eyebrow="Observability"
       title="日志与诊断"
-      description="集中查看管理器、MCP、Tunnel 和系统环境信息。"
+      description="集中查看管理器、MCP、Tunnel 和系统环境信息；每类日志最多保留最新 100 条。"
     >
       <template #actions>
         <AppButton tone="secondary" icon="refresh" :loading="loading" @click="refreshAll">刷新</AppButton>

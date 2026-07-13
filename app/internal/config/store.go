@@ -82,6 +82,7 @@ func (s *Store) defaults() model.Config {
 		CloudflaredExecutable:   cloudflared,
 		OpenBrowserOnStart:      true,
 		HideChildProcessWindows: true,
+		LoggingEnabled:          true,
 	}
 }
 
@@ -339,6 +340,9 @@ func applyUpdate(cfg *model.Config, update model.ConfigUpdate) {
 	}
 	if update.HideChildProcessWindows != nil {
 		cfg.HideChildProcessWindows = *update.HideChildProcessWindows
+	}
+	if update.LoggingEnabled != nil {
+		cfg.LoggingEnabled = *update.LoggingEnabled
 	}
 }
 

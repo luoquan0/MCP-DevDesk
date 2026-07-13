@@ -30,6 +30,7 @@ type Config struct {
 	CloudflaredExecutable   string   `json:"cloudflaredExecutable"`
 	OpenBrowserOnStart      bool     `json:"openBrowserOnStart"`
 	HideChildProcessWindows bool     `json:"hideChildProcessWindows"`
+	LoggingEnabled          bool     `json:"loggingEnabled"`
 }
 
 type PublicConfig struct {
@@ -58,6 +59,7 @@ type PublicConfig struct {
 	CloudflaredExecutable   string   `json:"cloudflaredExecutable"`
 	OpenBrowserOnStart      bool     `json:"openBrowserOnStart"`
 	HideChildProcessWindows bool     `json:"hideChildProcessWindows"`
+	LoggingEnabled          bool     `json:"loggingEnabled"`
 }
 
 func (c Config) Public() PublicConfig {
@@ -87,6 +89,7 @@ func (c Config) Public() PublicConfig {
 		CloudflaredExecutable:   c.CloudflaredExecutable,
 		OpenBrowserOnStart:      c.OpenBrowserOnStart,
 		HideChildProcessWindows: c.HideChildProcessWindows,
+		LoggingEnabled:          c.LoggingEnabled,
 	}
 }
 
@@ -109,6 +112,7 @@ type ConfigUpdate struct {
 	CoreMode                *string   `json:"coreMode"`
 	OpenBrowserOnStart      *bool     `json:"openBrowserOnStart"`
 	HideChildProcessWindows *bool     `json:"hideChildProcessWindows"`
+	LoggingEnabled          *bool     `json:"loggingEnabled"`
 }
 
 type ProcessStatus struct {

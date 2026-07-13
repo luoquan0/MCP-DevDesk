@@ -173,6 +173,19 @@ export const useAppStore = defineStore("app", {
       await this.refreshStatus(true);
       ui.toast("设置已保存", "新的配置已经写入本地数据目录。", "success");
     },
+    async updateLogging(enabled: boolean) {
+      const ui = useUiStore();
+      this.config = await this.runAction("update-logging", () => api<Config>("/api/config", {
+        method: "PUT",
+        body: { loggingEnabled: enabled } as unknown as BodyInit,
+      }));
+      await this.loadDiagnostics();
+      ui.toast(
+        enabled ? "日志记录已开启" : "日志记录已关闭",
+        enabled ? "各日志文件最多保留最新 100 条记录。" : "运行中的服务将停止写入新的日志记录。",
+        "success",
+      );
+    },
     async changePort(port: number) {
       const ui = useUiStore();
       this.status = await this.runAction("change-port", () => api<ServiceStatus>("/api/services/change-port", {
@@ -217,7 +230,7 @@ export const useAppStore = defineStore("app", {
       if (this.status) this.status.tunnelInventory = inventory;
       ui.toast("隧道进程已关闭", `cloudflared PID ${pid} 已结束。`, "success");
     },
-    async loadLog(name: string, limit = 800) {
+    async loadLog(name: string, limit = 100) {
       return api<LogResponse>(`/api/logs?name=${encodeURIComponent(name)}&limit=${limit}`);
     },
     async revealSecrets() {

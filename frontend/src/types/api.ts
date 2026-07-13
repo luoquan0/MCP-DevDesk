@@ -106,6 +106,7 @@ export interface Config {
   openBrowserOnStart: boolean;
   autoStart: boolean;
   watchdog: boolean;
+  loggingEnabled: boolean;
 }
 
 export interface DesktopStatus {
