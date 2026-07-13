@@ -8,6 +8,8 @@ import type {
   DesktopStatus,
   Diagnostics,
   FolderPickerResult,
+  GitHistory,
+  GitRollbackResult,
   LogResponse,
   Project,
   ProjectDetails,
@@ -28,6 +30,7 @@ export const useAppStore = defineStore("app", {
     projects: [] as Project[],
     projectDetails: {} as Record<string, ProjectDetails>,
     projectDiffs: {} as Record<string, ProjectDiff>,
+    projectHistories: {} as Record<string, GitHistory>,
     loading: true,
     refreshing: false,
     actionPending: "" as string,
@@ -92,6 +95,7 @@ export const useAppStore = defineStore("app", {
       }));
       delete this.projectDetails[id];
       delete this.projectDiffs[id];
+      delete this.projectHistories[id];
       await Promise.all([this.loadProjects(), this.loadConfig(), this.refreshStatus(true)]);
       ui.toast("项目路径已更新", project.path, "success");
       return project;
@@ -116,14 +120,41 @@ export const useAppStore = defineStore("app", {
       this.projectDiffs[id] = await api<ProjectDiff>(`/api/projects/${encodeURIComponent(id)}/diff`);
       return this.projectDiffs[id];
     },
+    async loadProjectHistory(id: string, limit = 200) {
+      this.projectHistories[id] = await api<GitHistory>(`/api/projects/${encodeURIComponent(id)}/git/history?limit=${limit}`);
+      return this.projectHistories[id];
+    },
     async inspectProject(id: string) {
-      const [details, diff] = await this.runAction(`inspect-${id}`, () => Promise.all([
-        api<ProjectDetails>(`/api/projects/${encodeURIComponent(id)}/details`),
-        api<ProjectDiff>(`/api/projects/${encodeURIComponent(id)}/diff`),
-      ]));
-      this.projectDetails[id] = details;
-      this.projectDiffs[id] = diff;
-      return details;
+      return this.runAction(`inspect-${id}`, async () => {
+        const details = await api<ProjectDetails>(`/api/projects/${encodeURIComponent(id)}/details`);
+        this.projectDetails[id] = details;
+        if (details.git) {
+          const [diff, history] = await Promise.all([
+            api<ProjectDiff>(`/api/projects/${encodeURIComponent(id)}/diff`),
+            api<GitHistory>(`/api/projects/${encodeURIComponent(id)}/git/history?limit=200`),
+          ]);
+          this.projectDiffs[id] = diff;
+          this.projectHistories[id] = history;
+        } else {
+          this.projectDiffs[id] = { text: "", truncated: false };
+          this.projectHistories[id] = { commits: [], truncated: false };
+        }
+        return details;
+      });
+    },
+    async rollbackProject(id: string, commit: string) {
+      const result = await this.runAction(`rollback-${id}`, () => api<GitRollbackResult>(`/api/projects/${encodeURIComponent(id)}/git/rollback`, {
+        method: "POST",
+        body: { commit } as unknown as BodyInit,
+      }));
+      try {
+        await this.inspectProject(id);
+      } catch {
+        delete this.projectDetails[id];
+        delete this.projectDiffs[id];
+        delete this.projectHistories[id];
+      }
+      return result;
     },
     async createWorktree(id: string, path: string, branch: string, base = "HEAD") {
       this.projectDetails[id] = await this.runAction("create-worktree", () => api<ProjectDetails>(`/api/projects/${encodeURIComponent(id)}/worktrees`, {

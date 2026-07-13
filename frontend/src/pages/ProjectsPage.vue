@@ -7,7 +7,7 @@ import PageHeader from "@/components/ui/PageHeader.vue";
 import StatusPill from "@/components/ui/StatusPill.vue";
 import { useAppStore } from "@/stores/app";
 import { useUiStore } from "@/stores/ui";
-import type { Project } from "@/types/api";
+import type { GitCommit, Project } from "@/types/api";
 
 const app = useAppStore();
 const ui = useUiStore();
@@ -175,6 +175,41 @@ async function removeWorktree(path: string) {
     ui.toast("移除 Worktree 失败", errorMessage(error), "danger");
   }
 }
+
+async function copyCommit(hash: string) {
+  try {
+    await navigator.clipboard.writeText(hash);
+    ui.toast("提交 ID 已复制", hash, "success");
+  } catch (error) {
+    ui.toast("复制提交 ID 失败", errorMessage(error), "danger");
+  }
+}
+
+function formatCommitTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN");
+}
+
+async function rollbackCommit(commit: GitCommit) {
+  if (!selectedId.value || commit.current) return;
+  const accepted = await ui.ask({
+    title: "回档到此 Git 提交",
+    message: `当前分支将回退到 ${commit.shortHash}（${commit.subject}）。存在未提交修改时系统会拒绝回档；执行前会自动创建备份分支保存当前 HEAD。`,
+    confirmLabel: "创建备份并回档",
+    danger: true,
+  });
+  if (!accepted) return;
+  try {
+    const result = await app.rollbackProject(selectedId.value, commit.hash);
+    ui.toast(
+      "Git 回档完成",
+      result.backupBranch ? `当前已到 ${commit.shortHash}；原版本保存在 ${result.backupBranch}` : `当前已是 ${commit.shortHash}`,
+      "success",
+    );
+  } catch (error) {
+    ui.toast("Git 回档失败", errorMessage(error), "danger");
+  }
+}
 </script>
 
 <template>
@@ -255,11 +290,54 @@ async function removeWorktree(path: string) {
       <div class="card-heading"><div><span class="eyebrow">Developer context</span><h3>项目开发信息</h3></div><AppButton tone="secondary" icon="refresh" :loading="app.actionPending === `inspect-${selectedId}`" @click="inspect(selectedId)">刷新</AppButton></div>
       <div class="project-inspector-grid">
         <div><span>Git</span><strong>{{ app.projectDetails[selectedId].git ? app.projectDetails[selectedId].branch || 'Detached' : '不是 Git 仓库' }}</strong></div>
+        <div><span>当前提交</span><strong class="mono">{{ app.projectDetails[selectedId].currentShort || '--' }}</strong></div>
         <div><span>文件变化</span><strong>{{ app.projectDetails[selectedId].changedFiles }}</strong></div>
         <div><span>AGENTS.md</span><strong>{{ app.projectDetails[selectedId].hasAgents ? '已检测' : '未检测' }}</strong></div>
         <div><span>Skills</span><strong>{{ app.projectDetails[selectedId].skills.length }}</strong></div>
       </div>
       <div v-if="app.projectDetails[selectedId].skills.length" class="skill-chip-list"><span v-for="skill in app.projectDetails[selectedId].skills" :key="skill">{{ skill }}</span></div>
+      <div v-if="app.projectDetails[selectedId].git" class="git-history-panel">
+        <div class="card-heading">
+          <div><span class="eyebrow">Git history</span><h3>提交历史记录</h3><p>显示当前分支最近 200 条记录；在列表内使用鼠标滚轮查看。</p></div>
+          <StatusPill tone="neutral">{{ app.projectHistories[selectedId]?.commits.length || 0 }} 条</StatusPill>
+        </div>
+        <div class="git-history-scroll" tabindex="0" aria-label="Git 提交历史记录">
+          <article
+            v-for="commit in app.projectHistories[selectedId]?.commits || []"
+            :key="commit.hash"
+            class="git-history-row"
+            :class="{ 'is-current': commit.current }"
+          >
+            <span class="git-history-node"><i /></span>
+            <div class="git-history-copy">
+              <div class="git-history-subject">
+                <strong>{{ commit.subject || '无提交说明' }}</strong>
+                <StatusPill v-if="commit.current" tone="success">当前 HEAD</StatusPill>
+                <span v-for="decoration in commit.decorations" :key="decoration" class="git-decoration">{{ decoration }}</span>
+              </div>
+              <div class="git-history-meta">
+                <span>{{ commit.author }}</span>
+                <span>{{ formatCommitTime(commit.timestamp) }}</span>
+                <code :title="commit.hash">{{ commit.shortHash }}</code>
+              </div>
+              <code class="git-full-hash" :title="commit.hash">{{ commit.hash }}</code>
+            </div>
+            <div class="git-history-actions">
+              <AppButton tone="quiet" icon="copy" compact @click="copyCommit(commit.hash)">复制 ID</AppButton>
+              <AppButton
+                v-if="!commit.current"
+                tone="quiet"
+                icon="restart"
+                compact
+                :loading="app.actionPending === `rollback-${selectedId}`"
+                @click="rollbackCommit(commit)"
+              >回档</AppButton>
+            </div>
+          </article>
+          <div v-if="!(app.projectHistories[selectedId]?.commits.length)" class="git-history-empty">当前仓库还没有提交记录。</div>
+        </div>
+        <small v-if="app.projectHistories[selectedId]?.truncated">历史记录超过 200 条，仅显示最近记录。</small>
+      </div>
       <div v-if="app.projectDetails[selectedId].git" class="worktree-panel">
         <div class="card-heading"><div><span class="eyebrow">Git worktree</span><h3>并行工作区</h3></div></div>
         <div v-for="tree in app.projectDetails[selectedId].worktrees" :key="tree.path" class="worktree-row"><div><strong>{{ tree.branch || 'Detached' }}</strong><code>{{ tree.path }}</code></div><AppButton v-if="!isActive(tree.path) && normalizePath(tree.path) !== normalizePath(app.projectDetails[selectedId].path)" tone="quiet" :loading="app.actionPending === 'remove-worktree'" @click="removeWorktree(tree.path)">移除</AppButton></div>

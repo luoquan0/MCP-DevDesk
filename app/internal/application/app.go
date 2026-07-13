@@ -147,6 +147,22 @@ func (a *App) ProjectDiff(id string) (projecttools.Diff, error) {
 	return projecttools.GetDiff(project.Path)
 }
 
+func (a *App) ProjectHistory(id string, limit int) (projecttools.History, error) {
+	project, ok := a.projects.Get(id)
+	if !ok {
+		return projecttools.History{}, errors.New("project not found")
+	}
+	return projecttools.GetHistory(project.Path, limit)
+}
+
+func (a *App) RollbackProject(id, commit string) (projecttools.RollbackResult, error) {
+	project, ok := a.projects.Get(id)
+	if !ok {
+		return projecttools.RollbackResult{}, errors.New("project not found")
+	}
+	return projecttools.Rollback(project.Path, commit)
+}
+
 func (a *App) CreateWorktree(id, targetPath, branch, base string) error {
 	project, ok := a.projects.Get(id)
 	if !ok {

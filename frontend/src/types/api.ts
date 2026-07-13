@@ -138,10 +138,32 @@ export interface Project {
 
 export interface Worktree { path: string; head: string; branch?: string; bare: boolean; detached: boolean; }
 export interface ProjectDetails {
-  path: string; git: boolean; branch?: string; changedFiles: number; ahead: number; behind: number;
+  path: string; git: boolean; branch?: string; currentCommit?: string; currentShort?: string; changedFiles: number; ahead: number; behind: number;
   hasAgents: boolean; agentsPath?: string; skills: string[]; worktrees: Worktree[];
 }
 export interface ProjectDiff { text: string; truncated: boolean; }
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  author: string;
+  authorEmail?: string;
+  timestamp: string;
+  subject: string;
+  decorations: string[];
+  current: boolean;
+}
+export interface GitHistory {
+  branch?: string;
+  currentCommit?: string;
+  currentShort?: string;
+  commits: GitCommit[];
+  truncated: boolean;
+}
+export interface GitRollbackResult {
+  previousCommit: string;
+  currentCommit: string;
+  backupBranch?: string;
+}
 
 export interface LogResponse {
   name: string;

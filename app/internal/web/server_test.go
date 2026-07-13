@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -225,6 +226,57 @@ func TestProjectPathCanBeUpdatedFromProjectsAPI(t *testing.T) {
 	}
 }
 
+func TestProjectGitHistoryAndRollbackEndpoints(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	server := newTestServer(t)
+	root := t.TempDir()
+	runWebTestGit(t, root, "init")
+	runWebTestGit(t, root, "config", "user.email", "web-test@example.invalid")
+	runWebTestGit(t, root, "config", "user.name", "Web Test")
+	file := filepath.Join(root, "state.txt")
+	if err := os.WriteFile(file, []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runWebTestGit(t, root, "add", "state.txt")
+	runWebTestGit(t, root, "commit", "-m", "first state")
+	first := strings.TrimSpace(runWebTestGit(t, root, "rev-parse", "HEAD"))
+	if err := os.WriteFile(file, []byte("second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runWebTestGit(t, root, "add", "state.txt")
+	runWebTestGit(t, root, "commit", "-m", "second state")
+	project, err := server.app.AddProject("history-test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	historyRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/projects/"+project.ID+"/git/history?limit=20", nil)
+	historyRequest.SetPathValue("id", project.ID)
+	historyRequest.RemoteAddr = "127.0.0.1:45678"
+	historyRequest.Host = "127.0.0.1:17860"
+	historyRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(historyRecorder, historyRequest)
+	if historyRecorder.Code != http.StatusOK || !strings.Contains(historyRecorder.Body.String(), `"shortHash":`) || !strings.Contains(historyRecorder.Body.String(), `"current":true`) {
+		t.Fatalf("history endpoint failed: %d %s", historyRecorder.Code, historyRecorder.Body.String())
+	}
+
+	rollbackRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/projects/"+project.ID+"/git/rollback", bytes.NewBufferString(`{"commit":"`+first+`"}`))
+	rollbackRequest.SetPathValue("id", project.ID)
+	rollbackRequest.RemoteAddr = "127.0.0.1:45678"
+	rollbackRequest.Host = "127.0.0.1:17860"
+	rollbackRequest.Header.Set("Content-Type", "application/json")
+	rollbackRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(rollbackRecorder, rollbackRequest)
+	if rollbackRecorder.Code != http.StatusOK || !strings.Contains(rollbackRecorder.Body.String(), `"backupBranch":`) {
+		t.Fatalf("rollback endpoint failed: %d %s", rollbackRecorder.Code, rollbackRecorder.Body.String())
+	}
+	if strings.TrimSpace(runWebTestGit(t, root, "rev-parse", "HEAD")) != first {
+		t.Fatal("rollback endpoint did not move HEAD")
+	}
+}
+
 func TestConfigEndpointAppliesMCPPortChange(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -294,4 +346,15 @@ func TestSecretGenerateAndUpdateEndpoints(t *testing.T) {
 	if revealRecorder.Code != http.StatusOK || !strings.Contains(revealRecorder.Body.String(), tokenValue) {
 		t.Fatalf("saved values were not revealed: %d %s", revealRecorder.Code, revealRecorder.Body.String())
 	}
+}
+
+func runWebTestGit(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	command := append([]string{"-C", root}, args...)
+	cmd := exec.Command("git", command...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, output)
+	}
+	return string(output)
 }

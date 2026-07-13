@@ -1478,14 +1478,53 @@ kbd {
 }
 
 .project-inspector-card { display: grid; gap: 18px; }
-.project-inspector-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.project-inspector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 10px; }
 .project-inspector-grid > div { padding: 14px; border-radius: 14px; background: var(--surface-secondary); }
 .project-inspector-grid span, .project-inspector-grid strong { display: block; }
 .project-inspector-grid span { color: var(--text-tertiary); font-size: 10px; }
 .project-inspector-grid strong { margin-top: 5px; font-size: 13px; }
 .skill-chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .skill-chip-list span { padding: 5px 9px; border-radius: 999px; color: var(--indigo); background: var(--indigo-soft); font-size: 10px; }
-.worktree-panel, .diff-panel { padding-top: 16px; border-top: 1px solid var(--border); }
+.git-history-panel, .worktree-panel, .diff-panel { padding-top: 16px; border-top: 1px solid var(--border); }
+.git-history-panel { display: grid; min-width: 0; gap: 10px; }
+.git-history-panel .card-heading p { margin-top: 4px; color: var(--text-tertiary); font-size: 10px; }
+.git-history-scroll {
+  max-height: 380px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+.git-history-scroll:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
+.git-history-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  min-width: 0;
+  gap: 10px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface-solid) 82%, transparent);
+}
+.git-history-row:last-child { border-bottom: 0; }
+.git-history-row.is-current { background: color-mix(in srgb, var(--success-soft) 55%, var(--surface-solid)); }
+.git-history-node { position: relative; display: flex; justify-content: center; padding-top: 5px; }
+.git-history-node::after { position: absolute; top: 17px; bottom: -18px; width: 1px; content: ""; background: var(--hairline-strong); }
+.git-history-row:last-child .git-history-node::after { display: none; }
+.git-history-node i { position: relative; z-index: 1; width: 8px; height: 8px; border: 2px solid var(--surface-solid); border-radius: 50%; background: var(--text-tertiary); box-shadow: 0 0 0 1px var(--hairline-strong); }
+.git-history-row.is-current .git-history-node i { background: var(--success); box-shadow: 0 0 0 2px var(--success-soft); }
+.git-history-copy { display: grid; min-width: 0; gap: 5px; }
+.git-history-subject { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px; }
+.git-history-subject strong { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.git-decoration { padding: 2px 6px; border-radius: 999px; color: var(--indigo); background: var(--indigo-soft); font-size: 9px; }
+.git-history-meta { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px 12px; color: var(--text-secondary); font-size: 10px; }
+.git-history-meta code { color: var(--accent); }
+.git-full-hash { overflow: hidden; color: var(--text-tertiary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.git-history-actions { display: flex; align-self: center; gap: 4px; }
+.git-history-empty { padding: 28px 16px; color: var(--text-tertiary); text-align: center; font-size: 11px; }
 .worktree-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
 .worktree-row strong, .worktree-row code { display: block; }
 .worktree-row code { margin-top: 3px; color: var(--text-secondary); font-size: 10px; }
@@ -2734,6 +2773,15 @@ kbd {
 
   .project-list-card .project-row-actions {
     grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .git-history-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .git-history-actions {
+    grid-column: 2;
     justify-content: flex-start;
   }
 

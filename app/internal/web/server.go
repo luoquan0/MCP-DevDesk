@@ -57,6 +57,8 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
 	mux.HandleFunc("GET /api/projects/{id}/details", s.handleProjectDetails)
 	mux.HandleFunc("GET /api/projects/{id}/diff", s.handleProjectDiff)
+	mux.HandleFunc("GET /api/projects/{id}/git/history", s.handleProjectHistory)
+	mux.HandleFunc("POST /api/projects/{id}/git/rollback", s.handleProjectRollback)
 	mux.HandleFunc("POST /api/projects/{id}/worktrees", s.handleCreateWorktree)
 	mux.HandleFunc("DELETE /api/projects/{id}/worktrees", s.handleRemoveWorktree)
 	mux.HandleFunc("POST /api/services/start", s.handleStartServices)
@@ -204,6 +206,32 @@ func (s *Server) handleProjectDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, diff)
+}
+
+func (s *Server) handleProjectHistory(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	history, err := s.app.ProjectHistory(r.PathValue("id"), limit)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, history)
+}
+
+func (s *Server) handleProjectRollback(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Commit string `json:"commit"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	result, err := s.app.RollbackProject(r.PathValue("id"), request.Commit)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
