@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,9 +13,12 @@ import (
 	"sync"
 
 	"mcp-devdesk/internal/model"
+	secretstore "mcp-devdesk/internal/secrets"
 )
 
 var domainPattern = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
+
+const protectedProxyPasswordPrefix = "dpapi:v1:"
 
 type Store struct {
 	mu      sync.RWMutex
@@ -39,6 +43,9 @@ func NewStore(rootDir, dataDir string) (*Store, error) {
 	if raw, err := os.ReadFile(s.path); err == nil {
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return nil, fmt.Errorf("parse config: %w", err)
+		}
+		if err := decodeProxyPassword(&cfg); err != nil {
+			return nil, fmt.Errorf("decrypt proxy password: %w", err)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -250,8 +257,10 @@ func (s *Store) Update(update model.ConfigUpdate) (model.Config, error) {
 	if err := Validate(cfg); err != nil {
 		return model.Config{}, err
 	}
+	previous := s.current
 	s.current = cfg
 	if err := s.saveLocked(); err != nil {
+		s.current = previous
 		return model.Config{}, err
 	}
 	return cloneConfig(cfg), nil
@@ -264,15 +273,21 @@ func (s *Store) Replace(cfg model.Config) (model.Config, error) {
 	if err := Validate(cfg); err != nil {
 		return model.Config{}, err
 	}
+	previous := s.current
 	s.current = cloneConfig(cfg)
 	if err := s.saveLocked(); err != nil {
+		s.current = previous
 		return model.Config{}, err
 	}
 	return cloneConfig(cfg), nil
 }
 
 func (s *Store) saveLocked() error {
-	raw, err := json.MarshalIndent(s.current, "", "  ")
+	persisted := cloneConfig(s.current)
+	if err := encodeProxyPassword(&persisted); err != nil {
+		return fmt.Errorf("encrypt proxy password: %w", err)
+	}
+	raw, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -283,6 +298,34 @@ func (s *Store) saveLocked() error {
 	if err := os.Rename(tmp, s.path); err != nil {
 		return fmt.Errorf("replace config: %w", err)
 	}
+	return nil
+}
+
+func encodeProxyPassword(cfg *model.Config) error {
+	if cfg.ProxyPassword == "" || !secretstore.EncryptionAvailable() {
+		return nil
+	}
+	protected, err := secretstore.ProtectForCurrentUser([]byte(cfg.ProxyPassword))
+	if err != nil {
+		return err
+	}
+	cfg.ProxyPassword = protectedProxyPasswordPrefix + base64.StdEncoding.EncodeToString(protected)
+	return nil
+}
+
+func decodeProxyPassword(cfg *model.Config) error {
+	if !strings.HasPrefix(cfg.ProxyPassword, protectedProxyPasswordPrefix) {
+		return nil
+	}
+	protected, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(cfg.ProxyPassword, protectedProxyPasswordPrefix))
+	if err != nil {
+		return err
+	}
+	plain, err := secretstore.UnprotectForCurrentUser(protected)
+	if err != nil {
+		return err
+	}
+	cfg.ProxyPassword = string(plain)
 	return nil
 }
 

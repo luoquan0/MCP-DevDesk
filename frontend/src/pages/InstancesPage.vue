@@ -304,7 +304,7 @@ onMounted(async () => {
       <AppIcon name="info" :size="18" />
       <div>
         <strong>实例之间相互隔离</strong>
-        <span>工作目录、端口、运行进程和日志独立；当前 0.8.0 使用独立 Tunnel 模式，OAuth 客户端凭据由管理器统一维护。</span>
+        <span>工作目录、端口、运行进程和日志独立；当前使用独立 Tunnel 模式，OAuth 客户端凭据由管理器统一维护。</span>
       </div>
     </div>
 

@@ -17,27 +17,33 @@ import (
 )
 
 const (
-	ProtocolVersion       = "2025-06-18"
-	LegacyProtocolVersion = "2025-03-26"
-	SessionHeader         = "Mcp-Session-Id"
-	ProtocolVersionHeader = "MCP-Protocol-Version"
-	defaultMaxBodyBytes   = int64(1 << 20)
+	ProtocolVersion        = "2025-06-18"
+	LegacyProtocolVersion  = "2025-03-26"
+	SessionHeader          = "Mcp-Session-Id"
+	ProtocolVersionHeader  = "MCP-Protocol-Version"
+	defaultMaxBodyBytes    = int64(1 << 20)
+	defaultToolConcurrency = 8
+	maxMCPSessions         = 64
+	maxSessionEvents       = 64
+	maxSessionEventBytes   = 2 * 1024 * 1024
+	mcpSessionTTL          = 12 * time.Hour
 )
 
 type Options struct {
-	Name           string
-	Version        string
-	Workspace      string
-	MaxBodyBytes   int64
-	OAuth          OAuthOptions
-	AllowedOrigins []string
-	PermissionMode string
-	AllowNetwork   bool
-	AuditPath      string
-	LoggingConfig  string
-	FileScope      string
-	AllowedRoots   []string
-	ToolProfile    string
+	Name               string
+	Version            string
+	Workspace          string
+	MaxBodyBytes       int64
+	OAuth              OAuthOptions
+	AllowedOrigins     []string
+	PermissionMode     string
+	AllowNetwork       bool
+	AuditPath          string
+	LoggingConfig      string
+	FileScope          string
+	AllowedRoots       []string
+	ToolProfile        string
+	MaxConcurrentTools int
 }
 
 type Server struct {
@@ -60,18 +66,21 @@ type Server struct {
 	cwdMu             sync.RWMutex
 	defaultCWD        string
 
-	mu       sync.RWMutex
-	sessions map[string]*session
-	tools    []Tool
+	mu        sync.RWMutex
+	sessions  map[string]*session
+	tools     []Tool
+	toolSlots chan struct{}
 }
 
 type session struct {
 	CreatedAt     time.Time
+	LastSeen      time.Time
 	ClientName    string
 	ClientVer     string
 	Protocol      string
 	EventSequence uint64
 	Events        []sseEvent
+	EventBytes    int
 }
 
 type sseEvent struct {
@@ -161,6 +170,12 @@ func New(options Options) (*Server, error) {
 	if options.ToolProfile != "full" && options.ToolProfile != "read-only" && options.ToolProfile != "compat-readonly-all" {
 		return nil, errors.New("tool profile must be full, read-only, or compat-readonly-all")
 	}
+	if options.MaxConcurrentTools <= 0 {
+		options.MaxConcurrentTools = defaultToolConcurrency
+	}
+	if options.MaxConcurrentTools > 64 {
+		return nil, errors.New("max concurrent tools cannot exceed 64")
+	}
 
 	emptyObjectSchema := map[string]any{
 		"type":                 "object",
@@ -226,6 +241,7 @@ func New(options Options) (*Server, error) {
 		defaultCWD:     options.Workspace,
 		sessions:       make(map[string]*session),
 		tools:          tools,
+		toolSlots:      make(chan struct{}, options.MaxConcurrentTools),
 	}
 	server.imageURLValidator = validateImageDownloadURL
 	server.imageHTTPClient = newImageDownloadClient(server.imageURLValidator)
@@ -252,7 +268,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.Handle("/mcp", mcpHandler)
 	mux.HandleFunc("/healthz", s.handleHealth)
-	return s.validateOrigin(mux)
+	return s.securityHeaders(s.validateOrigin(mux))
 }
 
 func (s *Server) Close() {
@@ -322,6 +338,10 @@ func (s *Server) handlePostJSON(w http.ResponseWriter, r *http.Request) {
 		writeRPCError(w, http.StatusBadRequest, json.RawMessage("null"), -32700, "parse error", err.Error())
 		return
 	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeRPCError(w, http.StatusBadRequest, json.RawMessage("null"), -32700, "parse error", "request body must contain one JSON object")
+		return
+	}
 	if request.JSONRPC != "2.0" || strings.TrimSpace(request.Method) == "" {
 		writeRPCError(w, http.StatusBadRequest, responseID(request.ID), -32600, "invalid request", nil)
 		return
@@ -368,7 +388,7 @@ func (s *Server) handlePostJSON(w http.ResponseWriter, r *http.Request) {
 	case "tools/list":
 		writeRPCResult(w, request.ID, map[string]any{"tools": s.tools})
 	case "tools/call":
-		s.handleToolCall(w, request)
+		s.handleToolCall(w, r, request)
 	default:
 		writeRPCError(w, http.StatusOK, request.ID, -32601, "method not found", request.Method)
 	}
@@ -395,9 +415,15 @@ func (s *Server) handleInitialize(w http.ResponseWriter, request rpcRequest) {
 		writeRPCError(w, http.StatusInternalServerError, request.ID, -32603, "failed to create session", nil)
 		return
 	}
+	now := time.Now()
 	s.mu.Lock()
+	s.cleanupSessionsLocked(now)
+	for len(s.sessions) >= maxMCPSessions {
+		s.evictOldestSessionLocked()
+	}
 	s.sessions[sessionID] = &session{
-		CreatedAt:  time.Now(),
+		CreatedAt:  now,
+		LastSeen:   now,
 		ClientName: params.ClientInfo.Name,
 		ClientVer:  params.ClientInfo.Version,
 		Protocol:   negotiatedVersion,
@@ -419,10 +445,20 @@ func (s *Server) handleInitialize(w http.ResponseWriter, request rpcRequest) {
 	})
 }
 
-func (s *Server) handleToolCall(w http.ResponseWriter, request rpcRequest) {
+func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request rpcRequest) {
 	var params toolCallParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		writeRPCError(w, http.StatusBadRequest, request.ID, -32602, "invalid tools/call params", err.Error())
+		return
+	}
+	select {
+	case s.toolSlots <- struct{}{}:
+		defer func() { <-s.toolSlots }()
+	case <-r.Context().Done():
+		writeRPCError(w, http.StatusRequestTimeout, request.ID, -32000, "request canceled before tool execution", nil)
+		return
+	default:
+		writeRPCError(w, http.StatusServiceUnavailable, request.ID, -32000, "server is busy; retry the tool call", nil)
 		return
 	}
 
@@ -478,9 +514,10 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	s.mu.RLock()
+	s.mu.Lock()
+	s.cleanupSessionsLocked(time.Now())
 	sessionCount := len(s.sessions)
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":              true,
 		"name":            s.name,
@@ -488,6 +525,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"protocolVersion": ProtocolVersion,
 		"workspace":       s.workspace,
 		"sessions":        sessionCount,
+		"activeToolCalls": len(s.toolSlots),
+		"maxToolCalls":    cap(s.toolSlots),
 	})
 }
 
@@ -496,13 +535,18 @@ func (s *Server) validateSession(r *http.Request) (string, string, int) {
 	if sessionID == "" {
 		return "", "", http.StatusBadRequest
 	}
-	s.mu.RLock()
+	now := time.Now()
+	s.mu.Lock()
+	s.cleanupSessionsLocked(now)
 	current, ok := s.sessions[sessionID]
-	s.mu.RUnlock()
 	if !ok {
+		s.mu.Unlock()
 		return sessionID, "", http.StatusNotFound
 	}
-	return sessionID, current.Protocol, 0
+	current.LastSeen = now
+	protocol := current.Protocol
+	s.mu.Unlock()
+	return sessionID, protocol, 0
 }
 
 func (s *Server) handleGetSSE(w http.ResponseWriter, r *http.Request) {
@@ -565,14 +609,24 @@ func (s *Server) storeEvent(sessionID string, data []byte) sseEvent {
 	if !ok {
 		return sseEvent{Data: append([]byte(nil), data...)}
 	}
+	current.LastSeen = time.Now()
+	if len(data) > maxSessionEventBytes {
+		return sseEvent{Data: append([]byte(nil), data...)}
+	}
 	current.EventSequence++
 	event := sseEvent{
 		ID:   sessionID + ":" + strconv.FormatUint(current.EventSequence, 10),
 		Data: append([]byte(nil), data...),
 	}
 	current.Events = append(current.Events, event)
-	if len(current.Events) > 256 {
-		current.Events = append([]sseEvent(nil), current.Events[len(current.Events)-256:]...)
+	current.EventBytes += len(event.Data)
+	for len(current.Events) > maxSessionEvents || current.EventBytes > maxSessionEventBytes {
+		current.EventBytes -= len(current.Events[0].Data)
+		current.Events[0] = sseEvent{}
+		current.Events = current.Events[1:]
+	}
+	if cap(current.Events) > maxSessionEvents*2 {
+		current.Events = append([]sseEvent(nil), current.Events...)
 	}
 	return event
 }
@@ -604,6 +658,36 @@ func (s *Server) eventsAfter(sessionID, lastEventID string) []sseEvent {
 	return result
 }
 
+func (s *Server) cleanupSessionsLocked(now time.Time) {
+	for id, current := range s.sessions {
+		lastSeen := current.LastSeen
+		if lastSeen.IsZero() {
+			lastSeen = current.CreatedAt
+		}
+		if now.Sub(lastSeen) > mcpSessionTTL {
+			delete(s.sessions, id)
+		}
+	}
+}
+
+func (s *Server) evictOldestSessionLocked() {
+	oldestID := ""
+	var oldest time.Time
+	for id, current := range s.sessions {
+		lastSeen := current.LastSeen
+		if lastSeen.IsZero() {
+			lastSeen = current.CreatedAt
+		}
+		if oldestID == "" || lastSeen.Before(oldest) {
+			oldestID = id
+			oldest = lastSeen
+		}
+	}
+	if oldestID != "" {
+		delete(s.sessions, oldestID)
+	}
+}
+
 func (s *Server) validateOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rawOrigin := strings.TrimSpace(r.Header.Get("Origin"))
@@ -626,6 +710,17 @@ func (s *Server) validateOrigin(next http.Handler) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "origin is not allowed"})
+	})
+}
+
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		next.ServeHTTP(w, r)
 	})
 }
 

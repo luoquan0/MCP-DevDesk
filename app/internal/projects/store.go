@@ -27,6 +27,8 @@ type Store struct {
 	data []Project
 }
 
+const maxProjects = 256
+
 func NewStore(dataDir, initialWorkspace string) (*Store, error) {
 	s := &Store{path: filepath.Join(dataDir, "projects.json")}
 	changed := false
@@ -82,6 +84,9 @@ func (s *Store) Add(name, path string) (Project, error) {
 		if samePath(item.Path, abs) {
 			return item, nil
 		}
+	}
+	if len(s.data) >= maxProjects {
+		return Project{}, fmt.Errorf("no more than %d projects are allowed", maxProjects)
 	}
 	now := time.Now().UTC()
 	project := Project{ID: projectID(abs), Name: strings.TrimSpace(name), Path: abs, AddedAt: now, LastOpenedAt: now}
@@ -179,8 +184,13 @@ func (s *Store) Touch(id string) error {
 	defer s.mu.Unlock()
 	for i := range s.data {
 		if s.data[i].ID == id {
+			previous := s.data[i]
 			s.data[i].LastOpenedAt = time.Now().UTC()
-			return s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				s.data[i] = previous
+				return err
+			}
+			return nil
 		}
 	}
 	return errors.New("project not found")
@@ -194,8 +204,13 @@ func (s *Store) Remove(id, activePath string) error {
 			if samePath(item.Path, activePath) {
 				return errors.New("cannot remove the active project")
 			}
+			previous := append([]Project(nil), s.data...)
 			s.data = append(s.data[:i], s.data[i+1:]...)
-			return s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				s.data = previous
+				return err
+			}
+			return nil
 		}
 	}
 	return errors.New("project not found")

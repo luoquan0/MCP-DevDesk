@@ -9,33 +9,88 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
+const processDetailsCacheTTL = 15 * time.Second
+
+var processDetailsCache = struct {
+	sync.Mutex
+	entries map[int]cachedProcessDetails
+}{entries: make(map[int]cachedProcessDetails)}
+
+type cachedProcessDetails struct {
+	owner     PortOwner
+	expiresAt time.Time
+}
+
 func FindTCPListener(port int) (PortOwner, error) {
+	owners, err := FindTCPListeners([]int{port})
+	if err != nil {
+		return PortOwner{}, err
+	}
+	return owners[port], nil
+}
+
+func FindTCPListeners(ports []int) (map[int]PortOwner, error) {
+	requested := make(map[int]struct{}, len(ports))
+	result := make(map[int]PortOwner, len(ports))
+	for _, port := range ports {
+		if port > 0 && port <= 65535 {
+			requested[port] = struct{}{}
+		}
+		result[port] = PortOwner{}
+	}
+	if len(requested) == 0 {
+		return result, nil
+	}
 	command := exec.Command("netstat.exe", "-ano", "-p", "TCP")
 	configureChildProcess(command, true)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return PortOwner{}, fmt.Errorf("query TCP listeners: %w", err)
+		return nil, fmt.Errorf("query TCP listeners: %w", err)
 	}
-	portSuffix := ":" + strconv.Itoa(port)
+	pids := make(map[int]int, len(requested))
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 5 || !strings.EqualFold(fields[0], "TCP") {
 			continue
 		}
-		if !strings.EqualFold(fields[3], "LISTENING") || !strings.HasSuffix(fields[1], portSuffix) {
+		if !strings.EqualFold(fields[3], "LISTENING") {
+			continue
+		}
+		separator := strings.LastIndexByte(fields[1], ':')
+		if separator < 0 || separator == len(fields[1])-1 {
+			continue
+		}
+		port, portErr := strconv.Atoi(fields[1][separator+1:])
+		if portErr != nil {
+			continue
+		}
+		if _, wanted := requested[port]; !wanted {
 			continue
 		}
 		pid, parseErr := strconv.Atoi(fields[4])
 		if parseErr != nil || pid <= 0 {
 			continue
 		}
-		owner := PortOwner{Occupied: true, PID: pid}
-		populateProcessDetails(&owner)
-		return owner, nil
+		if _, exists := pids[port]; !exists {
+			pids[port] = pid
+		}
 	}
-	return PortOwner{}, nil
+	detailsByPID := make(map[int]PortOwner, len(pids))
+	for port, pid := range pids {
+		details, exists := detailsByPID[pid]
+		if !exists {
+			details = processDetails(pid)
+			detailsByPID[pid] = details
+		}
+		details.Occupied = true
+		details.PID = pid
+		result[port] = details
+	}
+	return result, nil
 }
 
 func KillPortOwner(owner PortOwner) error {
@@ -65,6 +120,13 @@ func populateProcessDetails(owner *PortOwner) {
 }
 
 func processDetails(pid int) PortOwner {
+	processDetailsCache.Lock()
+	if cached, ok := processDetailsCache.entries[pid]; ok && time.Now().Before(cached.expiresAt) {
+		processDetailsCache.Unlock()
+		return cached.owner
+	}
+	processDetailsCache.Unlock()
+
 	owner := PortOwner{PID: pid}
 	query := fmt.Sprintf("ProcessId=%d", pid)
 	command := exec.Command("wmic.exe", "process", "where", query, "get", "Name,ExecutablePath,ParentProcessId", "/format:list")
@@ -98,5 +160,30 @@ func processDetails(pid int) PortOwner {
 			}
 		}
 	}
+	processDetailsCache.Lock()
+	if len(processDetailsCache.entries) >= 256 {
+		now := time.Now()
+		for cachedPID, cached := range processDetailsCache.entries {
+			if now.After(cached.expiresAt) {
+				delete(processDetailsCache.entries, cachedPID)
+			}
+		}
+		for len(processDetailsCache.entries) >= 256 {
+			oldestPID := 0
+			var oldest time.Time
+			for cachedPID, cached := range processDetailsCache.entries {
+				if oldestPID == 0 || cached.expiresAt.Before(oldest) {
+					oldestPID = cachedPID
+					oldest = cached.expiresAt
+				}
+			}
+			if oldestPID == 0 {
+				break
+			}
+			delete(processDetailsCache.entries, oldestPID)
+		}
+	}
+	processDetailsCache.entries[pid] = cachedProcessDetails{owner: owner, expiresAt: time.Now().Add(processDetailsCacheTTL)}
+	processDetailsCache.Unlock()
 	return owner
 }

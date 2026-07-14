@@ -3,10 +3,26 @@
 package projecttools
 
 import (
+	"fmt"
 	"os/exec"
+	"strconv"
 	"syscall"
 )
 
 func configureCommand(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+}
+
+func terminateGitProcess(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	taskkill := exec.Command("taskkill.exe", "/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F")
+	taskkill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	if output, err := taskkill.CombinedOutput(); err != nil {
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			return fmt.Errorf("terminate Git process tree: %v (%s); fallback kill: %w", err, string(output), killErr)
+		}
+	}
+	return nil
 }

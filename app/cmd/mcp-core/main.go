@@ -115,7 +115,9 @@ func main() {
 		Addr:              address,
 		Handler:           logRequests(core.Handler()),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    64 * 1024,
 	}
 
 	serverErrors := make(chan error, 1)

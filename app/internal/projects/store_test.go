@@ -118,3 +118,37 @@ func TestStoreUpdatesProjectPathAndRejectsDuplicates(t *testing.T) {
 		t.Fatal("expected duplicate project path to be rejected")
 	}
 }
+
+func TestStoreRollsBackFailedTouchAndRemove(t *testing.T) {
+	dataDir := t.TempDir()
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	for _, path := range []string{first, second} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := NewStore(dataDir, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.Add("Second", second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := store.Get(project.ID)
+	store.path = dataDir
+	if err := store.Touch(project.ID); err == nil {
+		t.Fatal("expected touch save to fail")
+	}
+	afterTouch, _ := store.Get(project.ID)
+	if !afterTouch.LastOpenedAt.Equal(before.LastOpenedAt) {
+		t.Fatal("touch timestamp changed after failed save")
+	}
+	if err := store.Remove(project.ID, first); err == nil {
+		t.Fatal("expected remove save to fail")
+	}
+	if _, ok := store.Get(project.ID); !ok {
+		t.Fatal("project was removed from memory after failed save")
+	}
+}

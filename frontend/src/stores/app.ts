@@ -65,14 +65,19 @@ export const useAppStore = defineStore("app", {
       }
     },
     async refreshStatus(silent = false) {
-      if (!silent) this.refreshing = true;
+      if (this.refreshing) return;
+      this.refreshing = true;
       try {
-        const [status, instances] = await Promise.all([
-          api<ServiceStatus>("/api/status"),
-          api<MCPInstance[]>("/api/instances"),
-        ]);
-        this.status = status;
-        this.instances = instances;
+        if (silent) {
+          this.status = await api<ServiceStatus>("/api/status");
+        } else {
+          const [status, instances] = await Promise.all([
+            api<ServiceStatus>("/api/status"),
+            api<MCPInstance[]>("/api/instances"),
+          ]);
+          this.status = status;
+          this.instances = instances;
+        }
         this.lastUpdatedAt = new Date();
         this.connectionError = "";
       } catch (error) {

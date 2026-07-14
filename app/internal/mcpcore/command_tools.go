@@ -16,8 +16,11 @@ import (
 )
 
 const (
-	maxCommandOutputBytes = 4 * 1024 * 1024
-	defaultCommandRead    = 128 * 1024
+	maxCommandOutputBytes      = 2 * 1024 * 1024
+	defaultCommandRead         = 128 * 1024
+	maxActiveCommandSessions   = 16
+	maxRetainedCommandSessions = 64
+	commandSessionTTL          = 30 * time.Minute
 )
 
 type commandManager struct {
@@ -41,6 +44,7 @@ type commandSession struct {
 	exitCode  *int
 	lastError string
 	cancel    context.CancelFunc
+	done      chan struct{}
 }
 
 type boundedOutput struct {
@@ -287,6 +291,8 @@ func (m *commandManager) start(args execCommandArgs) (map[string]any, error) {
 	cmd.Dir = cwd
 	cmd.Env = commandEnvironment(args.Env, m.server.allowNetwork)
 	configureCommand(cmd)
+	cmd.Cancel = func() error { return terminateCommand(cmd) }
+	cmd.WaitDelay = 5 * time.Second
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
@@ -295,11 +301,34 @@ func (m *commandManager) start(args execCommandArgs) (map[string]any, error) {
 	output := &boundedOutput{maxBytes: maxCommandOutputBytes}
 	cmd.Stdout = output
 	cmd.Stderr = output
+	sessionID, err := randomURLToken(18)
+	if err != nil {
+		cancel()
+		_ = stdin.Close()
+		return nil, err
+	}
+	session := &commandSession{
+		id: sessionID, command: displayCommand, args: append([]string(nil), args.Args...), cwd: cwd,
+		cmd: cmd, stdin: stdin, output: output, running: true, cancel: cancel, done: make(chan struct{}),
+	}
+	m.mu.Lock()
+	m.cleanupLocked(time.Now())
+	if m.activeSessionCountLocked() >= maxActiveCommandSessions {
+		m.mu.Unlock()
+		cancel()
+		_ = stdin.Close()
+		return nil, fmt.Errorf("too many active command sessions; limit is %d", maxActiveCommandSessions)
+	}
 	if err := cmd.Start(); err != nil {
+		m.mu.Unlock()
 		cancel()
 		_ = stdin.Close()
 		return nil, fmt.Errorf("start command: %w", err)
 	}
+	session.startedAt = time.Now()
+	m.sessions[sessionID] = session
+	m.mu.Unlock()
+	go session.wait()
 	if args.Stdin != "" {
 		if _, err := io.WriteString(stdin, args.Stdin); err != nil {
 			cancel()
@@ -307,27 +336,14 @@ func (m *commandManager) start(args execCommandArgs) (map[string]any, error) {
 			return nil, fmt.Errorf("write initial stdin: %w", err)
 		}
 	}
-	sessionID, err := randomURLToken(18)
-	if err != nil {
-		cancel()
-		_ = terminateCommand(cmd)
-		return nil, err
-	}
-	session := &commandSession{
-		id: sessionID, command: displayCommand, args: append([]string(nil), args.Args...), cwd: cwd,
-		cmd: cmd, stdin: stdin, output: output, startedAt: time.Now(), running: true, cancel: cancel,
-	}
-	m.mu.Lock()
-	m.cleanupLocked()
-	m.sessions[sessionID] = session
-	m.mu.Unlock()
-	go session.wait()
 
+	timer := time.NewTimer(time.Duration(args.WaitMillis) * time.Millisecond)
+	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-	case <-time.After(time.Duration(args.WaitMillis) * time.Millisecond):
+	case <-timer.C:
 		return session.snapshot(relativeCWD, 0, defaultCommandRead), nil
-	case <-session.doneChannel():
+	case <-session.done:
 	}
 	return session.snapshot(relativeCWD, 0, defaultCommandRead), nil
 }
@@ -349,23 +365,7 @@ func (s *commandSession) wait() {
 	if s.cancel != nil {
 		s.cancel()
 	}
-}
-
-func (s *commandSession) doneChannel() <-chan struct{} {
-	channel := make(chan struct{})
-	go func() {
-		for {
-			s.mu.RLock()
-			running := s.running
-			s.mu.RUnlock()
-			if !running {
-				close(channel)
-				return
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-	}()
-	return channel
+	close(s.done)
 }
 
 func (m *commandManager) read(args readOutputArgs) (map[string]any, error) {
@@ -434,17 +434,31 @@ func (m *commandManager) get(id string) (*commandSession, error) {
 	if id == "" {
 		return nil, errors.New("sessionId is required")
 	}
-	m.mu.RLock()
+	m.mu.Lock()
+	m.cleanupLocked(time.Now())
 	session, ok := m.sessions[id]
-	m.mu.RUnlock()
+	m.mu.Unlock()
 	if !ok {
 		return nil, errors.New("command session not found")
 	}
 	return session, nil
 }
 
-func (m *commandManager) cleanupLocked() {
-	cutoff := time.Now().Add(-time.Hour)
+func (m *commandManager) activeSessionCountLocked() int {
+	count := 0
+	for _, session := range m.sessions {
+		session.mu.RLock()
+		running := session.running
+		session.mu.RUnlock()
+		if running {
+			count++
+		}
+	}
+	return count
+}
+
+func (m *commandManager) cleanupLocked(now time.Time) {
+	cutoff := now.Add(-commandSessionTTL)
 	for id, session := range m.sessions {
 		session.mu.RLock()
 		remove := !session.running && !session.endedAt.IsZero() && session.endedAt.Before(cutoff)
@@ -452,6 +466,30 @@ func (m *commandManager) cleanupLocked() {
 		if remove {
 			delete(m.sessions, id)
 		}
+	}
+	if len(m.sessions) <= maxRetainedCommandSessions {
+		return
+	}
+	type completedSession struct {
+		id    string
+		ended time.Time
+	}
+	completed := make([]completedSession, 0, len(m.sessions))
+	for id, session := range m.sessions {
+		session.mu.RLock()
+		if !session.running && !session.endedAt.IsZero() {
+			completed = append(completed, completedSession{id: id, ended: session.endedAt})
+		}
+		session.mu.RUnlock()
+	}
+	sort.Slice(completed, func(left, right int) bool {
+		return completed[left].ended.Before(completed[right].ended)
+	})
+	for _, item := range completed {
+		if len(m.sessions) <= maxRetainedCommandSessions {
+			break
+		}
+		delete(m.sessions, item.id)
 	}
 }
 
@@ -514,10 +552,21 @@ func (b *boundedOutput) Write(data []byte) (int, error) {
 	defer b.mu.Unlock()
 	original := len(data)
 	b.totalBytes += int64(original)
+	if b.maxBytes <= 0 {
+		b.baseOffset = b.totalBytes
+		b.data = nil
+		return original, nil
+	}
+	if len(data) >= b.maxBytes {
+		b.data = append(b.data[:0], data[len(data)-b.maxBytes:]...)
+		b.baseOffset = b.totalBytes - int64(len(b.data))
+		return original, nil
+	}
 	b.data = append(b.data, data...)
 	if len(b.data) > b.maxBytes {
 		drop := len(b.data) - b.maxBytes
-		b.data = append([]byte(nil), b.data[drop:]...)
+		copy(b.data, b.data[drop:])
+		b.data = b.data[:len(b.data)-drop]
 		b.baseOffset += int64(drop)
 	}
 	return original, nil

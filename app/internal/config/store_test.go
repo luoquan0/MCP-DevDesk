@@ -3,9 +3,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mcp-devdesk/internal/model"
+	secretstore "mcp-devdesk/internal/secrets"
 )
 
 func TestValidDomain(t *testing.T) {
@@ -116,5 +118,56 @@ func TestAdminHostCannotBePublic(t *testing.T) {
 	}
 	if err := Validate(cfg); err == nil {
 		t.Fatal("expected public admin host to be rejected")
+	}
+}
+
+func TestProxyPasswordIsEncryptedAtRest(t *testing.T) {
+	if !secretstore.EncryptionAvailable() {
+		t.Skip("platform encryption is unavailable")
+	}
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	store, err := NewStore(root, dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password := "proxy-password-that-must-not-be-plaintext"
+	if _, err := store.Update(model.ConfigUpdate{ProxyPassword: &password}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dataDir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), password) {
+		t.Fatal("proxy password was stored in plaintext")
+	}
+	if !strings.Contains(string(raw), protectedProxyPasswordPrefix) {
+		t.Fatal("protected proxy password marker is missing")
+	}
+	reloaded, err := NewStore(root, dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.Get().ProxyPassword; got != password {
+		t.Fatalf("reloaded proxy password = %q", got)
+	}
+}
+
+func TestFailedConfigSaveRollsBackMemory(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	store, err := NewStore(root, dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := store.Get()
+	store.path = dataDir
+	newPort := previous.MCPPort + 1
+	if _, err := store.Update(model.ConfigUpdate{MCPPort: &newPort}); err == nil {
+		t.Fatal("expected config save to fail")
+	}
+	if got := store.Get().MCPPort; got != previous.MCPPort {
+		t.Fatalf("in-memory port = %d after failed save, want %d", got, previous.MCPPort)
 	}
 }

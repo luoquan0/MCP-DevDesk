@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -94,33 +95,45 @@ func main() {
 		log.Printf("MCP DevDesk %s listening on %s", application.Version, dashboardURL)
 		serverErrors <- server.ListenAndServe()
 	}()
+	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
+	var backgroundWG sync.WaitGroup
+	launchBackground := func(run func(context.Context)) {
+		backgroundWG.Add(1)
+		go func() {
+			defer backgroundWG.Done()
+			run(backgroundCtx)
+		}()
+	}
 
 	if cfg.OpenBrowserOnStart && !background {
-		go func() {
+		launchBackground(func(ctx context.Context) {
 			if waitForHTTP(dashboardURL+"/api/health", 5*time.Second) {
+				if ctx.Err() != nil {
+					return
+				}
 				if err := controller.Open(); err != nil {
 					log.Printf("open desktop window: %v", err)
 				}
 			}
-		}()
+		})
 	}
 
 	if cfg.AutoStart {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		launchBackground(func(parent context.Context) {
+			ctx, cancel := context.WithTimeout(parent, 25*time.Second)
 			defer cancel()
 			if err := app.StartServices(ctx); err != nil {
 				log.Printf("auto-start failed: %v", err)
 			}
-		}()
+		})
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	launchBackground(func(parent context.Context) {
+		ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 		defer cancel()
 		for _, err := range app.StartAutoInstances(ctx) {
 			log.Printf("instance auto-start failed: %v", err)
 		}
-	}()
+	})
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
@@ -133,6 +146,17 @@ func main() {
 		if err != nil {
 			log.Printf("web server stopped: %v", err)
 		}
+	}
+	backgroundCancel()
+	backgroundDone := make(chan struct{})
+	go func() {
+		backgroundWG.Wait()
+		close(backgroundDone)
+	}()
+	select {
+	case <-backgroundDone:
+	case <-time.After(5 * time.Second):
+		log.Printf("background startup tasks did not stop within 5 seconds")
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

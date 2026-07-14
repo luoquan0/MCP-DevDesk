@@ -83,9 +83,10 @@ async function save() {
       const accepted = await ui.ask({
         title: "切换 MCP 核心",
         message: form.coreMode === "go"
-          ? "将切换到新版 Go MCP 核心。旧核心仍保留，可随时切回。"
-          : "将切回旧版稳定核心。Go 核心配置和数据不会被删除。",
+          ? "将切换到新版 Go MCP 核心。切换会重启服务；已经添加到 ChatGPT 的同域名连接可能需要重新授权。建议一个实例长期固定一种核心。"
+          : "将切回 Python 兼容核心。切换会重启服务；已经添加到 ChatGPT 的同域名连接可能需要重新授权。建议为兼容核心创建独立实例和域名。",
         confirmLabel: "切换核心",
+        danger: Boolean(app.config?.domain),
       });
       if (!accepted) {
         form.coreMode = oldCoreMode;

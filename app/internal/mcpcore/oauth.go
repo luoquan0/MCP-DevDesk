@@ -11,10 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +30,18 @@ const (
 	defaultAccessTokenTTL  = time.Hour
 	defaultRefreshTokenTTL = 30 * 24 * time.Hour
 	defaultAuthCodeTTL     = 5 * time.Minute
+	maxOAuthFormBytes      = 64 * 1024
+	maxDynamicOAuthClients = 256
+	maxOAuthAuthCodes      = 256
+	maxOAuthRefreshTokens  = 1024
+	maxOAuthStateFileBytes = 8 * 1024 * 1024
+	maxOAuthRateEntries    = 2048
+	oauthRegisterLimit     = 20
+	oauthRegisterWindow    = 10 * time.Minute
+	oauthAuthorizeLimit    = 20
+	oauthAuthorizeWindow   = 5 * time.Minute
+	oauthTokenLimit        = 120
+	oauthTokenWindow       = time.Minute
 )
 
 type OAuthOptions struct {
@@ -61,6 +76,18 @@ type oauthServer struct {
 	clients       map[string]oauthClient
 	authCodes     map[string]authorizationCode
 	refreshTokens map[string]refreshGrant
+	rateLimiter   oauthRateLimiter
+}
+
+type oauthRateLimiter struct {
+	mu      sync.Mutex
+	entries map[string]oauthRateEntry
+}
+
+type oauthRateEntry struct {
+	WindowStarted time.Time
+	LastSeen      time.Time
+	Count         int
 }
 
 type oauthClient struct {
@@ -161,6 +188,7 @@ func newOAuthServer(options OAuthOptions) (*oauthServer, error) {
 		clients:            make(map[string]oauthClient),
 		authCodes:          make(map[string]authorizationCode),
 		refreshTokens:      make(map[string]refreshGrant),
+		rateLimiter:        oauthRateLimiter{entries: make(map[string]oauthRateEntry)},
 	}
 	if strings.TrimSpace(options.DataDir) != "" {
 		server.clientsPath = filepath.Join(options.DataDir, "oauth-clients.json")
@@ -244,10 +272,20 @@ func (s *oauthServer) handleAuthorizationServerMetadata(w http.ResponseWriter, _
 }
 
 func (s *oauthServer) handleDynamicRegistration(w http.ResponseWriter, r *http.Request) {
+	setOAuthNoStore(w)
+	if !s.allowOAuthRequest(r, "register", oauthRegisterLimit, oauthRegisterWindow) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(oauthRegisterWindow.Seconds())))
+		writeOAuthError(w, http.StatusTooManyRequests, "slow_down", "too many dynamic client registration requests")
+		return
+	}
 	var request dynamicRegistrationRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOAuthFormBytes))
 	if err := decoder.Decode(&request); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "request body must contain one JSON object")
 		return
 	}
 	if len(request.RedirectURIs) == 0 || len(request.RedirectURIs) > 16 {
@@ -288,6 +326,14 @@ func (s *oauthServer) handleDynamicRegistration(w http.ResponseWriter, r *http.R
 		}
 	}
 	s.mu.Lock()
+	s.cleanupLocked(time.Now())
+	if len(s.clients) >= maxDynamicOAuthClients {
+		if !s.evictUnusedClientLocked() {
+			s.mu.Unlock()
+			writeOAuthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "dynamic client registration limit reached")
+			return
+		}
+	}
 	s.clients[client.ClientID] = client
 	err = s.saveClientsLocked()
 	s.mu.Unlock()
@@ -312,7 +358,13 @@ func (s *oauthServer) handleDynamicRegistration(w http.ResponseWriter, r *http.R
 }
 
 func (s *oauthServer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
+	setOAuthNoStore(w)
+	if r.Method == http.MethodPost && !s.allowOAuthRequest(r, "authorize", oauthAuthorizeLimit, oauthAuthorizeWindow) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(oauthAuthorizeWindow.Seconds())))
+		writeOAuthError(w, http.StatusTooManyRequests, "slow_down", "too many authorization attempts")
+		return
+	}
+	if err := parseOAuthForm(w, r); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "unable to parse authorization request")
 		return
 	}
@@ -346,15 +398,21 @@ func (s *oauthServer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to generate authorization code")
 		return
 	}
+	now := time.Now()
 	s.mu.Lock()
-	s.cleanupLocked(time.Now())
+	s.cleanupLocked(now)
+	if len(s.authCodes) >= maxOAuthAuthCodes {
+		s.mu.Unlock()
+		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "too many pending authorization requests")
+		return
+	}
 	s.authCodes[code] = authorizationCode{
 		ClientID:      request.clientID,
 		RedirectURI:   request.redirectURI,
 		Resource:      request.resource,
 		Scope:         request.scope,
 		CodeChallenge: request.codeChallenge,
-		ExpiresAt:     time.Now().Add(defaultAuthCodeTTL),
+		ExpiresAt:     now.Add(defaultAuthCodeTTL),
 	}
 	s.mu.Unlock()
 	redirect, _ := url.Parse(request.redirectURI)
@@ -428,7 +486,13 @@ func (s *oauthServer) validateAuthorizationRequest(values url.Values) (validated
 }
 
 func (s *oauthServer) handleToken(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
+	setOAuthNoStore(w)
+	if !s.allowOAuthRequest(r, "token", oauthTokenLimit, oauthTokenWindow) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(oauthTokenWindow.Seconds())))
+		writeOAuthError(w, http.StatusTooManyRequests, "slow_down", "too many token requests")
+		return
+	}
+	if err := parseOAuthForm(w, r); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "unable to parse token request")
 		return
 	}
@@ -519,6 +583,12 @@ func (s *oauthServer) issueTokens(w http.ResponseWriter, clientID, resource, sco
 		return
 	}
 	s.mu.Lock()
+	s.cleanupLocked(time.Now())
+	if len(s.refreshTokens) >= maxOAuthRefreshTokens {
+		s.mu.Unlock()
+		writeOAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "refresh token limit reached")
+		return
+	}
 	refreshKey := refreshTokenKey(refreshToken)
 	s.refreshTokens[refreshKey] = refreshGrant{
 		ClientID: clientID, Resource: resource, Scope: scope,
@@ -642,6 +712,32 @@ func (s *oauthServer) cleanupLocked(now time.Time) {
 	}
 }
 
+func (s *oauthServer) evictUnusedClientLocked() bool {
+	inUse := make(map[string]struct{}, len(s.authCodes)+len(s.refreshTokens))
+	for _, grant := range s.authCodes {
+		inUse[grant.ClientID] = struct{}{}
+	}
+	for _, grant := range s.refreshTokens {
+		inUse[grant.ClientID] = struct{}{}
+	}
+	oldestID := ""
+	var oldestCreated int64
+	for id, client := range s.clients {
+		if _, protected := inUse[id]; protected {
+			continue
+		}
+		if oldestID == "" || client.CreatedAt < oldestCreated {
+			oldestID = id
+			oldestCreated = client.CreatedAt
+		}
+	}
+	if oldestID == "" {
+		return false
+	}
+	delete(s.clients, oldestID)
+	return true
+}
+
 func refreshTokenKey(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
@@ -651,7 +747,7 @@ func (s *oauthServer) loadRefreshTokens() error {
 	if s.refreshTokensPath == "" {
 		return nil
 	}
-	raw, err := os.ReadFile(s.refreshTokensPath)
+	raw, err := readOAuthStateFile(s.refreshTokensPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -689,6 +785,23 @@ func (s *oauthServer) loadRefreshTokens() error {
 			delete(tokens, key)
 			migrated = true
 		}
+	}
+	if len(tokens) > maxOAuthRefreshTokens {
+		type tokenRecord struct {
+			key       string
+			expiresAt time.Time
+		}
+		records := make([]tokenRecord, 0, len(tokens))
+		for key, grant := range tokens {
+			records = append(records, tokenRecord{key: key, expiresAt: grant.ExpiresAt})
+		}
+		sort.Slice(records, func(left, right int) bool {
+			return records[left].expiresAt.After(records[right].expiresAt)
+		})
+		for _, record := range records[maxOAuthRefreshTokens:] {
+			delete(tokens, record.key)
+		}
+		migrated = true
 	}
 	s.refreshTokens = tokens
 	if migrated {
@@ -729,7 +842,7 @@ func (s *oauthServer) saveRefreshTokensLocked() error {
 }
 
 func (s *oauthServer) loadClients() error {
-	raw, err := os.ReadFile(s.clientsPath)
+	raw, err := readOAuthStateFile(s.clientsPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -753,12 +866,20 @@ func (s *oauthServer) loadClients() error {
 	} else if err := json.Unmarshal(raw, &clients); err != nil {
 		return fmt.Errorf("parse OAuth clients: %w", err)
 	}
+	migrated := envelope.Version != 2
+	if len(clients) > maxDynamicOAuthClients {
+		sort.Slice(clients, func(left, right int) bool {
+			return clients[left].CreatedAt > clients[right].CreatedAt
+		})
+		clients = clients[:maxDynamicOAuthClients]
+		migrated = true
+	}
 	for _, client := range clients {
 		if client.ClientID != "" && len(client.RedirectURIs) > 0 {
 			s.clients[client.ClientID] = client
 		}
 	}
-	if envelope.Version != 2 {
+	if migrated {
 		return s.saveClientsLocked()
 	}
 	return nil
@@ -924,7 +1045,89 @@ func uniqueStrings(values []string) []string {
 	return result
 }
 
+func parseOAuthForm(w http.ResponseWriter, r *http.Request) error {
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxOAuthFormBytes)
+	}
+	return r.ParseForm()
+}
+
+func (s *oauthServer) allowOAuthRequest(r *http.Request, operation string, limit int, window time.Duration) bool {
+	return s.rateLimiter.allow(operation+":"+oauthRequestClient(r), limit, window, time.Now())
+}
+
+func oauthRequestClient(r *http.Request) string {
+	if forwarded := net.ParseIP(strings.TrimSpace(r.Header.Get("CF-Connecting-IP"))); forwarded != nil {
+		return forwarded.String()
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String()
+		}
+		return strings.ToLower(host)
+	}
+	if ip := net.ParseIP(strings.TrimSpace(r.RemoteAddr)); ip != nil {
+		return ip.String()
+	}
+	return "unknown"
+}
+
+func (l *oauthRateLimiter) allow(key string, limit int, window time.Duration, now time.Time) bool {
+	if limit <= 0 || window <= 0 {
+		return true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.entries == nil {
+		l.entries = make(map[string]oauthRateEntry)
+	}
+	entry, exists := l.entries[key]
+	if !exists || now.Sub(entry.WindowStarted) >= window {
+		if !exists && len(l.entries) >= maxOAuthRateEntries {
+			oldestKey := ""
+			var oldest time.Time
+			for candidate, current := range l.entries {
+				if oldestKey == "" || current.LastSeen.Before(oldest) {
+					oldestKey = candidate
+					oldest = current.LastSeen
+				}
+			}
+			if oldestKey != "" {
+				delete(l.entries, oldestKey)
+			}
+		}
+		l.entries[key] = oauthRateEntry{WindowStarted: now, LastSeen: now, Count: 1}
+		return true
+	}
+	entry.LastSeen = now
+	if entry.Count >= limit {
+		l.entries[key] = entry
+		return false
+	}
+	entry.Count++
+	l.entries[key] = entry
+	return true
+}
+
+func readOAuthStateFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxOAuthStateFileBytes {
+		return nil, fmt.Errorf("OAuth state file exceeds %d bytes", maxOAuthStateFileBytes)
+	}
+	return os.ReadFile(path)
+}
+
+func setOAuthNoStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+}
+
 func writeOAuthError(w http.ResponseWriter, status int, code, description string) {
+	setOAuthNoStore(w)
 	writeJSON(w, status, map[string]any{"error": code, "error_description": description})
 }
 

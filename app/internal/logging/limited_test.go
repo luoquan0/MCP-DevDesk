@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -83,5 +84,45 @@ func TestAppendLineTrimsExistingFile(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	if len(lines) != MaxEntries || lines[0] != "record-011" || lines[99] != "record-110" {
 		t.Fatalf("unexpected retained audit entries: count=%d first=%q last=%q", len(lines), lines[0], lines[len(lines)-1])
+	}
+}
+
+func TestConcurrentWritersSharePathSafely(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "concurrent.log")
+	writers := make([]*FileWriter, 4)
+	for index := range writers {
+		writer, err := NewFileWriter(path, func() bool { return true })
+		if err != nil {
+			t.Fatal(err)
+		}
+		writers[index] = writer
+	}
+	var group sync.WaitGroup
+	for writerIndex, writer := range writers {
+		writerIndex, writer := writerIndex, writer
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for line := 0; line < 75; line++ {
+				if _, err := fmt.Fprintf(writer, "writer-%d-line-%03d\n", writerIndex, line); err != nil {
+					t.Errorf("write failed: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	group.Wait()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != MaxEntries {
+		t.Fatalf("retained %d entries, want %d", len(lines), MaxEntries)
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "writer-") {
+			t.Fatalf("corrupted log line %q", line)
+		}
 	}
 }

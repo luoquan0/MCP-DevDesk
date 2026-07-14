@@ -168,6 +168,9 @@ func (m *Manager) StartCloudflareLogin(cfg model.Config) error {
 
 func (m *Manager) StopAll() error {
 	var errs []string
+	if err := m.stop(&m.login); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if err := m.stop(&m.tunnel); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -182,6 +185,7 @@ func (m *Manager) StopAll() error {
 
 func (m *Manager) StopMCP() error    { return m.stop(&m.mcp) }
 func (m *Manager) StopTunnel() error { return m.stop(&m.tunnel) }
+func (m *Manager) StopLogin() error  { return m.stop(&m.login) }
 
 func (m *Manager) Status() (model.ProcessStatus, model.ProcessStatus, model.ProcessStatus) {
 	return statusOf(&m.mcp), statusOf(&m.tunnel), statusOf(&m.login)
@@ -246,6 +250,7 @@ func (m *Manager) wait(target *managedProcess, cmd *exec.Cmd, stdout, stderr io.
 		return
 	}
 	manualStop := target.stopping
+	target.cmd = nil
 	target.stopping = false
 	now := time.Now()
 	target.status.Running = false
@@ -282,6 +287,11 @@ func (m *Manager) stop(target *managedProcess) error {
 		// A process may exit naturally between the status check and taskkill.
 		text := strings.ToLower(string(output))
 		if !strings.Contains(text, "not found") && !strings.Contains(text, "no running instance") {
+			target.mu.Lock()
+			if target.cmd == cmd {
+				target.stopping = false
+			}
+			target.mu.Unlock()
 			return fmt.Errorf("stop PID %d: %w: %s", cmd.Process.Pid, err, strings.TrimSpace(string(output)))
 		}
 	}

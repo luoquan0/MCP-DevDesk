@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -343,8 +344,11 @@ func runGit(cwd string, maxBytes int, args ...string) (string, bool, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=Never")
 	configureCommand(cmd)
-	var output bytes.Buffer
+	cmd.Cancel = func() error { return terminateCommand(cmd) }
+	cmd.WaitDelay = 5 * time.Second
+	output := firstBytesBuffer{limit: maxBytes}
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err := cmd.Run()
@@ -355,12 +359,28 @@ func runGit(cwd string, maxBytes int, args ...string) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(text))
 	}
-	truncated := false
-	if len(text) > maxBytes {
-		text = text[:maxBytes]
-		truncated = true
+	return text, output.truncated, nil
+}
+
+type firstBytesBuffer struct {
+	bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *firstBytesBuffer) Write(data []byte) (int, error) {
+	original := len(data)
+	remaining := b.limit - b.Len()
+	if remaining > 0 {
+		if remaining > len(data) {
+			remaining = len(data)
+		}
+		_, _ = b.Buffer.Write(data[:remaining])
 	}
-	return text, truncated, nil
+	if remaining < len(data) {
+		b.truncated = true
+	}
+	return original, nil
 }
 
 func boundedGitLimit(value int) int {

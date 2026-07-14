@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const currentVersion = 1
+const (
+	currentVersion = 1
+	maxInstances   = 32
+)
 
 type Record struct {
 	ID        string    `json:"id"`
@@ -103,6 +106,9 @@ func (s *Store) Add(name, projectID string) (Record, error) {
 	if name == "" {
 		return Record{}, errors.New("instance name is required")
 	}
+	if len(s.records) >= maxInstances {
+		return Record{}, fmt.Errorf("no more than %d additional MCP instances are allowed", maxInstances)
+	}
 	for _, existing := range s.records {
 		if strings.EqualFold(existing.Name, name) {
 			return Record{}, errors.New("instance name is already in use")
@@ -124,6 +130,7 @@ func (s *Store) Add(name, projectID string) (Record, error) {
 	}
 	if err := s.saveLocked(); err != nil {
 		delete(s.records, id)
+		_ = os.RemoveAll(s.DataDir(id))
 		return Record{}, err
 	}
 	return record, nil
@@ -152,8 +159,10 @@ func (s *Store) Update(id, name, projectID string) (Record, error) {
 	if err := validateRecord(record); err != nil {
 		return Record{}, err
 	}
+	previous := s.records[id]
 	s.records[id] = record
 	if err := s.saveLocked(); err != nil {
+		s.records[id] = previous
 		return Record{}, err
 	}
 	return record, nil
@@ -167,8 +176,10 @@ func (s *Store) Touch(id string) (Record, error) {
 		return Record{}, errors.New("instance not found")
 	}
 	record.UpdatedAt = time.Now()
+	previous := s.records[id]
 	s.records[id] = record
 	if err := s.saveLocked(); err != nil {
+		s.records[id] = previous
 		return Record{}, err
 	}
 	return record, nil
@@ -177,11 +188,16 @@ func (s *Store) Touch(id string) (Record, error) {
 func (s *Store) Remove(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.records[id]; !ok {
+	previous, ok := s.records[id]
+	if !ok {
 		return errors.New("instance not found")
 	}
 	delete(s.records, id)
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.records[id] = previous
+		return err
+	}
+	return nil
 }
 
 func (s *Store) DataDir(id string) string {

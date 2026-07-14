@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -772,6 +773,8 @@ func (a *App) Logs(name string, maxLines int) (model.LogResponse, error) {
 }
 
 func (a *App) Diagnostics() map[string]any {
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
 	cfg := a.config.Get()
 	mcp, tunnelStatus, _ := a.process.Status()
 	owner, _ := processmanager.FindTCPListener(cfg.MCPPort)
@@ -816,6 +819,12 @@ func (a *App) Diagnostics() map[string]any {
 		"mcpInstanceCount":        len(instances),
 		"mcpInstancesRunning":     runningInstances,
 		"instanceTunnelsRunning":  runningInstanceTunnels,
+		"managerProcessId":        os.Getpid(),
+		"goGoroutines":            runtime.NumGoroutine(),
+		"goHeapAllocBytes":        memory.HeapAlloc,
+		"goHeapInUseBytes":        memory.HeapInuse,
+		"goHeapSysBytes":          memory.HeapSys,
+		"goTotalAllocBytes":       memory.TotalAlloc,
 	}
 	return result
 }
@@ -936,9 +945,13 @@ func (a *App) tunnelInventoryForConfig(cfg model.Config, managedStatus model.Pro
 	if err != nil {
 		return model.TunnelInventory{}, err
 	}
+	return tunnelInventoryFromProcesses(cfg, managedStatus, processes), nil
+}
+
+func tunnelInventoryFromProcesses(cfg model.Config, managedStatus model.ProcessStatus, processes []model.TunnelProcess) model.TunnelInventory {
 	inventory := model.TunnelInventory{
 		ExpectedLocalURL: "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort),
-		Processes:        processes,
+		Processes:        append([]model.TunnelProcess(nil), processes...),
 	}
 	identityGroups := map[string][]int{}
 	for index := range inventory.Processes {
@@ -977,7 +990,7 @@ func (a *App) tunnelInventoryForConfig(cfg model.Config, managedStatus model.Pro
 		}
 		return leftProcess.PID < rightProcess.PID
 	})
-	return inventory, nil
+	return inventory
 }
 
 func tunnelIdentityKey(process model.TunnelProcess) string {

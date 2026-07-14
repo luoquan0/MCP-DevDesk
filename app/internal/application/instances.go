@@ -49,14 +49,32 @@ func (a *App) loadManagedInstances() error {
 func (a *App) Instances() []model.MCPInstance {
 	result := []model.MCPInstance{a.primaryInstanceView()}
 	records := a.instances.List()
+	runtimes := make(map[string]*managedInstance, len(records))
 	a.instanceMu.RLock()
-	defer a.instanceMu.RUnlock()
 	for _, record := range records {
-		runtime := a.instanceRuntime[record.ID]
+		runtimes[record.ID] = a.instanceRuntime[record.ID]
+	}
+	a.instanceMu.RUnlock()
+
+	ports := make([]int, 0, len(records))
+	for _, record := range records {
+		if runtime := runtimes[record.ID]; runtime != nil {
+			ports = append(ports, runtime.config.Get().MCPPort)
+		}
+	}
+	owners, ownersErr := processmanager.FindTCPListeners(ports)
+	tunnelProcesses, tunnelErr := processmanager.ListCloudflaredProcesses()
+	for _, record := range records {
+		runtime := runtimes[record.ID]
 		if runtime == nil {
 			continue
 		}
-		result = append(result, a.managedInstanceView(record, runtime))
+		cfg := runtime.config.Get()
+		owner := owners[cfg.MCPPort]
+		if ownersErr != nil {
+			owner = processmanager.PortOwner{}
+		}
+		result = append(result, a.managedInstanceViewWithInventory(record, runtime, owner, tunnelProcesses, tunnelErr))
 	}
 	return result
 }
@@ -605,9 +623,16 @@ func (a *App) primaryInstanceView() model.MCPInstance {
 
 func (a *App) managedInstanceView(record instancestore.Record, runtime *managedInstance) model.MCPInstance {
 	cfg := runtime.config.Get()
+	owner, _ := processmanager.FindTCPListener(cfg.MCPPort)
+	tunnelProcesses, tunnelErr := processmanager.ListCloudflaredProcesses()
+	return a.managedInstanceViewWithInventory(record, runtime, owner, tunnelProcesses, tunnelErr)
+}
+
+func (a *App) managedInstanceViewWithInventory(record instancestore.Record, runtime *managedInstance, owner processmanager.PortOwner, tunnelProcesses []model.TunnelProcess, tunnelErr error) model.MCPInstance {
+	cfg := runtime.config.Get()
 	mcpStatus, tunnelStatus, _ := runtime.process.Status()
-	inventory, inventoryErr := a.tunnelInventoryForConfig(cfg, tunnelStatus)
-	if inventoryErr == nil && !tunnelStatus.Running {
+	if tunnelErr == nil && !tunnelStatus.Running {
+		inventory := tunnelInventoryFromProcesses(cfg, tunnelStatus, tunnelProcesses)
 		for _, process := range inventory.Processes {
 			if process.MatchesConfig {
 				tunnelStatus = model.ProcessStatus{Name: "tunnel", Running: true, Managed: process.Managed, PID: process.PID}
@@ -615,7 +640,6 @@ func (a *App) managedInstanceView(record instancestore.Record, runtime *managedI
 			}
 		}
 	}
-	owner, _ := processmanager.FindTCPListener(cfg.MCPPort)
 	managedPort := owner.Occupied && mcpStatus.Running && (owner.PID == mcpStatus.PID || samePath(owner.ProcessPath, selectedCoreExecutable(cfg)))
 	localURL := "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort) + "/mcp"
 	remoteURL := ""
