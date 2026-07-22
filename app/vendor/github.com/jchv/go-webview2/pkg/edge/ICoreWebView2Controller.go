@@ -43,6 +43,25 @@ func (i *ICoreWebView2Controller) AddRef() uintptr {
 	return r
 }
 
+func (i *ICoreWebView2Controller) Release() uintptr {
+	if i == nil || i.vtbl == nil {
+		return 0
+	}
+	r, _, _ := i.vtbl.Release.Call(uintptr(unsafe.Pointer(i)))
+	return r
+}
+
+func (i *ICoreWebView2Controller) Close() error {
+	if i == nil || i.vtbl == nil {
+		return nil
+	}
+	_, _, err := i.vtbl.Close.Call(uintptr(unsafe.Pointer(i)))
+	if err != windows.ERROR_SUCCESS {
+		return err
+	}
+	return nil
+}
+
 func (i *ICoreWebView2Controller) GetBounds() (*w32.Rect, error) {
 	var err error
 	var bounds w32.Rect

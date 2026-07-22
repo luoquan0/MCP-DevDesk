@@ -4,9 +4,11 @@
 package edge
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 
@@ -20,6 +22,8 @@ type Chromium struct {
 	controller            *ICoreWebView2Controller
 	webview               *ICoreWebView2
 	inited                uintptr
+	initMu                sync.Mutex
+	initErr               error
 	envCompleted          *iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
 	controllerCompleted   *iCoreWebView2CreateCoreWebView2ControllerCompletedHandler
 	webMessageReceived    *iCoreWebView2WebMessageReceivedEventHandler
@@ -27,6 +31,7 @@ type Chromium struct {
 	webResourceRequested  *iCoreWebView2WebResourceRequestedEventHandler
 	acceleratorKeyPressed *ICoreWebView2AcceleratorKeyPressedEventHandler
 	navigationCompleted   *ICoreWebView2NavigationCompletedEventHandler
+	closeOnce             sync.Once
 
 	environment *ICoreWebView2Environment
 
@@ -42,6 +47,39 @@ type Chromium struct {
 	WebResourceRequestedCallback func(request *ICoreWebView2WebResourceRequest, args *ICoreWebView2WebResourceRequestedEventArgs)
 	NavigationCompletedCallback  func(sender *ICoreWebView2, args *ICoreWebView2NavigationCompletedEventArgs)
 	AcceleratorKeyCallback       func(uint) bool
+}
+
+// Close releases the WebView2 controller and COM references retained by this
+// wrapper. Without this cleanup, repeatedly closing and recreating native
+// windows leaves host-process handles and memory behind.
+func (e *Chromium) Close() {
+	if e == nil {
+		return
+	}
+	e.closeOnce.Do(func() {
+		if e.controller != nil {
+			_ = e.controller.Close()
+		}
+		if e.webview != nil {
+			// GetCoreWebView2 returns an owned reference and the wrapper retains
+			// one additional reference explicitly.
+			e.webview.Release()
+			e.webview.Release()
+			e.webview = nil
+		}
+		if e.controller != nil {
+			e.controller.Release()
+			e.controller = nil
+		}
+		if e.environment != nil {
+			e.environment.Release()
+			e.environment = nil
+		}
+		e.MessageCallback = nil
+		e.WebResourceRequestedCallback = nil
+		e.NavigationCompletedCallback = nil
+		e.AcceleratorKeyCallback = nil
+	})
 }
 
 func NewChromium() *Chromium {
@@ -109,8 +147,29 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		_, _, _ = w32.User32TranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		_, _, _ = w32.User32DispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
 	}
+	if err := e.initializationError(); err != nil || atomic.LoadUintptr(&e.inited) != 1 {
+		if err != nil {
+			log.Printf("WebView2 initialization failed: %v", err)
+		}
+		return false
+	}
 	e.Init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}")
 	return true
+}
+
+func (e *Chromium) failInitialization(err error) {
+	e.initMu.Lock()
+	if e.initErr == nil {
+		e.initErr = err
+	}
+	e.initMu.Unlock()
+	atomic.StoreUintptr(&e.inited, 2)
+}
+
+func (e *Chromium) initializationError() error {
+	e.initMu.Lock()
+	defer e.initMu.Unlock()
+	return e.initErr
 }
 
 func (e *Chromium) Navigate(url string) {
@@ -170,7 +229,8 @@ func (e *Chromium) Release() uintptr {
 
 func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environment) uintptr {
 	if int64(res) < 0 {
-		log.Fatalf("Creating environment failed with %08x", res)
+		e.failInitialization(fmt.Errorf("creating environment failed with %08x", res))
+		return 0
 	}
 	_, _, _ = env.vtbl.AddRef.Call(uintptr(unsafe.Pointer(env)))
 	e.environment = env
@@ -185,7 +245,8 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
 	if int64(res) < 0 {
-		log.Fatalf("Creating controller failed with %08x", res)
+		e.failInitialization(fmt.Errorf("creating controller failed with %08x", res))
+		return 0
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
 	e.controller = controller

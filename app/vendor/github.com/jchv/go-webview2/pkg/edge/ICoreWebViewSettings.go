@@ -51,6 +51,14 @@ func (i *ICoreWebViewSettings) AddRef() uintptr {
 	return r
 }
 
+func (i *ICoreWebViewSettings) Release() uintptr {
+	if i == nil || i.vtbl == nil {
+		return 0
+	}
+	r, _, _ := i.vtbl.Release.Call(uintptr(unsafe.Pointer(i)))
+	return r
+}
+
 func (i *ICoreWebViewSettings) GetIsScriptEnabled() (bool, error) {
 	var err error
 	var isScriptEnabled bool

@@ -35,8 +35,15 @@ func setWindowContext(wnd uintptr, data interface{}) {
 	windowContext[wnd] = data
 }
 
+func deleteWindowContext(wnd uintptr) {
+	windowContextSync.Lock()
+	defer windowContextSync.Unlock()
+	delete(windowContext, wnd)
+}
+
 type browser interface {
 	Embed(hwnd uintptr) bool
+	Close()
 	Resize()
 	Navigate(url string)
 	NavigateToString(htmlContent string)
@@ -112,17 +119,21 @@ func NewWithOptions(options WebViewOptions) WebView {
 
 	settings, err := chromium.GetSettings()
 	if err != nil {
-		log.Fatal(err)
+		chromium.Close()
+		return nil
 	}
+	defer settings.Release()
 	// disable context menu
 	err = settings.PutAreDefaultContextMenusEnabled(options.Debug)
 	if err != nil {
-		log.Fatal(err)
+		chromium.Close()
+		return nil
 	}
 	// disable developer tools
 	err = settings.PutAreDevToolsEnabled(options.Debug)
 	if err != nil {
-		log.Fatal(err)
+		chromium.Close()
+		return nil
 	}
 
 	return w
@@ -241,6 +252,7 @@ func wndproc(hwnd, msg, wp, lp uintptr) uintptr {
 			_, _, _ = w32.User32DestroyWindow.Call(hwnd)
 		case w32.WMDestroy:
 			w.Terminate()
+			deleteWindowContext(hwnd)
 		case w32.WMGetMinMaxInfo:
 			lpmmi := (*w32.MinMaxInfo)(unsafe.Pointer(lp))
 			if w.maxsz.X > 0 && w.maxsz.Y > 0 {
@@ -338,6 +350,9 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
 
 	if !w.browser.Embed(w.hwnd) {
+		deleteWindowContext(w.hwnd)
+		_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
+		w.browser.Close()
 		return false
 	}
 	w.browser.Resize()
@@ -349,6 +364,10 @@ func (w *webview) Destroy() {
 }
 
 func (w *webview) Run() {
+	defer func() {
+		deleteWindowContext(w.hwnd)
+		w.browser.Close()
+	}()
 	var msg w32.Msg
 	for {
 		_, _, _ = w32.User32GetMessageW.Call(

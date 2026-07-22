@@ -138,6 +138,14 @@ type ICoreWebView2 struct {
 	vtbl *iCoreWebView2Vtbl
 }
 
+func (i *ICoreWebView2) Release() uintptr {
+	if i == nil || i.vtbl == nil {
+		return 0
+	}
+	r, _, _ := i.vtbl.Release.Call(uintptr(unsafe.Pointer(i)))
+	return r
+}
+
 func (i *ICoreWebView2) GetSettings() (*ICoreWebViewSettings, error) {
 	var err error
 	var settings *ICoreWebViewSettings
@@ -164,6 +172,14 @@ type iCoreWebView2EnvironmentVtbl struct {
 
 type ICoreWebView2Environment struct {
 	vtbl *iCoreWebView2EnvironmentVtbl
+}
+
+func (e *ICoreWebView2Environment) Release() uintptr {
+	if e == nil || e.vtbl == nil {
+		return 0
+	}
+	r, _, _ := e.vtbl.Release.Call(uintptr(unsafe.Pointer(e)))
+	return r
 }
 
 func (e *ICoreWebView2Environment) CreateWebResourceResponse(content []byte, statusCode int, reasonPhrase string, headers string) (*ICoreWebView2WebResourceResponse, error) {

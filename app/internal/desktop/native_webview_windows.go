@@ -9,19 +9,23 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 	"unsafe"
 
 	webview2 "github.com/jchv/go-webview2"
 	"github.com/jchv/go-webview2/webviewloader"
 )
 
+const nativeWindowOpenTimeout = 20 * time.Second
+
 type nativeWindowState struct {
-	mu      sync.Mutex
-	view    webview2.WebView
-	hwnd    uintptr
-	opening bool
-	ready   chan struct{}
-	openErr error
+	mu        sync.Mutex
+	view      webview2.WebView
+	hwnd      uintptr
+	opening   bool
+	openingAt time.Time
+	ready     chan struct{}
+	openErr   error
 }
 
 var (
@@ -46,6 +50,9 @@ func (c *windowsController) openNativeWindow() error {
 		valid, _, _ := procIsWindow.Call(hwnd)
 		if valid != 0 {
 			c.native.mu.Unlock()
+			if !nativeWindowResponsive(hwnd, 2*time.Second) {
+				return errors.New("WebView2 window is not responding")
+			}
 			procShowWindow.Call(hwnd, swRestore)
 			procSetForegroundWindow.Call(hwnd)
 			return nil
@@ -55,22 +62,35 @@ func (c *windowsController) openNativeWindow() error {
 	}
 	if c.native.opening {
 		ready := c.native.ready
+		startedAt := c.native.openingAt
 		c.native.mu.Unlock()
-		<-ready
-		c.native.mu.Lock()
-		err := c.native.openErr
-		c.native.mu.Unlock()
-		return err
+		return c.waitForNativeOpen(ready, startedAt)
 	}
 
 	c.native.opening = true
+	c.native.openingAt = time.Now()
 	c.native.openErr = nil
 	c.native.ready = make(chan struct{})
 	ready := c.native.ready
+	startedAt := c.native.openingAt
 	c.native.mu.Unlock()
 
 	go c.runNativeWindow()
-	<-ready
+	return c.waitForNativeOpen(ready, startedAt)
+}
+
+func (c *windowsController) waitForNativeOpen(ready <-chan struct{}, startedAt time.Time) error {
+	remaining := nativeWindowOpenTimeout - time.Since(startedAt)
+	if remaining <= 0 {
+		return fmt.Errorf("WebView2 window creation exceeded %s", nativeWindowOpenTimeout)
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-ready:
+	case <-timer.C:
+		return fmt.Errorf("WebView2 window creation exceeded %s", nativeWindowOpenTimeout)
+	}
 	c.native.mu.Lock()
 	err := c.native.openErr
 	c.native.mu.Unlock()
@@ -80,6 +100,16 @@ func (c *windowsController) openNativeWindow() error {
 func (c *windowsController) runNativeWindow() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+	var view webview2.WebView
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			c.finishNativeOpen(fmt.Errorf("WebView2 window panic: %v", recovered), nil, 0)
+			if view != nil {
+				view.Destroy()
+			}
+			c.clearNativeWindow(view)
+		}
+	}()
 
 	_, available := nativeRuntimeStatus()
 	if !available {
@@ -93,7 +123,7 @@ func (c *windowsController) runNativeWindow() {
 		return
 	}
 
-	view := webview2.NewWithOptions(webview2.WebViewOptions{
+	view = webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     false,
 		DataPath:  dataPath,
 		AutoFocus: true,
@@ -118,9 +148,12 @@ func (c *windowsController) runNativeWindow() {
 	procSetForegroundWindow.Call(hwnd)
 
 	view.Run()
+	c.clearNativeWindow(view)
+}
 
+func (c *windowsController) clearNativeWindow(view webview2.WebView) {
 	c.native.mu.Lock()
-	if c.native.view == view {
+	if view == nil || c.native.view == view {
 		c.native.view = nil
 		c.native.hwnd = 0
 	}
@@ -171,11 +204,17 @@ func centerNativeWindow(hwnd uintptr) {
 
 func (c *windowsController) finishNativeOpen(err error, view webview2.WebView, hwnd uintptr) {
 	c.native.mu.Lock()
+	if !c.native.opening {
+		c.native.mu.Unlock()
+		return
+	}
 	c.native.openErr = err
 	c.native.view = view
 	c.native.hwnd = hwnd
 	c.native.opening = false
+	c.native.openingAt = time.Time{}
 	ready := c.native.ready
+	c.native.ready = nil
 	c.native.mu.Unlock()
 	if ready != nil {
 		close(ready)
@@ -185,12 +224,15 @@ func (c *windowsController) finishNativeOpen(err error, view webview2.WebView, h
 func (c *windowsController) closeNativeWindow() {
 	c.native.mu.Lock()
 	opening := c.native.opening
+	startedAt := c.native.openingAt
 	ready := c.native.ready
 	view := c.native.view
 	c.native.mu.Unlock()
 
 	if opening && ready != nil {
-		<-ready
+		if err := c.waitForNativeOpen(ready, startedAt); err != nil {
+			return
+		}
 		c.native.mu.Lock()
 		view = c.native.view
 		c.native.mu.Unlock()

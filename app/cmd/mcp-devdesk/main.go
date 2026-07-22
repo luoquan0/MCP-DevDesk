@@ -48,10 +48,16 @@ func main() {
 		defer releaseInstance()
 	}
 	if alreadyRunning {
+		signaled := desktop.SignalExistingInstance()
+		if signaled {
+			return
+		}
 		if waitForHTTP(dashboardURL+"/api/health", 3*time.Second) {
 			if err := desktop.OpenDashboard(dashboardURL); err != nil {
 				log.Printf("open existing dashboard: %v", err)
 			}
+		} else {
+			log.Printf("existing instance did not expose its tray window or management endpoint")
 		}
 		return
 	}

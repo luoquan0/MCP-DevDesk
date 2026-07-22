@@ -4,6 +4,7 @@ package desktop
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,7 @@ const (
 	wmNull          = 0x0000
 	wmUser          = 0x0400
 	wmTray          = wmUser + 7
+	wmOpenUI        = wmUser + 8
 	wmLButtonDblClk = 0x0203
 	wmRButtonUp     = 0x0205
 
@@ -55,6 +57,7 @@ const (
 	swpNoSize               = 0x0001
 	swpNoZOrder             = 0x0004
 	swpNoActivate           = 0x0010
+	smtoAbortIfHung         = 0x0002
 )
 
 var (
@@ -79,6 +82,7 @@ var (
 	procDestroyMenu         = user32.NewProc("DestroyMenu")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procSendMessageW        = user32.NewProc("SendMessageW")
+	procSendMessageTimeoutW = user32.NewProc("SendMessageTimeoutW")
 	procShowWindow          = user32.NewProc("ShowWindow")
 	procIsWindow            = user32.NewProc("IsWindow")
 	procGetCursorPos        = user32.NewProc("GetCursorPos")
@@ -86,6 +90,7 @@ var (
 	procMonitorFromWindow   = user32.NewProc("MonitorFromWindow")
 	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
 	procSetWindowPos        = user32.NewProc("SetWindowPos")
+	procFindWindowW         = user32.NewProc("FindWindowW")
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	procCreateMutexW        = kernel32.NewProc("CreateMutexW")
 	procCloseHandle         = kernel32.NewProc("CloseHandle")
@@ -212,13 +217,41 @@ func OpenDashboard(url string) error {
 	return nil
 }
 
+// SignalExistingInstance asks the tray window owned by an existing manager
+// process to open its UI. It bypasses the management HTTP endpoint so the
+// desktop can still be awakened while that endpoint is slow or unavailable.
+func SignalExistingInstance() bool {
+	className, _ := syscall.UTF16PtrFromString("MCPDevDeskTrayWindow")
+	hwnd, _, _ := procFindWindowW.Call(uintptr(unsafe.Pointer(className)), 0)
+	if hwnd == 0 {
+		return false
+	}
+	var response uintptr
+	result, _, _ := procSendMessageTimeoutW.Call(
+		hwnd,
+		wmOpenUI,
+		0,
+		0,
+		smtoAbortIfHung,
+		2000,
+		uintptr(unsafe.Pointer(&response)),
+	)
+	return result != 0
+}
+
 func (c *windowsController) Start() error {
 	go c.runTray()
 	return <-c.ready
 }
 
 func (c *windowsController) Open() error {
-	return c.openNativeWindow()
+	if err := c.openNativeWindow(); err != nil {
+		log.Printf("native desktop window unavailable, opening browser fallback: %v", err)
+		if fallbackErr := openExternalDashboard(c.url); fallbackErr != nil {
+			return fmt.Errorf("open native window: %v; browser fallback: %w", err, fallbackErr)
+		}
+	}
+	return nil
 }
 
 func (c *windowsController) Status() model.DesktopStatus {
@@ -356,6 +389,11 @@ func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	activeControllerMu.RUnlock()
 
 	switch message {
+	case wmOpenUI:
+		if controller != nil {
+			go controller.invoke(controller.callbacks.Open)
+		}
+		return 0
 	case wmTray:
 		if controller == nil {
 			break
@@ -457,4 +495,33 @@ func hiddenCommand(name string, args ...string) *exec.Cmd {
 	command := exec.Command(name, args...)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return command
+}
+
+func openExternalDashboard(url string) error {
+	command := hiddenCommand("rundll32.exe", "url.dll,FileProtocolHandler", url)
+	if err := command.Start(); err != nil {
+		return err
+	}
+	return command.Process.Release()
+}
+
+func nativeWindowResponsive(hwnd uintptr, timeout time.Duration) bool {
+	if hwnd == 0 {
+		return false
+	}
+	milliseconds := timeout.Milliseconds()
+	if milliseconds < 1 {
+		milliseconds = 1
+	}
+	var result uintptr
+	ok, _, _ := procSendMessageTimeoutW.Call(
+		hwnd,
+		wmNull,
+		0,
+		0,
+		smtoAbortIfHung,
+		uintptr(milliseconds),
+		uintptr(unsafe.Pointer(&result)),
+	)
+	return ok != 0
 }
