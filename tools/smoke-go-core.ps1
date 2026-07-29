@@ -80,7 +80,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.8.2") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.8.3") { return }
             }
         } catch {}
         if ($started.HasExited) { break }
@@ -214,7 +214,12 @@ try {
     $tools = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
     if ($tools.Status -ne 200) { throw "tools/list failed: $($tools.Status) $($tools.Body)" }
     $toolList = ($tools.Body | ConvertFrom-Json).result.tools
-    if ($toolList.Count -lt 20) { throw "tools/list returned too few tools: $($toolList.Count)" }
+    if ($toolList.Count -lt 32) { throw "tools/list returned too few tools: $($toolList.Count)" }
+    foreach ($requiredTool in @("read_files", "project_snapshot")) {
+        if (-not ($toolList | Where-Object { $_.name -eq $requiredTool } | Select-Object -First 1)) {
+            throw "$requiredTool tool is missing"
+        }
+    }
     $imageTool = $toolList | Where-Object { $_.name -eq "save_chatgpt_image" } | Select-Object -First 1
     if (-not $imageTool) { throw "save_chatgpt_image tool is missing" }
     $fileParams = @($imageTool._meta.'openai/fileParams')
@@ -246,6 +251,45 @@ try {
 
     $call = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"server_info","arguments":{}}}'
     if ($call.Status -ne 200 -or ($call.Body | ConvertFrom-Json).result.isError) { throw "tools/call failed: $($call.Status) $($call.Body)" }
+
+    $batchRequest = @{
+        jsonrpc = "2.0"
+        id = 31
+        method = "tools/call"
+        params = @{
+            name = "read_files"
+            arguments = @{
+                files = @(
+                    @{ path = "README.md"; maxBytes = 4096 },
+                    @{ path = "app/internal/buildinfo/version.go"; maxBytes = 4096 }
+                )
+            }
+        }
+    } | ConvertTo-Json -Depth 8 -Compress
+    $batchCall = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body $batchRequest
+    if ($batchCall.Status -ne 200) { throw "read_files call failed: $($batchCall.Status) $($batchCall.Body)" }
+    $batchResult = ($batchCall.Body | ConvertFrom-Json).result
+    if ($batchResult.isError -or $batchResult.structuredContent.succeeded -ne 2 -or
+        $batchResult.structuredContent.files[1].content -notlike '*0.8.3*') {
+        throw "read_files returned an unexpected result: $($batchCall.Body)"
+    }
+
+    $snapshotRequest = @{
+        jsonrpc = "2.0"
+        id = 32
+        method = "tools/call"
+        params = @{
+            name = "project_snapshot"
+            arguments = @{ includeInstructions = $false }
+        }
+    } | ConvertTo-Json -Depth 6 -Compress
+    $snapshotCall = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body $snapshotRequest
+    if ($snapshotCall.Status -ne 200) { throw "project_snapshot call failed: $($snapshotCall.Status) $($snapshotCall.Body)" }
+    $snapshotResult = ($snapshotCall.Body | ConvertFrom-Json).result
+    if ($snapshotResult.isError -or $snapshotResult.structuredContent.topLevelCount -lt 1 -or
+        -not $snapshotResult.structuredContent.git) {
+        throw "project_snapshot returned an unexpected result: $($snapshotCall.Body)"
+    }
 
     $sseHeaders = @{
         Accept = "text/event-stream"

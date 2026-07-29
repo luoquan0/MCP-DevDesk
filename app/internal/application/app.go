@@ -273,6 +273,18 @@ func (a *App) Config() model.PublicConfig {
 
 func (a *App) UpdateConfig(update model.ConfigUpdate) (model.PublicConfig, error) {
 	oldCfg := a.config.Get()
+	if update.CoreMode != nil && *update.CoreMode != oldCfg.CoreMode {
+		mcp, tunnelStatus, _ := a.process.Status()
+		a.mu.RLock()
+		desiredRunning := a.desiredRunning
+		a.mu.RUnlock()
+		if mcp.Running || tunnelStatus.Running || desiredRunning {
+			return model.PublicConfig{}, errors.New("切换 MCP 核心前请先停止主实例，避免现有 OAuth 会话和工具连接在重启过程中失效")
+		}
+		if strings.TrimSpace(oldCfg.Domain) != "" && !update.ConfirmCoreSwitch {
+			return model.PublicConfig{}, errors.New("该主实例已配置公网域名；切换核心后需要在 ChatGPT 中重新连接或重新授权，请确认核心切换后再保存")
+		}
+	}
 	cfg, err := a.config.Update(update)
 	if err != nil {
 		return model.PublicConfig{}, err

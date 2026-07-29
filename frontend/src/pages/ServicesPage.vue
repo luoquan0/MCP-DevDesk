@@ -65,7 +65,7 @@ async function save() {
     const oldPort = app.config?.mcpPort;
     const oldCoreMode = app.config?.coreMode;
     const oldToolProfile = app.config?.toolProfile;
-    const runtimeWasRunning = Boolean(app.status?.mcp.running);
+    const runtimeWasRunning = Boolean(app.status?.mcp.running || app.status?.tunnel.running);
 
     if (oldPort && oldPort !== requestedMcpPort) {
       const accepted = await ui.ask({
@@ -79,24 +79,34 @@ async function save() {
       }
     }
 
-    if (oldCoreMode && oldCoreMode !== form.coreMode) {
+    const coreChanged = Boolean(oldCoreMode && oldCoreMode !== form.coreMode);
+    let confirmCoreSwitch = false;
+    if (coreChanged && runtimeWasRunning) {
+      ui.toast("请先停止主实例再切换核心", "核心切换会使现有 OAuth 会话和 ChatGPT 工具连接失效。停止后可以切换，或在 MCP 实例页面复制到另一核心。", "danger");
+      form.coreMode = oldCoreMode || form.coreMode;
+      return;
+    }
+
+    if (coreChanged) {
       const accepted = await ui.ask({
         title: "切换 MCP 核心",
         message: form.coreMode === "go"
-          ? "将切换到新版 Go MCP 核心。切换会重启服务；已经添加到 ChatGPT 的同域名连接可能需要重新授权。建议一个实例长期固定一种核心。"
-          : "将切回 Python 兼容核心。切换会重启服务；已经添加到 ChatGPT 的同域名连接可能需要重新授权。建议为兼容核心创建独立实例和域名。",
+          ? "将切换到 Go MCP 核心。已经添加到 ChatGPT 的同域名连接可能需要重新授权；公网实例更建议复制为独立实例。"
+          : "将切回 Python 兼容核心。已经添加到 ChatGPT 的同域名连接可能需要重新授权；兼容核心更建议使用独立实例和域名。",
         confirmLabel: "切换核心",
         danger: Boolean(app.config?.domain),
       });
       if (!accepted) {
-        form.coreMode = oldCoreMode;
+        form.coreMode = oldCoreMode || form.coreMode;
         return;
       }
+      confirmCoreSwitch = Boolean(app.config?.domain);
     }
 
     await app.saveConfig({
       adminPort: requestedAdminPort,
       coreMode: form.coreMode as "legacy" | "go",
+      confirmCoreSwitch,
       toolProfile: form.toolProfile as "full" | "read-only" | "compat-readonly-all",
       autoStart: form.autoStart,
       watchdog: form.watchdog,
@@ -105,7 +115,7 @@ async function save() {
     const portChanged = Boolean(oldPort && oldPort !== requestedMcpPort);
     if (portChanged) await app.changePort(requestedMcpPort);
 
-    const runtimeConfigChanged = oldCoreMode !== form.coreMode || oldToolProfile !== form.toolProfile;
+    const runtimeConfigChanged = oldToolProfile !== form.toolProfile;
     if (!portChanged && runtimeConfigChanged && runtimeWasRunning) {
       await app.serviceAction("restart");
     }
@@ -197,11 +207,11 @@ async function save() {
           </label>
           <label class="field span-2">
             <span>MCP 核心</span>
-            <select v-model="form.coreMode">
-              <option value="legacy">旧核心 · 稳定兼容模式</option>
-              <option value="go">Go 核心 · 0.7 新版</option>
+            <select v-model="form.coreMode" :disabled="app.status?.mcp.running || app.status?.tunnel.running">
+              <option value="legacy">Python 兼容核心 · 旧版回退</option>
+              <option value="go">Go 核心 · 正式主核心</option>
             </select>
-            <small>切换核心会在保存后自动重启 MCP；Cloudflare 域名和端口保持不变。</small>
+            <small>运行中禁止直接切换核心。公网实例切换后通常需要在 ChatGPT 中重新连接或重新授权。</small>
           </label>
           <label class="field span-2">
             <span>工具配置</span>

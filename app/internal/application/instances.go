@@ -277,6 +277,13 @@ func (a *App) UpdateInstance(ctx context.Context, id string, request model.MCPIn
 	}
 
 	mcpStatus, tunnelStatus, _ := runtime.process.Status()
+	coreChanged := oldCfg.CoreMode != newCfg.CoreMode
+	if coreChanged && (mcpStatus.Running || tunnelStatus.Running || runtime.desiredRunning) {
+		return model.MCPInstance{}, errors.New("切换 MCP 核心前请先停止该实例，避免现有 OAuth 会话和工具连接在重启过程中失效")
+	}
+	if coreChanged && strings.TrimSpace(oldCfg.Domain) != "" && !request.ConfirmCoreSwitch {
+		return model.MCPInstance{}, errors.New("该实例已配置公网域名；切换核心后需要在 ChatGPT 中重新连接或重新授权，请确认核心切换后再保存")
+	}
 	wasRunning := mcpStatus.Running || tunnelStatus.Running || runtime.desiredRunning
 	if mcpStatus.Running || tunnelStatus.Running {
 		if err := runtime.process.StopAll(); err != nil {
@@ -314,6 +321,62 @@ func (a *App) UpdateInstance(ctx context.Context, id string, request model.MCPIn
 		}
 	}
 	return a.managedInstanceView(updatedRecord, runtime), nil
+}
+
+func (a *App) CloneInstance(ctx context.Context, id string, request model.MCPInstanceCloneRequest) (model.MCPInstance, error) {
+	var source model.MCPInstance
+	var cfg model.Config
+	if id == model.PrimaryInstanceID {
+		source = a.primaryInstanceView()
+		cfg = a.config.Get()
+	} else {
+		record, runtime, err := a.instanceRecordAndRuntime(id)
+		if err != nil {
+			return model.MCPInstance{}, err
+		}
+		source = a.managedInstanceView(record, runtime)
+		cfg = runtime.config.Get()
+	}
+	targetCore := strings.TrimSpace(request.CoreMode)
+	if targetCore == "" {
+		if cfg.CoreMode == "go" {
+			targetCore = "legacy"
+		} else {
+			targetCore = "go"
+		}
+	}
+	if targetCore != "go" && targetCore != "legacy" {
+		return model.MCPInstance{}, errors.New("coreMode must be legacy or go")
+	}
+	if targetCore == cfg.CoreMode {
+		return model.MCPInstance{}, errors.New("复制实例必须选择与源实例不同的核心")
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		label := "Go"
+		if targetCore == "legacy" {
+			label = "Python 兼容"
+		}
+		name = source.Name + " - " + label
+	}
+	allowNetwork := cfg.AllowNetwork
+	autoStart := false
+	watchdog := cfg.Watchdog
+	loggingEnabled := cfg.LoggingEnabled
+	return a.CreateInstance(ctx, model.MCPInstanceCreateRequest{
+		Name:           name,
+		ProjectID:      source.ProjectID,
+		Workspace:      cfg.Workspace,
+		MCPPort:        0,
+		CoreMode:       targetCore,
+		PermissionMode: cfg.PermissionMode,
+		FileScope:      cfg.FileScope,
+		ToolProfile:    cfg.ToolProfile,
+		AllowNetwork:   &allowNetwork,
+		AutoStart:      &autoStart,
+		Watchdog:       &watchdog,
+		LoggingEnabled: &loggingEnabled,
+	})
 }
 
 func (a *App) DeleteInstance(id string) error {

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -19,6 +21,11 @@ const (
 	maxReadableFileBytes   = 8 * 1024 * 1024
 	maxSearchFileBytes     = 1024 * 1024
 	maxSearchVisitedFiles  = 10000
+	maxBatchReadFiles      = 8
+	defaultBatchFileBytes  = 64 * 1024
+	maxBatchReadTotalBytes = 512 * 1024
+	maxProjectRuleBytes    = 32 * 1024
+	maxProjectScanFiles    = 2000
 )
 
 type readFileArgs struct {
@@ -29,6 +36,17 @@ type readFileArgs struct {
 	EndLineSnake   int    `json:"end_line,omitempty"`
 	MaxBytes       int    `json:"maxBytes,omitempty"`
 	MaxBytesSnake  int    `json:"max_bytes,omitempty"`
+}
+
+type readFilesArgs struct {
+	Files              []readFileArgs `json:"files"`
+	MaxTotalBytes      int            `json:"maxTotalBytes,omitempty"`
+	MaxTotalBytesSnake int            `json:"max_total_bytes,omitempty"`
+}
+
+type projectSnapshotArgs struct {
+	IncludeInstructions *bool `json:"includeInstructions,omitempty"`
+	IncludeSnake        *bool `json:"include_instructions,omitempty"`
 }
 
 type listDirArgs struct {
@@ -48,6 +66,14 @@ type searchTextArgs struct {
 	IncludeHiddenSnake bool   `json:"include_hidden,omitempty"`
 	MaxResults         int    `json:"maxResults,omitempty"`
 	MaxResultsSnake    int    `json:"max_results,omitempty"`
+	Offset             int    `json:"offset,omitempty"`
+}
+
+type projectRule struct {
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	SizeBytes int64  `json:"sizeBytes"`
+	Truncated bool   `json:"truncated"`
 }
 
 type directoryEntry struct {
@@ -86,6 +112,45 @@ func previewFileTools() []Tool {
 			},
 		},
 		{
+			Name:        "read_files",
+			Title:       "Read Multiple Workspace Files",
+			Description: "Read up to eight UTF-8 workspace files in one bounded call. Individual file failures do not discard successful reads.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"files": map[string]any{
+						"type": "array", "minItems": 1, "maxItems": maxBatchReadFiles,
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"path":      map[string]any{"type": "string", "minLength": 1},
+								"startLine": map[string]any{"type": "integer", "minimum": 1, "default": 1},
+								"endLine":   map[string]any{"type": "integer", "minimum": 1},
+								"maxBytes":  map[string]any{"type": "integer", "minimum": 1, "maximum": maxToolOutputBytes, "default": defaultBatchFileBytes},
+							},
+							"required": []string{"path"}, "additionalProperties": false,
+						},
+					},
+					"maxTotalBytes":   map[string]any{"type": "integer", "minimum": 1, "maximum": maxBatchReadTotalBytes, "default": maxBatchReadTotalBytes},
+					"max_total_bytes": map[string]any{"type": "integer", "minimum": 1, "maximum": maxBatchReadTotalBytes, "description": "Legacy alias for maxTotalBytes."},
+				},
+				"required": []string{"files"}, "additionalProperties": false,
+			},
+		},
+		{
+			Name:        "project_snapshot",
+			Title:       "Project Snapshot",
+			Description: "Return a compact workspace overview including top-level entries, Git state, build files, primary languages, and root project instructions.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"includeInstructions":  map[string]any{"type": "boolean", "default": true},
+					"include_instructions": map[string]any{"type": "boolean", "description": "Legacy alias for includeInstructions."},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "list_dir",
 			Title:       "List Workspace Directory",
 			Description: "List files and directories without following symlinked directories outside the workspace.",
@@ -116,6 +181,7 @@ func previewFileTools() []Tool {
 					"include_hidden": map[string]any{"type": "boolean", "description": "Legacy alias for includeHidden."},
 					"maxResults":     map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
 					"max_results":    map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "description": "Legacy alias for maxResults."},
+					"offset":         map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "default": 0},
 				},
 				"required":             []string{"query"},
 				"additionalProperties": false,
@@ -157,6 +223,18 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 			return nil, err
 		}
 		return s.readFile(args)
+	case "read_files":
+		var args readFilesArgs
+		if err := decodeToolArguments(arguments, &args); err != nil {
+			return nil, err
+		}
+		return s.readFiles(args)
+	case "project_snapshot":
+		var args projectSnapshotArgs
+		if err := decodeToolArguments(arguments, &args); err != nil {
+			return nil, err
+		}
+		return s.projectSnapshot(args)
 	case "list_dir":
 		var args listDirArgs
 		if err := decodeToolArguments(arguments, &args); err != nil {
@@ -274,22 +352,111 @@ func (s *Server) readFile(args readFileArgs) (map[string]any, error) {
 	if totalLines > 0 && startLine <= totalLines {
 		selected = strings.Join(lines[startLine-1:endLine], "\n")
 	}
-	truncated := false
-	if len(selected) > maxBytes {
+	selectedBytes := len(selected)
+	truncated := selectedBytes > maxBytes
+	lineBoundaryTruncation := false
+	if truncated {
 		selected = selected[:maxBytes]
 		for !utf8.ValidString(selected) && len(selected) > 0 {
 			selected = selected[:len(selected)-1]
 		}
-		truncated = true
+		if newline := strings.LastIndex(selected, "\n"); newline > 0 {
+			selected = selected[:newline+1]
+			lineBoundaryTruncation = true
+		}
+	}
+	returnedLines := 0
+	returnedEndLine := startLine - 1
+	if selected != "" {
+		returnedLines = strings.Count(selected, "\n")
+		if !strings.HasSuffix(selected, "\n") {
+			returnedLines++
+		}
+		returnedEndLine = startLine + returnedLines - 1
+	}
+	result := map[string]any{
+		"path":            relative,
+		"content":         selected,
+		"startLine":       startLine,
+		"endLine":         endLine,
+		"returnedEndLine": returnedEndLine,
+		"totalLines":      totalLines,
+		"returnedLines":   returnedLines,
+		"sizeBytes":       info.Size(),
+		"selectedBytes":   selectedBytes,
+		"returnedBytes":   len(selected),
+		"omittedBytes":    max(0, selectedBytes-len(selected)),
+		"truncated":       truncated,
+		"lineTruncated":   truncated && !lineBoundaryTruncation,
+	}
+	if truncated && lineBoundaryTruncation && returnedLines > 0 {
+		result["nextStartLine"] = returnedEndLine + 1
+	}
+	return result, nil
+}
+
+func (s *Server) readFiles(args readFilesArgs) (map[string]any, error) {
+	if len(args.Files) == 0 {
+		return nil, errors.New("files is required")
+	}
+	if len(args.Files) > maxBatchReadFiles {
+		return nil, fmt.Errorf("files cannot contain more than %d entries", maxBatchReadFiles)
+	}
+	if args.MaxTotalBytes <= 0 {
+		args.MaxTotalBytes = args.MaxTotalBytesSnake
+	}
+	if args.MaxTotalBytes <= 0 {
+		args.MaxTotalBytes = maxBatchReadTotalBytes
+	}
+	if args.MaxTotalBytes > maxBatchReadTotalBytes {
+		args.MaxTotalBytes = maxBatchReadTotalBytes
+	}
+	results := make([]map[string]any, 0, len(args.Files))
+	returnedBytes := 0
+	succeeded := 0
+	failed := 0
+	anyTruncated := false
+	for _, file := range args.Files {
+		entry := map[string]any{"path": file.Path}
+		remaining := args.MaxTotalBytes - returnedBytes
+		if remaining <= 0 {
+			entry["error"] = "batch output limit reached before this file was read"
+			entry["truncated"] = true
+			anyTruncated = true
+			failed++
+			results = append(results, entry)
+			continue
+		}
+		if file.MaxBytes <= 0 {
+			file.MaxBytes = defaultBatchFileBytes
+		}
+		if file.MaxBytes > remaining {
+			file.MaxBytes = remaining
+		}
+		result, err := s.readFile(file)
+		if err != nil {
+			entry["error"] = err.Error()
+			failed++
+		} else {
+			entry = result
+			if value, ok := result["returnedBytes"].(int); ok {
+				returnedBytes += value
+			}
+			if value, ok := result["truncated"].(bool); ok && value {
+				anyTruncated = true
+			}
+			succeeded++
+		}
+		results = append(results, entry)
 	}
 	return map[string]any{
-		"path":       relative,
-		"content":    selected,
-		"startLine":  startLine,
-		"endLine":    endLine,
-		"totalLines": totalLines,
-		"sizeBytes":  info.Size(),
-		"truncated":  truncated,
+		"files":         results,
+		"count":         len(results),
+		"succeeded":     succeeded,
+		"failed":        failed,
+		"returnedBytes": returnedBytes,
+		"maxTotalBytes": args.MaxTotalBytes,
+		"truncated":     anyTruncated || returnedBytes >= args.MaxTotalBytes,
 	}, nil
 }
 
@@ -337,10 +504,13 @@ func (s *Server) listDir(args listDirArgs) (map[string]any, error) {
 		result = append(result, item)
 	}
 	return map[string]any{
-		"path":      relative,
-		"entries":   result,
-		"count":     len(result),
-		"truncated": len(result) < visibleCount,
+		"path":            relative,
+		"entries":         result,
+		"count":           len(result),
+		"returnedEntries": len(result),
+		"totalEntries":    visibleCount,
+		"omittedEntries":  max(0, visibleCount-len(result)),
+		"truncated":       len(result) < visibleCount,
 	}, nil
 }
 
@@ -368,11 +538,15 @@ func (s *Server) searchText(args searchTextArgs) (map[string]any, error) {
 	if maxResults > 1000 {
 		maxResults = 1000
 	}
+	if args.Offset < 0 || args.Offset > 100000 {
+		return nil, errors.New("offset must be between 0 and 100000")
+	}
 	needle := query
 	if !args.CaseSensitive {
 		needle = strings.ToLower(query)
 	}
 	matches := make([]textMatch, 0, min(maxResults, 100))
+	matchedSeen := 0
 	visited := 0
 	truncated := false
 	stopWalk := errors.New("search result limit reached")
@@ -414,6 +588,10 @@ func (s *Server) searchText(args searchTextArgs) (map[string]any, error) {
 			if !strings.Contains(haystack, needle) {
 				continue
 			}
+			matchedSeen++
+			if matchedSeen <= args.Offset {
+				continue
+			}
 			rel, relErr := filepath.Rel(root, path)
 			if relErr != nil {
 				rel = path
@@ -433,15 +611,213 @@ func (s *Server) searchText(args searchTextArgs) (map[string]any, error) {
 	if err != nil && !errors.Is(err, stopWalk) {
 		return nil, fmt.Errorf("search workspace: %w", err)
 	}
-	return map[string]any{
+	result := map[string]any{
 		"query":         query,
 		"path":          relative,
 		"caseSensitive": args.CaseSensitive,
+		"offset":        args.Offset,
 		"visitedFiles":  visited,
 		"matches":       matches,
 		"count":         len(matches),
+		"returnedCount": len(matches),
+		"resultLimit":   maxResults,
 		"truncated":     truncated,
-	}, nil
+	}
+	if truncated && len(matches) > 0 {
+		result["nextOffset"] = args.Offset + len(matches)
+	}
+	return result, nil
+}
+
+func loadProjectRules(workspace string, maxBytes int) []projectRule {
+	if maxBytes <= 0 || strings.TrimSpace(workspace) == "" {
+		return nil
+	}
+	root, err := filepath.Abs(workspace)
+	if err != nil {
+		return nil
+	}
+	remaining := maxBytes
+	result := make([]projectRule, 0, 2)
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		path := filepath.Join(root, name)
+		info, statErr := os.Stat(path)
+		if statErr != nil || !info.Mode().IsRegular() || remaining <= 0 {
+			continue
+		}
+		file, openErr := os.Open(path)
+		if openErr != nil {
+			continue
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(file, int64(remaining)+1))
+		_ = file.Close()
+		if readErr != nil || !utf8.Valid(raw) {
+			continue
+		}
+		truncated := len(raw) > remaining
+		if truncated {
+			raw = raw[:remaining]
+			for !utf8.Valid(raw) && len(raw) > 0 {
+				raw = raw[:len(raw)-1]
+			}
+		}
+		result = append(result, projectRule{
+			Path: name, Content: normalizeText(string(raw)), SizeBytes: info.Size(), Truncated: truncated,
+		})
+		remaining -= len(raw)
+	}
+	return result
+}
+
+func (s *Server) projectSnapshot(args projectSnapshotArgs) (map[string]any, error) {
+	root, err := s.workspaceRoot()
+	if err != nil {
+		return nil, err
+	}
+	includeInstructions := true
+	if args.IncludeInstructions != nil {
+		includeInstructions = *args.IncludeInstructions
+	} else if args.IncludeSnake != nil {
+		includeInstructions = *args.IncludeSnake
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("read workspace root: %w", err)
+	}
+	topLevel := make([]directoryEntry, 0, min(len(entries), 100))
+	visibleTopLevel := 0
+	for _, entry := range entries {
+		if isHiddenName(entry.Name()) {
+			continue
+		}
+		visibleTopLevel++
+		if len(topLevel) >= 100 {
+			continue
+		}
+		item := directoryEntry{Name: entry.Name(), Path: entry.Name(), Type: entryType(entry)}
+		if info, infoErr := entry.Info(); infoErr == nil {
+			item.SizeBytes = info.Size()
+			item.ModifiedAt = info.ModTime().UTC().Format("2006-01-02T15:04:05Z")
+		}
+		topLevel = append(topLevel, item)
+	}
+	buildFiles, languages := detectProjectCharacteristics(root)
+	git := map[string]any{"available": false}
+	if output, truncated, gitErr := runGit(root, 64*1024, "status", "--porcelain=v2", "--branch"); gitErr == nil {
+		git = map[string]any{
+			"available": true, "porcelain": output, "clean": gitStatusClean(output),
+			"returnedBytes": len(output), "outputLimitBytes": 64 * 1024, "truncated": truncated,
+		}
+	}
+	result := map[string]any{
+		"workspace":         root,
+		"defaultCwd":        s.currentDefaultCWD(),
+		"topLevel":          topLevel,
+		"topLevelCount":     len(topLevel),
+		"topLevelTotal":     visibleTopLevel,
+		"topLevelLimit":     100,
+		"topLevelTruncated": visibleTopLevel > len(topLevel),
+		"buildFiles":        buildFiles,
+		"primaryLanguages":  languages,
+		"git":               git,
+		"instructionFiles":  projectRuleMetadata(s.projectRules),
+	}
+	if includeInstructions {
+		result["instructions"] = append([]projectRule(nil), s.projectRules...)
+	}
+	return result, nil
+}
+
+func projectRuleMetadata(rules []projectRule) []map[string]any {
+	result := make([]map[string]any, 0, len(rules))
+	for _, rule := range rules {
+		result = append(result, map[string]any{
+			"path": rule.Path, "sizeBytes": rule.SizeBytes, "truncated": rule.Truncated,
+		})
+	}
+	return result
+}
+
+func detectProjectCharacteristics(root string) ([]string, []map[string]any) {
+	knownBuildFiles := map[string]struct{}{
+		"go.mod": {}, "go.work": {}, "package.json": {}, "pnpm-lock.yaml": {}, "yarn.lock": {}, "package-lock.json": {},
+		"pyproject.toml": {}, "requirements.txt": {}, "poetry.lock": {}, "Cargo.toml": {}, "Gemfile": {}, "pom.xml": {},
+		"build.gradle": {}, "build.gradle.kts": {}, "CMakeLists.txt": {}, "Makefile": {}, "Dockerfile": {},
+	}
+	extensions := map[string]string{
+		".go": "Go", ".py": "Python", ".ts": "TypeScript", ".tsx": "TypeScript", ".js": "JavaScript", ".jsx": "JavaScript",
+		".vue": "Vue", ".rs": "Rust", ".java": "Java", ".kt": "Kotlin", ".cs": "C#", ".cpp": "C++", ".cc": "C++",
+		".c": "C", ".h": "C/C++", ".rb": "Ruby", ".php": "PHP", ".swift": "Swift", ".sh": "Shell", ".ps1": "PowerShell",
+	}
+	buildFiles := make([]string, 0)
+	counts := map[string]int{}
+	visited := 0
+	stop := errors.New("project scan limit reached")
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if path != root && entry.IsDir() {
+			if entry.Type()&os.ModeSymlink != 0 || shouldSkipSearchDirectory(entry.Name(), false) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		visited++
+		if visited > maxProjectScanFiles {
+			return stop
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		if _, ok := knownBuildFiles[entry.Name()]; ok && !strings.Contains(filepath.ToSlash(rel), "/") {
+			buildFiles = append(buildFiles, filepath.ToSlash(rel))
+		}
+		if language := extensions[strings.ToLower(filepath.Ext(entry.Name()))]; language != "" {
+			counts[language]++
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, stop) {
+		return nil, nil
+	}
+	sort.Strings(buildFiles)
+	type languageCount struct {
+		Name  string
+		Count int
+	}
+	ordered := make([]languageCount, 0, len(counts))
+	for name, count := range counts {
+		ordered = append(ordered, languageCount{Name: name, Count: count})
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Count == ordered[j].Count {
+			return ordered[i].Name < ordered[j].Name
+		}
+		return ordered[i].Count > ordered[j].Count
+	})
+	if len(ordered) > 5 {
+		ordered = ordered[:5]
+	}
+	languages := make([]map[string]any, 0, len(ordered))
+	for _, item := range ordered {
+		languages = append(languages, map[string]any{"name": item.Name, "files": item.Count})
+	}
+	return buildFiles, languages
+}
+
+func gitStatusClean(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) workspaceRoot() (string, error) {

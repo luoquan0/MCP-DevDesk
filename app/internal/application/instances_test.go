@@ -98,6 +98,123 @@ func TestAdditionalInstancesRejectDuplicatePorts(t *testing.T) {
 	}
 }
 
+func TestCloneInstanceSwitchesCoreWithoutCopyingPublicTunnel(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"coding-tools-mcp.exe", "mcp-core.exe", "cloudflared.exe"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("placeholder"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Close() })
+
+	source, err := app.CreateInstance(context.Background(), model.MCPInstanceCreateRequest{
+		Name: "source", Workspace: workspace, MCPPort: freeTCPPort(t), CoreMode: "go", Domain: "mcp.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone, err := app.CloneInstance(context.Background(), source.ID, model.MCPInstanceCloneRequest{CoreMode: "legacy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clone.CoreMode != "legacy" || clone.Workspace != source.Workspace || clone.MCPPort == source.MCPPort {
+		t.Fatalf("unexpected clone: source=%+v clone=%+v", source, clone)
+	}
+	if clone.Domain != "" || clone.TunnelID != "" || clone.AutoStart {
+		t.Fatalf("clone copied public or running state: %+v", clone)
+	}
+}
+
+func TestCoreSwitchRequiresStoppedInstanceAndPublicConfirmation(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"coding-tools-mcp.exe", "mcp-core.exe", "cloudflared.exe"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("placeholder"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Close() })
+	instance, err := app.CreateInstance(context.Background(), model.MCPInstanceCreateRequest{
+		Name: "source", Workspace: workspace, MCPPort: freeTCPPort(t), CoreMode: "go", Domain: "mcp.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "legacy"
+	_, runtime, err := app.instanceRecordAndRuntime(instance.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.desiredRunning = true
+	if _, err := app.UpdateInstance(context.Background(), instance.ID, model.MCPInstanceUpdateRequest{CoreMode: &target, ConfirmCoreSwitch: true}); err == nil {
+		t.Fatal("running instance accepted a core switch")
+	}
+	runtime.desiredRunning = false
+	if _, err := app.UpdateInstance(context.Background(), instance.ID, model.MCPInstanceUpdateRequest{CoreMode: &target}); err == nil {
+		t.Fatal("public instance accepted an unconfirmed core switch")
+	}
+	updated, err := app.UpdateInstance(context.Background(), instance.ID, model.MCPInstanceUpdateRequest{CoreMode: &target, ConfirmCoreSwitch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.CoreMode != "legacy" {
+		t.Fatalf("core mode = %q", updated.CoreMode)
+	}
+}
+
+func TestPrimaryCoreSwitchRequiresStoppedServiceAndPublicConfirmation(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"coding-tools-mcp.exe", "mcp-core.exe", "cloudflared.exe"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("placeholder"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app, err := New(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Close() })
+	domain := "mcp.example.com"
+	if _, err := app.UpdateConfig(model.ConfigUpdate{Domain: &domain}); err != nil {
+		t.Fatal(err)
+	}
+	target := "go"
+	if _, err := app.UpdateConfig(model.ConfigUpdate{CoreMode: &target}); err == nil {
+		t.Fatal("public primary instance accepted an unconfirmed core switch")
+	}
+	app.mu.Lock()
+	app.desiredRunning = true
+	app.mu.Unlock()
+	if _, err := app.UpdateConfig(model.ConfigUpdate{CoreMode: &target, ConfirmCoreSwitch: true}); err == nil {
+		t.Fatal("running primary instance accepted a core switch")
+	}
+	app.mu.Lock()
+	app.desiredRunning = false
+	app.mu.Unlock()
+	updated, err := app.UpdateConfig(model.ConfigUpdate{CoreMode: &target, ConfirmCoreSwitch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.CoreMode != "go" {
+		t.Fatalf("core mode = %q", updated.CoreMode)
+	}
+}
+
 func TestAutoStartFailureRollsBackNewInstance(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"coding-tools-mcp.exe", "cloudflared.exe"} {

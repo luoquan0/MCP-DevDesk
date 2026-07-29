@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -65,6 +66,7 @@ type Server struct {
 	allowedRoots      []string
 	cwdMu             sync.RWMutex
 	defaultCWD        string
+	projectRules      []projectRule
 
 	mu        sync.RWMutex
 	sessions  map[string]*session
@@ -239,6 +241,7 @@ func New(options Options) (*Server, error) {
 		fileScope:      options.FileScope,
 		allowedRoots:   append([]string(nil), options.AllowedRoots...),
 		defaultCWD:     options.Workspace,
+		projectRules:   loadProjectRules(options.Workspace, maxProjectRuleBytes),
 		sessions:       make(map[string]*session),
 		tools:          tools,
 		toolSlots:      make(chan struct{}, options.MaxConcurrentTools),
@@ -441,7 +444,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, request rpcRequest) {
 			"name":    s.name,
 			"version": s.version,
 		},
-		"instructions": "MCP DevDesk Go core. Use the exposed tools only within the configured workspace and permission policy.",
+		"instructions": s.initializeInstructions(),
 	})
 }
 
@@ -482,7 +485,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request 
 		writeRPCError(w, http.StatusInternalServerError, request.ID, -32603, "failed to encode tool result", nil)
 		return
 	}
-	content := []contentItem{{Type: "text", Text: string(raw)}}
+	content := []contentItem{{Type: "text", Text: compactToolResultText(params.Name, structured, raw)}}
 	if imageData != "" && imageMIME != "" {
 		content = append(content, contentItem{Type: "image", Data: imageData, MimeType: imageMIME})
 	}
@@ -490,6 +493,55 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request 
 		Content:           content,
 		StructuredContent: structured,
 	})
+}
+
+func (s *Server) initializeInstructions() string {
+	base := "MCP DevDesk Go core. Use the exposed tools only within the configured workspace and permission policy."
+	if len(s.projectRules) == 0 {
+		return base
+	}
+	var builder strings.Builder
+	builder.WriteString(base)
+	builder.WriteString("\n\nProject instructions loaded from the workspace root:\n")
+	for _, rule := range s.projectRules {
+		builder.WriteString("\n--- ")
+		builder.WriteString(rule.Path)
+		if rule.Truncated {
+			builder.WriteString(" (truncated)")
+		}
+		builder.WriteString(" ---\n")
+		builder.WriteString(rule.Content)
+		if !strings.HasSuffix(rule.Content, "\n") {
+			builder.WriteByte('\n')
+		}
+	}
+	return builder.String()
+}
+
+func compactToolResultText(name string, structured map[string]any, full []byte) string {
+	const maxInlineToolTextBytes = 32 * 1024
+	if len(full) <= maxInlineToolTextBytes {
+		return string(full)
+	}
+	keys := []string{
+		"path", "workspace", "query", "count", "returnedCount", "totalCount",
+		"succeeded", "failed", "truncated", "nextOffset", "nextSkip",
+		"returnedBytes", "omittedBytes", "visitedFiles", "clean", "revision",
+	}
+	summary := map[string]any{
+		"tool":    name,
+		"message": "The complete result is available in structuredContent; text output was compacted to protect the context window.",
+	}
+	for _, key := range keys {
+		if value, ok := structured[key]; ok {
+			summary[key] = value
+		}
+	}
+	encoded, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("%s returned a large structured result (%d bytes).", name, len(full))
+	}
+	return string(encoded)
 }
 
 func (s *Server) uptimeSeconds() int64 {

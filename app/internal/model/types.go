@@ -110,6 +110,7 @@ type ConfigUpdate struct {
 	AutoStart               *bool     `json:"autoStart"`
 	Watchdog                *bool     `json:"watchdog"`
 	CoreMode                *string   `json:"coreMode"`
+	ConfirmCoreSwitch       bool      `json:"confirmCoreSwitch"`
 	OpenBrowserOnStart      *bool     `json:"openBrowserOnStart"`
 	HideChildProcessWindows *bool     `json:"hideChildProcessWindows"`
 	LoggingEnabled          *bool     `json:"loggingEnabled"`
@@ -325,18 +326,24 @@ type MCPInstanceCreateRequest struct {
 }
 
 type MCPInstanceUpdateRequest struct {
-	Name           *string `json:"name"`
-	ProjectID      *string `json:"projectId"`
-	Workspace      *string `json:"workspace"`
-	MCPPort        *int    `json:"mcpPort"`
-	Domain         *string `json:"domain"`
-	TunnelName     *string `json:"tunnelName"`
-	CoreMode       *string `json:"coreMode"`
-	PermissionMode *string `json:"permissionMode"`
-	FileScope      *string `json:"fileScope"`
-	ToolProfile    *string `json:"toolProfile"`
-	AllowNetwork   *bool   `json:"allowNetwork"`
-	AutoStart      *bool   `json:"autoStart"`
-	Watchdog       *bool   `json:"watchdog"`
-	LoggingEnabled *bool   `json:"loggingEnabled"`
+	Name              *string `json:"name"`
+	ProjectID         *string `json:"projectId"`
+	Workspace         *string `json:"workspace"`
+	MCPPort           *int    `json:"mcpPort"`
+	Domain            *string `json:"domain"`
+	TunnelName        *string `json:"tunnelName"`
+	CoreMode          *string `json:"coreMode"`
+	PermissionMode    *string `json:"permissionMode"`
+	FileScope         *string `json:"fileScope"`
+	ToolProfile       *string `json:"toolProfile"`
+	AllowNetwork      *bool   `json:"allowNetwork"`
+	AutoStart         *bool   `json:"autoStart"`
+	Watchdog          *bool   `json:"watchdog"`
+	LoggingEnabled    *bool   `json:"loggingEnabled"`
+	ConfirmCoreSwitch bool    `json:"confirmCoreSwitch"`
+}
+
+type MCPInstanceCloneRequest struct {
+	Name     string `json:"name"`
+	CoreMode string `json:"coreMode"`
 }

@@ -118,6 +118,16 @@ async function saveSecrets() {
   }
 }
 
+function exportDiagnostics() {
+  const link = document.createElement("a");
+  link.href = "/api/diagnostics/export";
+  link.download = "";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  ui.toast("正在导出诊断报告", "报告包含运行状态、资源指标和已脱敏的管理器日志，不包含 OAuth 密钥或代理密码。", "info");
+}
+
 onMounted(loadSecrets);
 </script>
 
@@ -188,6 +198,10 @@ onMounted(loadSecrets);
           <div><span>程序根目录</span><code>{{ app.status?.rootDirectory || '--' }}</code></div>
           <div><span>数据目录</span><code>{{ app.status?.dataDirectory || '--' }}</code></div>
           <div><span>管理地址</span><code>{{ app.status?.adminUrl || '--' }}</code></div>
+        </div>
+        <div class="top-divider settings-diagnostic-action">
+          <AppButton tone="secondary" icon="logs" @click="exportDiagnostics">导出脱敏诊断报告</AppButton>
+          <small>用于排查长时间运行、端口、进程和 WebView2 问题。</small>
         </div>
       </AppCard>
     </section>

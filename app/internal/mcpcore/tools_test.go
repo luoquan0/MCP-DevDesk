@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,6 +227,56 @@ func TestCompatibilityToolsAndImages(t *testing.T) {
 	}
 	if viewResult["_mcpImageMimeType"] != "image/png" || viewResult["_mcpImageData"] == "" {
 		t.Fatalf("unexpected view image result: %#v", viewResult)
+	}
+}
+
+func TestFileSearchAndListPagination(t *testing.T) {
+	workspace := t.TempDir()
+	for index, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		content := fmt.Sprintf("target line %d\n", index+1)
+		if err := os.WriteFile(filepath.Join(workspace, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := mustNewServer(t, Options{Workspace: workspace})
+
+	firstList, err := server.executeTool("list_files", map[string]any{
+		"path": ".", "glob": "*.txt", "maxResults": 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstList["count"] != 2 || firstList["nextOffset"] != 2 || firstList["truncated"] != true {
+		t.Fatalf("unexpected first list page: %#v", firstList)
+	}
+	secondList, err := server.executeTool("list_files", map[string]any{
+		"path": ".", "glob": "*.txt", "maxResults": 2, "offset": 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondList["count"] != 1 || secondList["truncated"] != false {
+		t.Fatalf("unexpected second list page: %#v", secondList)
+	}
+
+	firstSearch, err := server.executeTool("search_text", map[string]any{
+		"query": "target", "maxResults": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstSearch["count"] != 1 || firstSearch["nextOffset"] != 1 || firstSearch["truncated"] != true {
+		t.Fatalf("unexpected first search page: %#v", firstSearch)
+	}
+	secondSearch, err := server.executeTool("search_text", map[string]any{
+		"query": "target", "maxResults": 1, "offset": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, ok := secondSearch["matches"].([]textMatch)
+	if !ok || len(matches) != 1 || matches[0].Path != "b.txt" {
+		t.Fatalf("unexpected second search page: %#v", secondSearch)
 	}
 }
 

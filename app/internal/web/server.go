@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -65,6 +66,7 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/instances", s.handleCreateInstance)
 	mux.HandleFunc("GET /api/instances/{id}", s.handleGetInstance)
 	mux.HandleFunc("PATCH /api/instances/{id}", s.handleUpdateInstance)
+	mux.HandleFunc("POST /api/instances/{id}/clone", s.handleCloneInstance)
 	mux.HandleFunc("DELETE /api/instances/{id}", s.handleDeleteInstance)
 	mux.HandleFunc("POST /api/instances/{id}/start", s.handleStartInstance)
 	mux.HandleFunc("POST /api/instances/{id}/stop", s.handleStopInstance)
@@ -87,6 +89,7 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("PUT /api/secrets", s.handleUpdateSecrets)
 	mux.HandleFunc("POST /api/secrets/generate", s.handleGenerateSecret)
 	mux.HandleFunc("GET /api/diagnostics", s.handleDiagnostics)
+	mux.HandleFunc("GET /api/diagnostics/export", s.handleExportDiagnostics)
 	mux.HandleFunc("GET /api/system/desktop", s.handleDesktopStatus)
 	mux.HandleFunc("POST /api/system/pick-folder", s.handlePickFolder)
 	mux.HandleFunc("PUT /api/system/startup", s.handleStartup)
@@ -313,6 +316,22 @@ func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, instance)
+}
+
+func (s *Server) handleCloneInstance(w http.ResponseWriter, r *http.Request) {
+	var request model.MCPInstanceCloneRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+	defer cancel()
+	instance, err := s.app.CloneInstance(ctx, r.PathValue("id"), request)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, instance)
 }
 
 func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
@@ -570,6 +589,43 @@ func (s *Server) handleUpdateSecrets(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDiagnostics(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.Diagnostics())
+}
+
+var diagnosticSecretPattern = regexp.MustCompile(`(?i)(authorization\s*["']?\s*[:=]\s*["']?bearer\s+|(?:client[_-]?secret|owner[_-]?password|proxy[_-]?password|token[_-]?secret|access[_-]?token|refresh[_-]?token|password|token)\s*["']?\s*[:=]\s*["']?)([^"'\s&;,}]+)`)
+
+func (s *Server) handleExportDiagnostics(w http.ResponseWriter, _ *http.Request) {
+	report := map[string]any{
+		"generatedAt": time.Now().UTC().Format(time.RFC3339),
+		"diagnostics": s.app.Diagnostics(),
+		"status":      s.app.Status(),
+		"instances":   s.app.Instances(),
+	}
+	if s.desktop != nil {
+		report["desktop"] = s.desktop.Status()
+	}
+	if logs, err := s.app.Logs("manager", 50); err == nil {
+		redacted := make([]string, 0, len(logs.Lines))
+		for _, line := range logs.Lines {
+			redacted = append(redacted, redactDiagnosticLine(line))
+		}
+		report["managerLog"] = map[string]any{
+			"lines": redacted, "truncated": logs.Truncated,
+		}
+	}
+	raw, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="mcp-devdesk-diagnostics-%s.json"`, time.Now().Format("20060102-150405")))
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func redactDiagnosticLine(line string) string {
+	return diagnosticSecretPattern.ReplaceAllString(line, "${1}[REDACTED]")
 }
 
 func (s *Server) handleDesktopStatus(w http.ResponseWriter, _ *http.Request) {

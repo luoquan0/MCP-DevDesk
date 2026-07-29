@@ -12,6 +12,7 @@ import type {
   GitRollbackResult,
   LogResponse,
   MCPInstance,
+  MCPInstanceCloneRequest,
   MCPInstanceCreateRequest,
   MCPInstanceUpdateRequest,
   Project,
@@ -115,6 +116,16 @@ export const useAppStore = defineStore("app", {
       }));
       await this.loadInstances();
       ui.toast("MCP 实例已更新", instance.name, "success");
+      return instance;
+    },
+    async cloneInstance(id: string, request: MCPInstanceCloneRequest) {
+      const ui = useUiStore();
+      const instance = await this.runAction(`clone-instance-${id}`, () => api<MCPInstance>(`/api/instances/${encodeURIComponent(id)}/clone`, {
+        method: "POST",
+        body: request as unknown as BodyInit,
+      }));
+      await this.loadInstances();
+      ui.toast("已复制为独立 MCP 实例", `${instance.name} · 端口 ${instance.mcpPort}`, "success");
       return instance;
     },
     async deleteInstance(id: string) {
@@ -264,7 +275,7 @@ export const useAppStore = defineStore("app", {
         "MCP DevDesk 已更新当前运行状态。",
       );
     },
-    async saveConfig(update: Partial<Config>) {
+    async saveConfig(update: Partial<Config> & { confirmCoreSwitch?: boolean }) {
       const ui = useUiStore();
       this.config = await this.runAction("save-config", () => api<Config>("/api/config", {
         method: "PUT",

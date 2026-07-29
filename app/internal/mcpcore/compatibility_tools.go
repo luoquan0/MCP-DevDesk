@@ -38,6 +38,7 @@ type listFilesArgs struct {
 	IncludeIgnoredSnake  bool     `json:"include_ignored,omitempty"`
 	MaxResults           int      `json:"maxResults,omitempty"`
 	MaxResultsSnake      int      `json:"max_results,omitempty"`
+	Offset               int      `json:"offset,omitempty"`
 	Sort                 string   `json:"sort,omitempty"`
 }
 
@@ -126,6 +127,7 @@ func compatibilityTools() []Tool {
 					"include_ignored":  map[string]any{"type": "boolean", "description": "Legacy alias for includeIgnored."},
 					"maxResults":       map[string]any{"type": "integer", "minimum": 1, "maximum": 50000, "default": 5000},
 					"max_results":      map[string]any{"type": "integer", "minimum": 1, "maximum": 50000, "description": "Legacy alias for maxResults."},
+					"offset":           map[string]any{"type": "integer", "minimum": 0, "maximum": 50000, "default": 0},
 					"sort":             map[string]any{"type": "string", "enum": []string{"path", "modified"}, "default": "path"},
 				},
 				"additionalProperties": false,
@@ -225,21 +227,24 @@ func (s *Server) executeCompatibilityTool(name string, arguments map[string]any)
 	switch name {
 	case "check_exec_environment":
 		return map[string]any{
-			"runtime":            runtime.GOOS + "/" + runtime.GOARCH,
-			"workspace":          s.workspace,
-			"defaultCwd":         s.currentDefaultCWD(),
-			"permissionMode":     s.permissionMode,
-			"toolProfile":        s.toolProfile,
-			"fileScope":          s.fileScope,
-			"allowedRoots":       append([]string(nil), s.allowedRoots...),
-			"allowNetwork":       s.allowNetwork,
-			"implicitShell":      false,
-			"maxCommandOutput":   maxCommandOutputBytes,
-			"maxReadableFile":    maxReadableFileBytes,
-			"maxWritableFile":    maxWritableFileBytes,
-			"oauthEnabled":       s.oauth != nil,
-			"streamableHTTP":     true,
-			"sseReplaySupported": true,
+			"runtime":             runtime.GOOS + "/" + runtime.GOARCH,
+			"workspace":           s.workspace,
+			"defaultCwd":          s.currentDefaultCWD(),
+			"permissionMode":      s.permissionMode,
+			"toolProfile":         s.toolProfile,
+			"fileScope":           s.fileScope,
+			"allowedRoots":        append([]string(nil), s.allowedRoots...),
+			"allowNetwork":        s.allowNetwork,
+			"implicitShell":       false,
+			"maxCommandOutput":    maxCommandOutputBytes,
+			"maxReadableFile":     maxReadableFileBytes,
+			"maxWritableFile":     maxWritableFileBytes,
+			"maxBatchReadFiles":   maxBatchReadFiles,
+			"maxBatchReadBytes":   maxBatchReadTotalBytes,
+			"projectInstructions": projectRuleMetadata(s.projectRules),
+			"oauthEnabled":        s.oauth != nil,
+			"streamableHTTP":      true,
+			"sseReplaySupported":  true,
 		}, nil
 	case "get_default_cwd":
 		cwd := s.currentDefaultCWD()
@@ -337,14 +342,21 @@ func (s *Server) listFiles(args listFilesArgs) (map[string]any, error) {
 	if maxResults > 50000 {
 		maxResults = 50000
 	}
+	if args.Offset < 0 || args.Offset > 50000 {
+		return nil, errors.New("offset must be between 0 and 50000")
+	}
 	patterns := append([]string(nil), args.Patterns...)
 	if strings.TrimSpace(args.Glob) != "" {
 		patterns = append(patterns, args.Glob)
 	}
-	files := make([]listedFile, 0, min(maxResults, 512))
+	collectionLimit := 50000
+	if args.Sort != "modified" {
+		collectionLimit = min(50000, args.Offset+maxResults+1)
+	}
+	files := make([]listedFile, 0, collectionLimit)
 	visited := 0
-	truncated := false
-	stop := errors.New("file list limit reached")
+	collectionTruncated := false
+	stop := errors.New("file collection limit reached")
 	err = filepath.WalkDir(target, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
@@ -385,8 +397,8 @@ func (s *Server) listFiles(args listFilesArgs) (map[string]any, error) {
 			display = filepath.ToSlash(path)
 		}
 		files = append(files, listedFile{Path: display, SizeBytes: info.Size(), ModifiedAt: info.ModTime().UTC().Format(time.RFC3339)})
-		if len(files) >= maxResults {
-			truncated = true
+		if len(files) >= collectionLimit {
+			collectionTruncated = true
 			return stop
 		}
 		return nil
@@ -399,7 +411,27 @@ func (s *Server) listFiles(args listFilesArgs) (map[string]any, error) {
 	} else {
 		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	}
-	return map[string]any{"path": displayRoot, "files": files, "count": len(files), "visitedFiles": visited, "truncated": truncated}, nil
+	totalCollected := len(files)
+	start := min(args.Offset, totalCollected)
+	end := min(start+maxResults, totalCollected)
+	page := append([]listedFile(nil), files[start:end]...)
+	hasMore := end < totalCollected || collectionTruncated
+	result := map[string]any{
+		"path":            displayRoot,
+		"files":           page,
+		"count":           len(page),
+		"returnedCount":   len(page),
+		"offset":          args.Offset,
+		"resultLimit":     maxResults,
+		"visitedFiles":    visited,
+		"totalCollected":  totalCollected,
+		"collectionLimit": collectionLimit,
+		"truncated":       hasMore,
+	}
+	if hasMore && len(page) > 0 {
+		result["nextOffset"] = end
+	}
+	return result, nil
 }
 
 func matchesAnyPattern(path, name string, patterns []string, emptyMatches bool) bool {
@@ -453,7 +485,10 @@ func (s *Server) gitBlame(args gitBlameArgs) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"path": display, "revision": revision, "startLine": start, "endLine": end, "porcelain": output, "truncated": truncated}, nil
+	return map[string]any{
+		"path": display, "revision": revision, "startLine": start, "endLine": end, "porcelain": output,
+		"returnedBytes": len(output), "outputLimitBytes": limit, "truncated": truncated,
+	}, nil
 }
 
 func (s *Server) writeInlineImage(args writeImageArgs) (map[string]any, error) {

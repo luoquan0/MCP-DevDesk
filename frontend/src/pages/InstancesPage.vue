@@ -152,14 +152,34 @@ function startEdit(instance: MCPInstance) {
 }
 
 async function saveEdit(instance: MCPInstance) {
-  const accepted = instance.mcp.running
-    ? await ui.ask({
+  const coreChanged = instance.coreMode !== editForm.coreMode;
+  if (coreChanged && (instance.mcp.running || instance.tunnel.running)) {
+    ui.toast("请先停止实例再切换核心", "核心切换会使现有 OAuth 会话和 ChatGPT 工具连接失效；停止后可直接切换，或复制为新的独立实例。", "danger");
+    editForm.coreMode = instance.coreMode;
+    return;
+  }
+  let confirmCoreSwitch = false;
+  if (coreChanged && instance.domain) {
+    const accepted = await ui.ask({
+      title: "确认切换公网实例核心",
+      message: `实例“${instance.name}”使用域名 ${instance.domain}。切换核心后需要在 ChatGPT 中重新连接或重新授权。更稳妥的方式是使用“复制到另一核心”。`,
+      confirmLabel: "仍然切换",
+      danger: true,
+    });
+    if (!accepted) {
+      editForm.coreMode = instance.coreMode;
+      return;
+    }
+    confirmCoreSwitch = true;
+  }
+  if (!coreChanged && instance.mcp.running) {
+    const accepted = await ui.ask({
       title: "保存并重启 MCP 实例",
       message: `实例“${instance.name}”正在运行。保存配置后会安全重启该实例，其他 MCP 实例不会中断。`,
       confirmLabel: "保存并重启",
-    })
-    : true;
-  if (!accepted) return;
+    });
+    if (!accepted) return;
+  }
   const request: MCPInstanceUpdateRequest = {
     name: editForm.name.trim(),
     projectId: editForm.projectId,
@@ -173,12 +193,29 @@ async function saveEdit(instance: MCPInstance) {
     autoStart: editForm.autoStart,
     watchdog: editForm.watchdog,
     loggingEnabled: editForm.loggingEnabled,
+    confirmCoreSwitch,
   };
   try {
     await app.updateInstance(instance.id, request);
     editingId.value = "";
   } catch (error) {
     ui.toast("更新 MCP 实例失败", errorMessage(error), "danger");
+  }
+}
+
+async function cloneWithOtherCore(instance: MCPInstance) {
+  const targetCore = instance.coreMode === "go" ? "legacy" : "go";
+  const targetLabel = targetCore === "go" ? "Go 核心" : "Python 兼容核心";
+  const accepted = await ui.ask({
+    title: "复制为独立 MCP 实例",
+    message: `将复制“${instance.name}”的项目目录和权限配置，自动分配新端口并使用${targetLabel}。不会复制公网域名、Tunnel 凭据或运行状态。`,
+    confirmLabel: "复制实例",
+  });
+  if (!accepted) return;
+  try {
+    await app.cloneInstance(instance.id, { coreMode: targetCore });
+  } catch (error) {
+    ui.toast("复制 MCP 实例失败", errorMessage(error), "danger");
   }
 }
 
@@ -368,6 +405,7 @@ onMounted(async () => {
 
         <div class="instance-secondary-actions">
           <AppButton v-if="!instance.primary" tone="secondary" icon="settings" @click="startEdit(instance)">编辑配置</AppButton>
+          <AppButton tone="secondary" icon="copy" :loading="app.actionPending === `clone-instance-${instance.id}`" @click="cloneWithOtherCore(instance)">复制到另一核心</AppButton>
           <AppButton tone="secondary" icon="cloud" @click="startTunnelEdit(instance)">配置 Tunnel</AppButton>
           <AppButton tone="secondary" icon="logs" @click="openLogs(instance)">实例日志</AppButton>
           <AppButton v-if="!instance.primary" tone="quiet" @click="deleteInstance(instance)">删除</AppButton>
@@ -380,7 +418,7 @@ onMounted(async () => {
             <label class="field"><span>关联项目</span><select v-model="editForm.projectId" @change="selectEditProject"><option value="">不关联</option><option v-for="project in app.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label>
             <label class="field span-2"><span>项目目录</span><div class="path-picker-row"><input v-model="editForm.workspace" /><AppButton tone="secondary" icon="folder" :loading="browsing" @click="browseWorkspace('edit')">浏览</AppButton></div></label>
             <label class="field"><span>MCP 端口</span><input v-model.number="editForm.mcpPort" type="number" min="1024" max="65535" /></label>
-            <label class="field"><span>核心</span><select v-model="editForm.coreMode"><option value="go">Go 核心</option><option value="legacy">Python 兼容核心</option></select></label>
+            <label class="field"><span>核心</span><select v-model="editForm.coreMode" :disabled="instance.mcp.running || instance.tunnel.running"><option value="go">Go 核心</option><option value="legacy">Python 兼容核心</option></select><small v-if="instance.mcp.running || instance.tunnel.running">切换核心前必须先停止实例；也可以复制到另一核心。</small></label>
             <label class="field"><span>权限模式</span><select v-model="editForm.permissionMode"><option value="safe">安全</option><option value="trusted">受信任</option><option value="dangerous">高权限</option></select></label>
             <label class="field"><span>工具配置</span><select v-model="editForm.toolProfile"><option value="full">完整工具</option><option value="read-only">只读</option><option value="compat-readonly-all">兼容只读</option></select></label>
           </div>

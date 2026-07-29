@@ -141,19 +141,14 @@ func (s *Server) executeGitTool(name string, arguments map[string]any) (map[stri
 		if err != nil {
 			return nil, err
 		}
-		output, _, err := runGit(cwd, maxGitOutputBytes, "status", "--porcelain=v2", "--branch")
+		output, truncated, err := runGit(cwd, maxGitOutputBytes, "status", "--porcelain=v2", "--branch")
 		if err != nil {
 			return nil, err
 		}
-		clean := true
-		for _, line := range strings.Split(output, "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "#") {
-				clean = false
-				break
-			}
-		}
-		return map[string]any{"path": relative, "porcelain": output, "clean": clean}, nil
+		return map[string]any{
+			"path": relative, "porcelain": output, "clean": gitStatusClean(output),
+			"returnedBytes": len(output), "outputLimitBytes": maxGitOutputBytes, "truncated": truncated,
+		}, nil
 	case "git_diff":
 		var args gitDiffArgs
 		if err := decodeToolArguments(arguments, &args); err != nil {
@@ -217,7 +212,11 @@ func (s *Server) executeGitTool(name string, arguments map[string]any) (map[stri
 				return nil, err
 			}
 		}
-		return map[string]any{"path": relative, "staged": args.Staged, "unstaged": args.Unstaged, "paths": paths, "diff": strings.Join(parts, "\n"), "truncated": truncated}, nil
+		diff := strings.Join(parts, "\n")
+		return map[string]any{
+			"path": relative, "staged": args.Staged, "unstaged": args.Unstaged, "paths": paths,
+			"diff": diff, "returnedBytes": len(diff), "outputLimitBytes": limit, "truncated": truncated,
+		}, nil
 	case "git_log":
 		var args gitLogArgs
 		if err := decodeToolArguments(arguments, &args); err != nil {
@@ -247,8 +246,8 @@ func (s *Server) executeGitTool(name string, arguments map[string]any) (map[stri
 			return nil, errors.New("ref must not begin with a dash")
 		}
 		format := "%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1e"
-		logArgs := []string{"log", "-n", strconv.Itoa(args.MaxCount), "--skip", strconv.Itoa(args.Skip), "--format=" + format, ref}
-		output, _, err := runGit(cwd, maxGitOutputBytes, logArgs...)
+		logArgs := []string{"log", "-n", strconv.Itoa(args.MaxCount + 1), "--skip", strconv.Itoa(args.Skip), "--format=" + format, ref}
+		output, outputTruncated, err := runGit(cwd, maxGitOutputBytes, logArgs...)
 		if err != nil {
 			return nil, err
 		}
@@ -267,7 +266,18 @@ func (s *Server) executeGitTool(name string, arguments map[string]any) (map[stri
 				"authorEmail": fields[3], "authorDate": fields[4], "subject": fields[5],
 			})
 		}
-		return map[string]any{"path": relative, "ref": ref, "skip": args.Skip, "commits": commits, "count": len(commits)}, nil
+		hasMore := len(commits) > args.MaxCount
+		if hasMore {
+			commits = commits[:args.MaxCount]
+		}
+		result := map[string]any{
+			"path": relative, "ref": ref, "skip": args.Skip, "commits": commits,
+			"count": len(commits), "returnedCount": len(commits), "maxCount": args.MaxCount, "truncated": hasMore || outputTruncated,
+		}
+		if hasMore {
+			result["nextSkip"] = args.Skip + len(commits)
+		}
+		return result, nil
 	case "git_show":
 		var args gitShowArgs
 		if err := decodeToolArguments(arguments, &args); err != nil {
@@ -305,7 +315,11 @@ func (s *Server) executeGitTool(name string, arguments map[string]any) (map[stri
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"path": relative, "revision": revision, "includeDiff": includeDiff, "content": output, "truncated": truncated}, nil
+		limit := boundedGitLimit(args.MaxBytes)
+		return map[string]any{
+			"path": relative, "revision": revision, "includeDiff": includeDiff, "content": output,
+			"returnedBytes": len(output), "outputLimitBytes": limit, "truncated": truncated,
+		}, nil
 	case "git_worktrees":
 		var args gitWorktreesArgs
 		if err := decodeToolArguments(arguments, &args); err != nil {
@@ -315,11 +329,14 @@ func (s *Server) executeGitTool(name string, arguments map[string]any) (map[stri
 		if err != nil {
 			return nil, err
 		}
-		output, _, err := runGit(cwd, maxGitOutputBytes, "worktree", "list", "--porcelain")
+		output, truncated, err := runGit(cwd, maxGitOutputBytes, "worktree", "list", "--porcelain")
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"path": relative, "porcelain": output}, nil
+		return map[string]any{
+			"path": relative, "porcelain": output, "returnedBytes": len(output),
+			"outputLimitBytes": maxGitOutputBytes, "truncated": truncated,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unknown Git tool: %s", name)
 	}

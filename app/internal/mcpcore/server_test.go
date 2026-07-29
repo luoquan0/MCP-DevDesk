@@ -70,7 +70,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 		} `json:"result"`
 	}
 	decodeJSON(t, listResponse.Body, &listResult)
-	if len(listResult.Result.Tools) != 30 {
+	if len(listResult.Result.Tools) != 32 {
 		t.Fatalf("tool count = %d", len(listResult.Result.Tools))
 	}
 
@@ -273,7 +273,7 @@ func TestExposedToolSchemasAreValidAndUnique(t *testing.T) {
 			t.Fatalf("tool %q input schema is not JSON encodable: %v", tool.Name, err)
 		}
 	}
-	if len(seen) != 30 {
+	if len(seen) != 32 {
 		t.Fatalf("tool count = %d", len(seen))
 	}
 }
@@ -290,6 +290,12 @@ func TestWorkspaceFileTools(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, ".hidden.txt"), []byte("target hidden"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Run go test before committing."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	server := mustNewServer(t, Options{Workspace: workspace})
 	readResult, err := server.executeTool("read_file", map[string]any{
@@ -303,6 +309,35 @@ func TestWorkspaceFileTools(t *testing.T) {
 	if readResult["content"] != "Beta target\ngamma target" {
 		t.Fatalf("unexpected read content: %#v", readResult["content"])
 	}
+	if readResult["returnedBytes"] != len("Beta target\ngamma target") {
+		t.Fatalf("unexpected returned byte metadata: %#v", readResult)
+	}
+
+	batchResult, err := server.executeTool("read_files", map[string]any{
+		"files": []map[string]any{
+			{"path": "docs/notes.txt", "startLine": 1, "endLine": 1},
+			{"path": "missing.txt"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batchResult["succeeded"] != 1 || batchResult["failed"] != 1 {
+		t.Fatalf("unexpected batch result: %#v", batchResult)
+	}
+
+	snapshot, err := server.executeTool("project_snapshot", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildFiles, ok := snapshot["buildFiles"].([]string)
+	if !ok || len(buildFiles) != 1 || buildFiles[0] != "go.mod" {
+		t.Fatalf("unexpected build files: %#v", snapshot["buildFiles"])
+	}
+	rules, ok := snapshot["instructions"].([]projectRule)
+	if !ok || len(rules) != 1 || rules[0].Path != "AGENTS.md" {
+		t.Fatalf("unexpected project rules: %#v", snapshot["instructions"])
+	}
 
 	listResult, err := server.executeTool("list_dir", map[string]any{"path": "."})
 	if err != nil {
@@ -312,7 +347,7 @@ func TestWorkspaceFileTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected entries type: %T", listResult["entries"])
 	}
-	if len(entries) != 1 || entries[0].Name != "docs" {
+	if len(entries) != 3 {
 		t.Fatalf("hidden entries should be excluded: %#v", entries)
 	}
 
@@ -329,6 +364,73 @@ func TestWorkspaceFileTools(t *testing.T) {
 	}
 	if len(matches) != 2 || matches[0].Path != "docs/notes.txt" || matches[0].Line != 2 {
 		t.Fatalf("unexpected matches: %#v", matches)
+	}
+}
+
+func TestProjectRulesAreIncludedInInitializeInstructions(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Use the project test command."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := mustNewServer(t, Options{Workspace: workspace})
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	response := postRPC(t, httpServer.URL+"/mcp", "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": ProtocolVersion,
+			"clientInfo":      map[string]any{"name": "test", "version": "1"},
+		},
+	})
+	defer response.Body.Close()
+	var initialized struct {
+		Result struct {
+			Instructions string `json:"instructions"`
+		} `json:"result"`
+	}
+	decodeJSON(t, response.Body, &initialized)
+	if !strings.Contains(initialized.Result.Instructions, "AGENTS.md") || !strings.Contains(initialized.Result.Instructions, "Use the project test command") {
+		t.Fatalf("project instructions were not loaded: %q", initialized.Result.Instructions)
+	}
+}
+
+func TestReadFileDoesNotAdvertiseNextLineWhenOneLineIsByteTruncated(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "long.txt"), []byte(strings.Repeat("x", 100)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := mustNewServer(t, Options{Workspace: workspace})
+	result, err := server.executeTool("read_file", map[string]any{"path": "long.txt", "maxBytes": 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["lineTruncated"] != true || result["truncated"] != true {
+		t.Fatalf("expected one-line truncation metadata: %#v", result)
+	}
+	if _, exists := result["nextStartLine"]; exists {
+		t.Fatalf("one-line byte truncation advertised an invalid nextStartLine: %#v", result)
+	}
+}
+
+func TestLargeToolTextIsCompactedWithoutDroppingStructuredResult(t *testing.T) {
+	structured := map[string]any{
+		"path":      "large.txt",
+		"content":   strings.Repeat("x", 40*1024),
+		"truncated": false,
+	}
+	raw, err := json.MarshalIndent(structured, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := compactToolResultText("read_file", structured, raw)
+	if len(text) >= len(raw) || strings.Contains(text, strings.Repeat("x", 1024)) {
+		t.Fatalf("large tool text was not compacted: text=%d raw=%d", len(text), len(raw))
+	}
+	if !strings.Contains(text, "structuredContent") || !strings.Contains(text, "large.txt") {
+		t.Fatalf("compacted text omitted guidance or metadata: %s", text)
 	}
 }
 

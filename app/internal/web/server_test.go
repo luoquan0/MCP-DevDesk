@@ -176,6 +176,53 @@ func TestFolderPickerEndpoint(t *testing.T) {
 	}
 }
 
+func TestCloneInstanceEndpointCreatesIndependentCore(t *testing.T) {
+	server := newTestServer(t)
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/instances/primary/clone", bytes.NewBufferString(`{"coreMode":"go"}`))
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("clone instance failed: %d %s", recorder.Code, recorder.Body.String())
+	}
+	var instance model.MCPInstance
+	if err := json.Unmarshal(recorder.Body.Bytes(), &instance); err != nil {
+		t.Fatal(err)
+	}
+	if instance.Primary || instance.CoreMode != "go" || instance.Domain != "" || instance.MCPPort == server.app.Config().MCPPort {
+		t.Fatalf("unexpected cloned instance: %+v", instance)
+	}
+}
+
+func TestDiagnosticsExportRedactsSensitiveLogValues(t *testing.T) {
+	server := newTestServer(t)
+	dataDir := server.app.Status().DataDirectory
+	logDir := filepath.Join(dataDir, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "manager.log"), []byte("token=secret-token password=secret-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/diagnostics/export", nil)
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("diagnostics export failed: %d %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if strings.Contains(body, "secret-token") || strings.Contains(body, "secret-password") || !strings.Contains(body, "[REDACTED]") {
+		t.Fatalf("diagnostics were not redacted: %s", body)
+	}
+	if !strings.Contains(recorder.Header().Get("Content-Disposition"), "attachment") {
+		t.Fatalf("missing attachment header: %q", recorder.Header().Get("Content-Disposition"))
+	}
+}
+
 func TestProjectPathCanBeUpdatedFromProjectsAPI(t *testing.T) {
 	server := newTestServer(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

@@ -230,6 +230,12 @@ export interface MCPInstanceUpdateRequest {
   autoStart?: boolean;
   watchdog?: boolean;
   loggingEnabled?: boolean;
+  confirmCoreSwitch?: boolean;
+}
+
+export interface MCPInstanceCloneRequest {
+  name?: string;
+  coreMode: CoreMode;
 }
 
 export interface LogResponse {
