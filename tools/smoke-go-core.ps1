@@ -82,7 +82,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.8.7") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.8.8") { return }
             }
         } catch {}
         if ($started.HasExited) { break }
@@ -305,6 +305,10 @@ try {
         [string]$updatedInstructionsResult.structuredContent.managedInstructions -notlike "*SMOKE_MANAGED_PROJECT_PROMPT*") {
         throw "get_instructions did not return the updated runtime prompt: $($updatedInstructionsCall.Status) $($updatedInstructionsCall.Body)"
     }
+    if (@($updatedInstructionsResult.content).Count -lt 2 -or
+        [string]$updatedInstructionsResult.content[0].text -notlike "*SMOKE_MANAGED_PROJECT_PROMPT*") {
+        throw "First tool call in the new MCP session did not deliver the effective instructions into tool content: $($updatedInstructionsCall.Body)"
+    }
 
     $batchRequest = @{
         jsonrpc = "2.0"
@@ -324,7 +328,7 @@ try {
     if ($batchCall.Status -ne 200) { throw "read_files call failed: $($batchCall.Status) $($batchCall.Body)" }
     $batchResult = ($batchCall.Body | ConvertFrom-Json).result
     if ($batchResult.isError -or $batchResult.structuredContent.succeeded -ne 2 -or
-        $batchResult.structuredContent.files[1].content -notlike '*0.8.7*') {
+        $batchResult.structuredContent.files[1].content -notlike '*0.8.8*') {
         throw "read_files returned an unexpected result: $($batchCall.Body)"
     }
 

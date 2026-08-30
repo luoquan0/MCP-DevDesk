@@ -82,14 +82,15 @@ type Server struct {
 }
 
 type session struct {
-	CreatedAt     time.Time
-	LastSeen      time.Time
-	ClientName    string
-	ClientVer     string
-	Protocol      string
-	EventSequence uint64
-	Events        []sseEvent
-	EventBytes    int
+	CreatedAt             time.Time
+	LastSeen              time.Time
+	ClientName            string
+	ClientVer             string
+	Protocol              string
+	InstructionsDelivered bool
+	EventSequence         uint64
+	Events                []sseEvent
+	EventBytes            int
 }
 
 type sseEvent struct {
@@ -504,7 +505,11 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request 
 		writeRPCError(w, http.StatusInternalServerError, request.ID, -32603, "failed to encode tool result", nil)
 		return
 	}
-	content := []contentItem{{Type: "text", Text: compactToolResultText(params.Name, structured, raw)}}
+	content := make([]contentItem, 0, 3)
+	if instructions := s.instructionsForToolSession(strings.TrimSpace(r.Header.Get(SessionHeader))); instructions != "" {
+		content = append(content, contentItem{Type: "text", Text: instructions})
+	}
+	content = append(content, contentItem{Type: "text", Text: compactToolResultText(params.Name, structured, raw)})
 	if imageData != "" && imageMIME != "" {
 		content = append(content, contentItem{Type: "image", Data: imageData, MimeType: imageMIME})
 	}
@@ -512,6 +517,22 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request 
 		Content:           content,
 		StructuredContent: structured,
 	})
+}
+
+func (s *Server) instructionsForToolSession(sessionID string) string {
+	if sessionID == "" || (s.currentManagedInstructions() == "" && len(s.projectRules) == 0) {
+		return ""
+	}
+	s.mu.Lock()
+	current, ok := s.sessions[sessionID]
+	if !ok || current.InstructionsDelivered {
+		s.mu.Unlock()
+		return ""
+	}
+	current.InstructionsDelivered = true
+	s.mu.Unlock()
+
+	return "MCP DevDesk effective project instructions for this connection. Apply these instructions to this and subsequent work performed through this MCP server:\n\n" + s.initializeInstructions()
 }
 
 func (s *Server) initializeInstructions() string {

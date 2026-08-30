@@ -500,6 +500,61 @@ func TestManagedInstructionsFileCanAppearAfterCoreStartup(t *testing.T) {
 	}
 }
 
+func TestManagedInstructionsAreDeliveredOnFirstToolCallPerSession(t *testing.T) {
+	server := mustNewServer(t, Options{
+		Workspace:           t.TempDir(),
+		ManagedInstructions: "LOCAL_PROJECT_PROMPT: always finish the requested task before replying.",
+	})
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	initializeResponse := postRPC(t, httpServer.URL+"/mcp", "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": ProtocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "test", "version": "1"},
+		},
+	})
+	defer initializeResponse.Body.Close()
+	sessionID := initializeResponse.Header.Get(SessionHeader)
+	if sessionID == "" {
+		t.Fatal("initialize returned no session ID")
+	}
+	_ = readBody(t, initializeResponse.Body)
+
+	call := func(id int) []contentItem {
+		response := postRPC(t, httpServer.URL+"/mcp", sessionID, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name":      "server_info",
+				"arguments": map[string]any{},
+			},
+		})
+		defer response.Body.Close()
+		var result struct {
+			Result struct {
+				Content []contentItem `json:"content"`
+			} `json:"result"`
+		}
+		decodeJSON(t, response.Body, &result)
+		return result.Result.Content
+	}
+
+	first := call(2)
+	if len(first) < 2 || !strings.Contains(first[0].Text, "LOCAL_PROJECT_PROMPT") {
+		t.Fatalf("first tool call did not deliver managed instructions: %#v", first)
+	}
+	second := call(3)
+	if len(second) != 1 || strings.Contains(second[0].Text, "LOCAL_PROJECT_PROMPT") {
+		t.Fatalf("managed instructions should only be injected once per MCP session: %#v", second)
+	}
+}
+
 func TestOpaqueOriginIsAllowedOnlyForOAuthAuthorizationForm(t *testing.T) {
 	server := &Server{allowedOrigins: map[string]struct{}{}}
 	handler := server.validateOrigin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

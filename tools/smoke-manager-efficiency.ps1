@@ -59,7 +59,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.8.7") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.8.8") {
                 $ready = $true
                 break
             }
@@ -109,7 +109,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.8.7" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.8.8" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 
