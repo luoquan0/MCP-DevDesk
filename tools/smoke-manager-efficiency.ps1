@@ -63,7 +63,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.10.0") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.11.0") {
                 $ready = $true
                 break
             }
@@ -80,7 +80,7 @@ try {
     $webControl = Send-Json -Method "PUT" -Uri "$BaseUrl/api/web-control" -Body @{ enabled = $true; port = $webPort; lanEnabled = $true; authEnabled = $true; password = $webPassword }
     if ($webControl.StatusCode -ne 200) { throw "Web control enable endpoint failed" }
     $webStatus = $webControl.Content | ConvertFrom-Json
-    if (-not $webStatus.enabled -or -not $webStatus.running -or -not $webStatus.lanEnabled -or -not $webStatus.authEnabled -or -not $webStatus.passwordConfigured -or $webStatus.port -ne $webPort -or $webStatus.url -notlike "*:$webPort/#/control/projects") {
+    if (-not $webStatus.enabled -or -not $webStatus.running -or -not $webStatus.lanEnabled -or -not $webStatus.authEnabled -or -not $webStatus.passwordConfigured -or $webStatus.port -ne $webPort -or $webStatus.url -notlike "*:$webPort/#/") {
         throw "Web control did not report the expected running state"
     }
     $authStatus = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/control/auth/status"
@@ -92,16 +92,16 @@ try {
     $login = Send-Json -Method "POST" -Uri "http://127.0.0.1:$webPort/api/control/auth/login" -Body @{ password = $webPassword } -WebSession $webSession
     $loginParsed = $login.Content | ConvertFrom-Json
     if ($login.StatusCode -ne 200 -or -not $loginParsed.authenticated) { throw "Web control login failed" }
-    $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/control/overview" -WebSession $webSession
+    $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/status" -WebSession $webSession
     $overviewParsed = $overview.Content | ConvertFrom-Json
-    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.10.0") { throw "Authenticated web control overview failed" }
+    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.11.0") { throw "Authenticated full web UI API failed" }
 
     $phoneProject = Join-Path $TestRoot "phone-project"
     New-Item -ItemType Directory -Force -Path $phoneProject | Out-Null
     $encodedRoot = [Uri]::EscapeDataString($TestRoot)
     $directoryBrowse = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/control/directories?path=$encodedRoot" -WebSession $webSession
     if ($directoryBrowse.StatusCode -ne 200 -or $directoryBrowse.Content -notlike "*phone-project*") { throw "Web control directory browser failed" }
-    $phoneProjectAdd = Send-Json -Method "POST" -Uri "http://127.0.0.1:$webPort/api/control/projects" -Body @{ name = "Phone Project"; path = $phoneProject } -WebSession $webSession
+    $phoneProjectAdd = Send-Json -Method "POST" -Uri "http://127.0.0.1:$webPort/api/projects" -Body @{ name = "Phone Project"; path = $phoneProject } -WebSession $webSession
     if ($phoneProjectAdd.StatusCode -ne 201 -or $phoneProjectAdd.Content -notlike "*Phone Project*") { throw "Web control project add failed" }
 
     $webPage = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/"
@@ -161,7 +161,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.10.0" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.11.0" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

@@ -14,26 +14,24 @@ func (s *Server) ControlHandler() (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.appMux == nil {
+		return nil, errors.New("management routes are unavailable")
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/control/auth/status", s.handleControlAuthStatus)
 	mux.HandleFunc("POST /api/control/auth/login", s.handleControlLogin)
 	mux.HandleFunc("POST /api/control/auth/logout", s.handleControlLogout)
 
-	protected := http.NewServeMux()
-	protected.HandleFunc("GET /api/control/overview", s.handleControlOverview)
-	protected.HandleFunc("GET /api/control/directories", s.handleControlDirectories)
-	protected.HandleFunc("GET /api/control/projects", s.handleListProjects)
-	protected.HandleFunc("POST /api/control/projects", s.handleAddProject)
-	protected.HandleFunc("PATCH /api/control/projects/{id}", s.handleUpdateProject)
-	protected.HandleFunc("DELETE /api/control/projects/{id}", s.handleRemoveProject)
-	protected.HandleFunc("POST /api/control/projects/{id}/activate", s.handleActivateProject)
-	protected.HandleFunc("GET /api/control/prompt-settings", s.handleProjectPromptSettings)
-	protected.HandleFunc("PUT /api/control/prompt-settings", s.handleUpdateProjectPromptSettings)
-	protected.HandleFunc("POST /api/control/services/start", s.handleStartServices)
-	protected.HandleFunc("POST /api/control/services/stop", s.handleStopServices)
-	protected.HandleFunc("POST /api/control/services/restart", s.handleRestartServices)
-	mux.Handle("/api/control/", s.controlRequireAuth(protected))
+	controlAPI := http.NewServeMux()
+	controlAPI.HandleFunc("GET /api/control/overview", s.handleControlOverview)
+	controlAPI.HandleFunc("GET /api/control/directories", s.handleControlDirectories)
+	mux.Handle("/api/control/", s.controlRequireAuth(controlAPI))
+
+	// After authentication the LAN browser uses the exact same management API
+	// and Vue pages as the desktop WebView. This keeps the browser experience in
+	// lock-step with the desktop app instead of maintaining a second UI surface.
+	mux.Handle("/api/", s.controlRequireAuth(s.appMux))
 	mux.Handle("/", noCache(http.FileServer(http.FS(assets))))
 
 	return s.securityHeaders(s.controlNetworkPolicy(s.controlOriginPolicy(mux))), nil
@@ -125,6 +123,19 @@ func (s *Server) controlNetworkPolicy(next http.Handler) http.Handler {
 		if ip == nil || (!ip.IsLoopback() && !ip.IsPrivate()) {
 			writeError(w, http.StatusForbidden, errors.New("web control only accepts local or private LAN clients"))
 			return
+		}
+
+		requestHost := r.Host
+		if parsedHost, _, splitErr := net.SplitHostPort(r.Host); splitErr == nil {
+			requestHost = parsedHost
+		}
+		requestHost = strings.Trim(requestHost, "[]")
+		if !strings.EqualFold(requestHost, "localhost") {
+			hostIP := net.ParseIP(requestHost)
+			if hostIP == nil || (!hostIP.IsLoopback() && !hostIP.IsPrivate()) {
+				writeError(w, http.StatusForbidden, errors.New("web control host must be a local or private IP address"))
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

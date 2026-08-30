@@ -25,6 +25,9 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     : await response.text();
 
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith("/api/control/auth/")) {
+      window.dispatchEvent(new CustomEvent("mcp-devdesk:web-auth-required"));
+    }
     const message = typeof payload === "object" && payload && "message" in payload
       ? String(payload.message)
       : String(payload || response.statusText);

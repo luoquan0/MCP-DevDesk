@@ -4,6 +4,7 @@ import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
 import PageHeader from "@/components/ui/PageHeader.vue";
+import RemoteFolderPicker from "@/components/ui/RemoteFolderPicker.vue";
 import StatusPill from "@/components/ui/StatusPill.vue";
 import { useAppStore } from "@/stores/app";
 import { useUiStore } from "@/stores/ui";
@@ -19,6 +20,10 @@ const browsingProject = ref(false);
 const editingId = ref("");
 const editingPath = ref("");
 const browsingEditId = ref("");
+const remotePickerOpen = ref(false);
+const remotePickerInitialPath = ref("");
+const remotePickerTitle = ref("");
+const remotePickerTarget = ref<"add" | "edit">("add");
 const promptEditingId = ref("");
 const promptDraft = ref("");
 const selectedId = ref("");
@@ -82,6 +87,13 @@ async function addProject() {
 }
 
 async function browseProject() {
+  if (app.webControlClient) {
+    remotePickerTarget.value = "add";
+    remotePickerInitialPath.value = projectPath.value || app.config?.workspace || "";
+    remotePickerTitle.value = "选择要添加的电脑项目目录";
+    remotePickerOpen.value = true;
+    return;
+  }
   browsingProject.value = true;
   try {
     const result = await app.pickFolder(projectPath.value || app.config?.workspace || "", "选择要添加的本地项目");
@@ -110,6 +122,14 @@ function cancelEditProject() {
 }
 
 async function browseEditProject(project: Project) {
+  if (app.webControlClient) {
+    browsingEditId.value = project.id;
+    remotePickerTarget.value = "edit";
+    remotePickerInitialPath.value = editingPath.value || project.path;
+    remotePickerTitle.value = `选择“${project.name}”的新目录`;
+    remotePickerOpen.value = true;
+    return;
+  }
   browsingEditId.value = project.id;
   try {
     const result = await app.pickFolder(editingPath.value || project.path, `选择“${project.name}”的新目录`);
@@ -119,6 +139,18 @@ async function browseEditProject(project: Project) {
   } finally {
     browsingEditId.value = "";
   }
+}
+
+function applyRemoteFolder(path: string) {
+  if (remotePickerTarget.value === "add") projectPath.value = path;
+  else editingPath.value = path;
+  remotePickerOpen.value = false;
+  browsingEditId.value = "";
+}
+
+function closeRemoteFolderPicker() {
+  remotePickerOpen.value = false;
+  browsingEditId.value = "";
 }
 
 async function saveProjectPath(project: Project) {
@@ -411,5 +443,13 @@ async function rollbackCommit(commit: GitCommit) {
       <AppCard><div class="roadmap-icon is-purple"><AppIcon name="restart" :size="20" /></div><h3>安全热切换</h3><p>自动重启 MCP；启动失败时恢复旧目录和旧服务。</p></AppCard>
       <AppCard><div class="roadmap-icon is-mint"><AppIcon name="network" :size="20" /></div><h3>Tunnel 保持连接</h3><p>端口和域名不变，切换目录时无需重建 Cloudflare Tunnel。</p></AppCard>
     </section>
+
+    <RemoteFolderPicker
+      :open="remotePickerOpen"
+      :initial-path="remotePickerInitialPath"
+      :title="remotePickerTitle"
+      @close="closeRemoteFolderPicker"
+      @select="applyRemoteFolder"
+    />
   </div>
 </template>

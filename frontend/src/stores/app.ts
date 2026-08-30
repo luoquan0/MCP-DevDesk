@@ -36,6 +36,7 @@ export const useAppStore = defineStore("app", {
     projects: [] as Project[],
     projectPromptSettings: null as ProjectPromptSettings | null,
     webControl: null as WebControlStatus | null,
+    webControlClient: false,
     projectDetails: {} as Record<string, ProjectDetails>,
     projectDiffs: {} as Record<string, ProjectDiff>,
     projectHistories: {} as Record<string, GitHistory>,

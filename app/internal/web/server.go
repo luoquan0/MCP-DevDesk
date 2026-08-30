@@ -28,6 +28,7 @@ type Server struct {
 	desktop DesktopController
 	server  *http.Server
 	handler http.Handler
+	appMux  http.Handler
 	control *ControlServer
 }
 
@@ -103,6 +104,7 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.Handle("/", noCache(http.FileServer(http.FS(assets))))
 
+	s.appMux = mux
 	s.handler = s.securityHeaders(s.localOnly(mux))
 	s.server = &http.Server{
 		Addr:              address,

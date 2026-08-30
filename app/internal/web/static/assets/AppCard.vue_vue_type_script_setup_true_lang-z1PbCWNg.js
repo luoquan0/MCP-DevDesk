@@ -1,1 +1,0 @@
-import{d as t,c as n,n as s,E as o,o as d}from"./index-DayxNMJX.js";const l=t({__name:"AppCard",props:{padded:{type:Boolean,default:!0},interactive:{type:Boolean,default:!1}},setup(e){return(a,r)=>(d(),n("section",{class:s(["app-card",{"is-padded":e.padded,"is-interactive":e.interactive}])},[o(a.$slots,"default")],2))}});export{l as _};

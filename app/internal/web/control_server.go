@@ -198,7 +198,7 @@ func (c *ControlServer) Status(enabled bool, configuredPort int, lanEnabled bool
 		LastError:          lastError,
 	}
 	if enabled && configuredPort > 0 {
-		status.URL = fmt.Sprintf("http://127.0.0.1:%d/#/control/projects", configuredPort)
+		status.URL = fmt.Sprintf("http://127.0.0.1:%d/#/", configuredPort)
 		if lanEnabled {
 			status.LANURLs = webControlLANURLs(configuredPort)
 		}
@@ -314,7 +314,7 @@ func webControlLANURLs(port int) []string {
 			if ip == nil || ip.IsLoopback() || !ip.IsPrivate() {
 				continue
 			}
-			url := fmt.Sprintf("http://%s:%d/#/control/projects", ip.String(), port)
+			url := fmt.Sprintf("http://%s:%d/#/", ip.String(), port)
 			if _, ok := seen[url]; ok {
 				continue
 			}

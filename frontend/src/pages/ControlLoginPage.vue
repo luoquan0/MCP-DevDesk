@@ -15,7 +15,7 @@ onMounted(async () => {
   try {
     const status = await control.loadAuth();
     if (!status.required || status.authenticated) {
-      await router.replace({ name: "control-projects" });
+      await router.replace({ name: "overview" });
     }
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
@@ -27,7 +27,7 @@ async function login() {
   loading.value = true;
   try {
     await control.login(password.value);
-    await router.replace({ name: "control-projects" });
+    await router.replace({ name: "overview" });
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {

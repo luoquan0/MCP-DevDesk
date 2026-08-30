@@ -1,1 +1,0 @@
-import{d as o,c as t,n as l,l as n,E as r,o as s}from"./index-DayxNMJX.js";const c={key:0,class:"status-pill-dot"},p=o({__name:"StatusPill",props:{tone:{default:"neutral"},dot:{type:Boolean,default:!0}},setup(e){return(a,u)=>(s(),t("span",{class:l(["status-pill",`is-${e.tone}`])},[e.dot?(s(),t("span",c)):n("",!0),r(a.$slots,"default")],2))}});export{p as _};

@@ -99,7 +99,7 @@ async function saveWebControl() {
 }
 
 function openWebControl() {
-  const url = app.webControl?.url || `http://127.0.0.1:${webControlPort.value}/#/control/projects`;
+  const url = app.webControl?.url || `http://127.0.0.1:${webControlPort.value}/#/`;
   if (!app.webControl?.running) {
     ui.toast("网页控制尚未运行", "请先开启网页控制并保存设置。", "info");
     return;
@@ -279,7 +279,7 @@ onMounted(loadSecrets);
         <div>
           <span class="eyebrow">Browser control</span>
           <h3>网页控制</h3>
-          <p>提供独立的手机/浏览器控制面板，可通过局域网管理电脑上的项目目录、提示词和 MCP 服务。</p>
+          <p>网页端直接复用桌面版完整界面和功能；手机通过响应式布局访问同一套页面，并可远程浏览电脑目录。</p>
         </div>
         <StatusPill :tone="app.webControl?.running ? 'success' : webControlEnabled ? 'warning' : 'neutral'">
           {{ app.webControl?.running ? '运行中' : webControlEnabled ? '未启动' : '已关闭' }}
@@ -326,7 +326,7 @@ onMounted(loadSecrets);
       </div>
       <div class="form-footer top-divider">
         <small>
-          网页分为“项目 / 提示词 / 服务”三个页面；项目页可直接浏览电脑磁盘和文件夹。
+          登录后进入与桌面软件一致的完整界面；在网页“项目”页点击浏览时会打开远程电脑目录选择器。
           <template v-if="app.webControl?.lastError"> · {{ app.webControl.lastError }}</template>
         </small>
         <div class="form-footer-actions">

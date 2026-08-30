@@ -199,7 +199,7 @@ func TestWebControlCanEnableMoveAndDisable(t *testing.T) {
 	}
 
 	status := update(true, firstPort, true)
-	if !status.Enabled || !status.Running || !status.LANEnabled || status.Port != firstPort || !strings.Contains(status.URL, fmt.Sprintf(":%d/#/control/projects", firstPort)) {
+	if !status.Enabled || !status.Running || !status.LANEnabled || status.Port != firstPort || !strings.Contains(status.URL, fmt.Sprintf(":%d/#/", firstPort)) {
 		t.Fatalf("unexpected enabled status: %+v", status)
 	}
 	waitReachable(firstPort, true)
@@ -247,7 +247,7 @@ func TestWebControlPasswordProtectsLANAPI(t *testing.T) {
 	}
 	control.InvalidateSessions()
 
-	request := httptest.NewRequest(http.MethodGet, "http://192.168.1.5/api/control/projects", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://192.168.1.5/api/projects", nil)
 	request.RemoteAddr = "192.168.1.20:45678"
 	request.Host = "192.168.1.5:17861"
 	recorder := httptest.NewRecorder()
@@ -282,7 +282,7 @@ func TestWebControlPasswordProtectsLANAPI(t *testing.T) {
 		t.Fatalf("login did not return HttpOnly session cookie: %+v", cookies)
 	}
 
-	authorized := httptest.NewRequest(http.MethodGet, "http://192.168.1.5/api/control/projects", nil)
+	authorized := httptest.NewRequest(http.MethodGet, "http://192.168.1.5/api/projects", nil)
 	authorized.RemoteAddr = "192.168.1.20:45678"
 	authorized.Host = "192.168.1.5:17861"
 	authorized.AddCookie(cookies[0])
@@ -325,7 +325,7 @@ func TestControlDirectoryListingCanAddProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	add := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/control/projects", bytes.NewReader(body))
+	add := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/projects", bytes.NewReader(body))
 	add.RemoteAddr = "127.0.0.1:45678"
 	add.Host = "127.0.0.1:17861"
 	add.Header.Set("Origin", "http://127.0.0.1:17861")
