@@ -14,6 +14,8 @@ const ui = useUiStore();
 const secretsLoading = ref(false);
 const secretsEncrypted = ref(false);
 const restartAfterSave = ref(true);
+const webControlEnabled = ref(false);
+const webControlPort = ref(17861);
 const globalPromptEnabled = ref(false);
 const globalPromptDraft = ref("");
 const globalPromptBytes = computed(() => new TextEncoder().encode(globalPromptDraft.value).length);
@@ -44,6 +46,11 @@ watch(() => app.projectPromptSettings, (settings) => {
   globalPromptDraft.value = settings?.globalPrompt || "";
 }, { immediate: true });
 
+watch(() => [app.webControl, app.config?.webControlPort] as const, ([status, configuredPort]) => {
+  webControlEnabled.value = Boolean(status?.enabled ?? app.config?.webControlEnabled);
+  webControlPort.value = status?.port || configuredPort || 17861;
+}, { immediate: true });
+
 const themes: Array<{ id: ThemeMode; label: string; description: string; icon: string }> = [
   { id: "system", label: "跟随系统", description: "根据 Windows 外观自动切换", icon: "monitor" },
   { id: "light", label: "浅色", description: "明亮、克制的 Apple 风格", icon: "sun" },
@@ -64,6 +71,28 @@ async function setLogging(enabled: boolean) {
   } catch (error) {
     ui.toast("日志设置失败", error instanceof Error ? error.message : String(error), "danger");
   }
+}
+
+async function saveWebControl() {
+  const port = Number(webControlPort.value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    ui.toast("网页端口无效", "请输入 1024 - 65535 之间的整数端口。", "danger");
+    return;
+  }
+  try {
+    await app.saveWebControl(webControlEnabled.value, port);
+  } catch (error) {
+    ui.toast("保存网页控制失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
+function openWebControl() {
+  const url = app.webControl?.url || `http://127.0.0.1:${webControlPort.value}/#/control`;
+  if (!app.webControl?.running) {
+    ui.toast("网页控制尚未运行", "请先开启网页控制并保存设置。", "info");
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 async function saveGlobalPrompt() {
@@ -232,6 +261,43 @@ onMounted(loadSecrets);
         </div>
       </AppCard>
     </section>
+
+    <AppCard class="web-control-settings-card">
+      <div class="card-heading">
+        <div>
+          <span class="eyebrow">Browser control</span>
+          <h3>网页控制</h3>
+          <p>提供一个独立的浏览器控制面板，第一版用于切换项目、编辑提示词和启动/停止/重启 MCP。</p>
+        </div>
+        <StatusPill :tone="app.webControl?.running ? 'success' : webControlEnabled ? 'warning' : 'neutral'">
+          {{ app.webControl?.running ? '运行中' : webControlEnabled ? '未启动' : '已关闭' }}
+        </StatusPill>
+      </div>
+      <div class="web-control-settings-grid">
+        <div class="toggle-list">
+          <ToggleSwitch
+            v-model="webControlEnabled"
+            label="启用网页控制"
+            description="保存后立即启停独立网页端口；当前版本仅允许本机浏览器访问。"
+          />
+        </div>
+        <label class="field web-control-port-field">
+          <span>网页端口</span>
+          <input v-model.number="webControlPort" type="number" min="1024" max="65535" step="1" inputmode="numeric" />
+          <small>不能与内部管理端口 {{ app.config?.adminPort || 17860 }} 或 MCP 端口 {{ app.config?.mcpPort || '--' }} 重复。</small>
+        </label>
+      </div>
+      <div class="form-footer top-divider">
+        <small>
+          地址：{{ app.webControl?.url || `http://127.0.0.1:${webControlPort}/#/control` }}
+          <template v-if="app.webControl?.lastError"> · {{ app.webControl.lastError }}</template>
+        </small>
+        <div class="form-footer-actions">
+          <AppButton tone="secondary" icon="globe" :disabled="!app.webControl?.running" @click="openWebControl">打开网页</AppButton>
+          <AppButton tone="primary" :loading="app.actionPending === 'save-web-control'" @click="saveWebControl">保存网页设置</AppButton>
+        </div>
+      </div>
+    </AppCard>
 
     <AppCard class="global-prompt-card">
       <div class="card-heading">

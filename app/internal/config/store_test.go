@@ -61,6 +61,39 @@ func TestLoggingIsEnabledByDefaultAndCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestWebControlDefaultsDisabledAndUsesDedicatedPort(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := store.Get()
+	if cfg.WebControlEnabled {
+		t.Fatal("web control must be disabled by default")
+	}
+	if cfg.WebControlPort != 17861 {
+		t.Fatalf("default web control port = %d, want 17861", cfg.WebControlPort)
+	}
+}
+
+func TestWebControlRejectsAdminOrMCPPortWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	cfg := store.Get()
+	adminPort := cfg.AdminPort
+	if _, err := store.Update(model.ConfigUpdate{WebControlEnabled: &enabled, WebControlPort: &adminPort}); err == nil {
+		t.Fatal("web control accepted the admin port")
+	}
+	mcpPort := cfg.MCPPort
+	if _, err := store.Update(model.ConfigUpdate{WebControlEnabled: &enabled, WebControlPort: &mcpPort}); err == nil {
+		t.Fatal("web control accepted the MCP port")
+	}
+}
+
 func TestDefaultCoreModeKeepsLegacyFallback(t *testing.T) {
 	root := t.TempDir()
 	dist := filepath.Join(root, "dist")

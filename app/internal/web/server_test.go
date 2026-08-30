@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mcp-devdesk/internal/application"
 	"mcp-devdesk/internal/model"
@@ -108,6 +110,115 @@ func TestStaticDashboardIsEmbedded(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "MCP DevDesk") {
 		t.Fatal("embedded dashboard marker not found")
+	}
+}
+
+func TestWebControlCanEnableMoveAndDisable(t *testing.T) {
+	server := newTestServer(t)
+	control := NewControlServer(server.Handler())
+	server.SetControlServer(control)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = control.Shutdown(ctx)
+	})
+
+	freePort := func() int {
+		for {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			port := listener.Addr().(*net.TCPAddr).Port
+			_ = listener.Close()
+			cfg := server.app.Config()
+			if port != cfg.AdminPort && port != cfg.MCPPort {
+				return port
+			}
+		}
+	}
+	firstPort := freePort()
+	secondPort := freePort()
+	for secondPort == firstPort {
+		secondPort = freePort()
+	}
+
+	update := func(enabled bool, port int) WebControlStatus {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{"enabled": enabled, "port": port})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/web-control", bytes.NewReader(body))
+		request.RemoteAddr = "127.0.0.1:45678"
+		request.Host = "127.0.0.1:17860"
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		server.server.Handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("web control update failed: %d %s", recorder.Code, recorder.Body.String())
+		}
+		var status WebControlStatus
+		if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
+
+	reachable := func(port int) bool {
+		client := &http.Client{Timeout: 250 * time.Millisecond}
+		response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/health", port))
+		if err != nil {
+			return false
+		}
+		_ = response.Body.Close()
+		return response.StatusCode == http.StatusOK
+	}
+	waitReachable := func(port int, wanted bool) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if reachable(port) == wanted {
+				return
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		t.Fatalf("port %d reachable=%v, want %v", port, reachable(port), wanted)
+	}
+
+	status := update(true, firstPort)
+	if !status.Enabled || !status.Running || status.Port != firstPort || !strings.Contains(status.URL, fmt.Sprintf(":%d/#/control", firstPort)) {
+		t.Fatalf("unexpected enabled status: %+v", status)
+	}
+	waitReachable(firstPort, true)
+
+	status = update(true, secondPort)
+	if !status.Enabled || !status.Running || status.Port != secondPort {
+		t.Fatalf("unexpected moved status: %+v", status)
+	}
+	waitReachable(secondPort, true)
+	waitReachable(firstPort, false)
+
+	status = update(false, secondPort)
+	if status.Enabled || status.Running || status.Port != secondPort || status.URL != "" {
+		t.Fatalf("unexpected disabled status: %+v", status)
+	}
+	waitReachable(secondPort, false)
+	if cfg := server.app.Config(); cfg.WebControlEnabled || cfg.WebControlPort != secondPort {
+		t.Fatalf("web control config not persisted: %+v", cfg)
+	}
+}
+
+func TestGenericConfigRejectsWebControlFields(t *testing.T) {
+	server := newTestServer(t)
+	request := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/config", bytes.NewBufferString(`{"webControlEnabled":true,"webControlPort":17861}`))
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "/api/web-control") {
+		t.Fatalf("generic config unexpectedly accepted web control fields: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 

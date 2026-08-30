@@ -12,6 +12,8 @@ type Config struct {
 	MCPPort                 int      `json:"mcpPort"`
 	AdminHost               string   `json:"adminHost"`
 	AdminPort               int      `json:"adminPort"`
+	WebControlEnabled       bool     `json:"webControlEnabled"`
+	WebControlPort          int      `json:"webControlPort"`
 	PermissionMode          string   `json:"permissionMode"`
 	FileScope               string   `json:"fileScope"`
 	ToolProfile             string   `json:"toolProfile"`
@@ -41,6 +43,8 @@ type PublicConfig struct {
 	MCPPort                 int      `json:"mcpPort"`
 	AdminHost               string   `json:"adminHost"`
 	AdminPort               int      `json:"adminPort"`
+	WebControlEnabled       bool     `json:"webControlEnabled"`
+	WebControlPort          int      `json:"webControlPort"`
 	PermissionMode          string   `json:"permissionMode"`
 	FileScope               string   `json:"fileScope"`
 	ToolProfile             string   `json:"toolProfile"`
@@ -71,6 +75,8 @@ func (c Config) Public() PublicConfig {
 		MCPPort:                 c.MCPPort,
 		AdminHost:               c.AdminHost,
 		AdminPort:               c.AdminPort,
+		WebControlEnabled:       c.WebControlEnabled,
+		WebControlPort:          c.WebControlPort,
 		PermissionMode:          c.PermissionMode,
 		FileScope:               c.FileScope,
 		ToolProfile:             c.ToolProfile,
@@ -98,6 +104,8 @@ type ConfigUpdate struct {
 	AllowedRoots            *[]string `json:"allowedRoots"`
 	MCPPort                 *int      `json:"mcpPort"`
 	AdminPort               *int      `json:"adminPort"`
+	WebControlEnabled       *bool     `json:"webControlEnabled"`
+	WebControlPort          *int      `json:"webControlPort"`
 	PermissionMode          *string   `json:"permissionMode"`
 	FileScope               *string   `json:"fileScope"`
 	ToolProfile             *string   `json:"toolProfile"`

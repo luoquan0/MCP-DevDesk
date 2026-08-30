@@ -27,6 +27,8 @@ type Server struct {
 	app     *application.App
 	desktop DesktopController
 	server  *http.Server
+	handler http.Handler
+	control *ControlServer
 }
 
 type DesktopController interface {
@@ -96,12 +98,15 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/system/pick-folder", s.handlePickFolder)
 	mux.HandleFunc("PUT /api/system/startup", s.handleStartup)
 	mux.HandleFunc("POST /api/ui/open", s.handleOpenUI)
+	mux.HandleFunc("GET /api/web-control", s.handleWebControlStatus)
+	mux.HandleFunc("PUT /api/web-control", s.handleUpdateWebControl)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.Handle("/", noCache(http.FileServer(http.FS(assets))))
 
+	s.handler = s.securityHeaders(s.localOnly(mux))
 	s.server = &http.Server{
 		Addr:              address,
-		Handler:           s.securityHeaders(s.localOnly(mux)),
+		Handler:           s.handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      2 * time.Minute,
@@ -110,6 +115,10 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	}
 	return s, nil
 }
+
+func (s *Server) Handler() http.Handler { return s.handler }
+
+func (s *Server) SetControlServer(control *ControlServer) { s.control = control }
 
 func (s *Server) ListenAndServe() error {
 	err := s.server.ListenAndServe()
@@ -456,6 +465,10 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if update.WebControlEnabled != nil || update.WebControlPort != nil {
+		writeError(w, http.StatusBadRequest, errors.New("web control settings must be updated through /api/web-control"))
+		return
+	}
 	requestedPort := update.MCPPort
 	update.MCPPort = nil
 	cfg, err := s.app.UpdateConfig(update)
@@ -737,6 +750,72 @@ func (s *Server) handleOpenUI(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"message": "desktop window opened"})
+}
+
+func (s *Server) handleWebControlStatus(w http.ResponseWriter, _ *http.Request) {
+	cfg := s.app.Config()
+	if s.control == nil {
+		writeJSON(w, http.StatusOK, WebControlStatus{
+			Enabled: cfg.WebControlEnabled,
+			Port:    cfg.WebControlPort,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.control.Status(cfg.WebControlEnabled, cfg.WebControlPort))
+}
+
+func (s *Server) handleUpdateWebControl(w http.ResponseWriter, r *http.Request) {
+	if s.control == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("web control service is unavailable"))
+		return
+	}
+	var request struct {
+		Enabled *bool `json:"enabled"`
+		Port    *int  `json:"port"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if request.Enabled == nil && request.Port == nil {
+		writeError(w, http.StatusBadRequest, errors.New("enabled or port is required"))
+		return
+	}
+
+	previous := s.app.Config()
+	enabled := previous.WebControlEnabled
+	port := previous.WebControlPort
+	if request.Enabled != nil {
+		enabled = *request.Enabled
+	}
+	if request.Port != nil {
+		port = *request.Port
+	}
+
+	updated, err := s.app.UpdateConfig(model.ConfigUpdate{
+		WebControlEnabled: &enabled,
+		WebControlPort:    &port,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.control.Apply(updated.WebControlEnabled, updated.WebControlPort); err != nil {
+		rollbackEnabled := previous.WebControlEnabled
+		rollbackPort := previous.WebControlPort
+		_, rollbackErr := s.app.UpdateConfig(model.ConfigUpdate{
+			WebControlEnabled: &rollbackEnabled,
+			WebControlPort:    &rollbackPort,
+		})
+		if rollbackErr != nil {
+			writeError(w, http.StatusConflict, fmt.Errorf("apply web control: %w; rollback config: %v", err, rollbackErr))
+			return
+		}
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, s.control.Status(updated.WebControlEnabled, updated.WebControlPort))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

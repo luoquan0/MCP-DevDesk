@@ -1468,6 +1468,145 @@ kbd {
   line-height: 1.55;
 }
 
+.web-control-settings-card,
+.web-control-card {
+  display: grid;
+  gap: 14px;
+}
+
+.web-control-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.web-control-port-field input {
+  width: 100%;
+}
+
+.web-control-page {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 48px;
+  display: grid;
+  gap: 18px;
+}
+
+.web-control-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 24px;
+  border: 1px solid var(--hairline);
+  border-radius: 22px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+}
+
+.web-control-brand,
+.web-control-hero-actions,
+.web-control-service-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.web-control-brand {
+  gap: 14px;
+}
+
+.web-control-logo {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-muted);
+  border: 1px solid var(--hairline);
+}
+
+.web-control-brand h1 {
+  margin: 2px 0 3px;
+  font-size: 22px;
+}
+
+.web-control-brand p,
+.web-control-card .card-heading p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.web-control-summary {
+  display: grid;
+  grid-template-columns: 0.7fr 1.4fr 1.2fr;
+  gap: 10px;
+}
+
+.web-control-summary > div,
+.web-control-path-box {
+  min-width: 0;
+  padding: 13px 15px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  display: grid;
+  gap: 5px;
+}
+
+.web-control-summary span,
+.web-control-path-box span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.web-control-summary code,
+.web-control-path-box code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.web-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 16px;
+}
+
+.web-control-prompts-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.web-control-card select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--surface-solid);
+  color: var(--text);
+}
+
+.web-control-service-actions {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 860px) {
+  .web-control-settings-grid,
+  .web-control-summary,
+  .web-control-grid,
+  .web-control-prompts-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .web-control-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .project-list-card .current-project-icon { width: 48px; height: 48px; border-radius: 14px; }
 .project-list-card h3 { font-size: 14px; }
 .project-list-card small { display: block; margin-top: 6px; color: var(--text-tertiary); font-size: 10px; }

@@ -59,7 +59,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.8.9") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.9.0") {
                 $ready = $true
                 break
             }
@@ -67,6 +67,31 @@ try {
         if ($Manager.HasExited) { break }
     }
     if (-not $ready) { throw "Manager did not become healthy" }
+
+    $webListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $webListener.Start()
+    $webPort = ([System.Net.IPEndPoint]$webListener.LocalEndpoint).Port
+    $webListener.Stop()
+    $webControl = Send-Json -Method "PUT" -Uri "$BaseUrl/api/web-control" -Body @{ enabled = $true; port = $webPort }
+    if ($webControl.StatusCode -ne 200) { throw "Web control enable endpoint failed" }
+    $webStatus = $webControl.Content | ConvertFrom-Json
+    if (-not $webStatus.enabled -or -not $webStatus.running -or $webStatus.port -ne $webPort -or $webStatus.url -notlike "*:$webPort/#/control") {
+        throw "Web control did not report the expected running state"
+    }
+    $webHealth = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/health"
+    $webHealthParsed = $webHealth.Content | ConvertFrom-Json
+    if ($webHealth.StatusCode -ne 200 -or -not $webHealthParsed.ok -or $webHealthParsed.version -ne "0.9.0") {
+        throw "Web control port did not expose the manager API"
+    }
+    $webPage = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/"
+    if ($webPage.StatusCode -ne 200 -or $webPage.Content -notlike "*MCP DevDesk*") {
+        throw "Web control port did not expose the embedded frontend"
+    }
+    $webControlOff = Send-Json -Method "PUT" -Uri "$BaseUrl/api/web-control" -Body @{ enabled = $false; port = $webPort }
+    $webStatusOff = $webControlOff.Content | ConvertFrom-Json
+    if ($webControlOff.StatusCode -ne 200 -or $webStatusOff.enabled -or $webStatusOff.running) {
+        throw "Web control disable endpoint failed"
+    }
 
     $promptSettings = Send-Json -Method "PUT" -Uri "$BaseUrl/api/projects/prompt-settings" -Body @{ enabled = $true; globalPrompt = "SMOKE_GLOBAL_PROMPT: finish the complete task before replying." }
     if ($promptSettings.StatusCode -ne 200) { throw "Global project prompt endpoint failed" }
@@ -115,7 +140,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.8.9" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.9.0" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

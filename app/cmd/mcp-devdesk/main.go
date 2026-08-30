@@ -95,6 +95,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize web server: %v", err)
 	}
+	controlServer := web.NewControlServer(server.Handler())
+	server.SetControlServer(controlServer)
+	if err := controlServer.Apply(cfg.WebControlEnabled, cfg.WebControlPort); err != nil {
+		log.Printf("web control startup failed: %v", err)
+	} else if cfg.WebControlEnabled {
+		log.Printf("web control listening on http://127.0.0.1:%d/#/control", cfg.WebControlPort)
+	}
 
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -167,6 +174,9 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
+	if err := controlServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("shutdown web control server: %v", err)
+	}
 	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Printf("shutdown web server: %v", err)
 	}

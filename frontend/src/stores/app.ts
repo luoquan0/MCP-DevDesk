@@ -24,6 +24,7 @@ import type {
   SecretUpdateRequest,
   ServiceStatus,
   TunnelInventory,
+  WebControlStatus,
 } from "@/types/api";
 
 export const useAppStore = defineStore("app", {
@@ -34,6 +35,7 @@ export const useAppStore = defineStore("app", {
     diagnostics: null as Diagnostics | null,
     projects: [] as Project[],
     projectPromptSettings: null as ProjectPromptSettings | null,
+    webControl: null as WebControlStatus | null,
     projectDetails: {} as Record<string, ProjectDetails>,
     projectDiffs: {} as Record<string, ProjectDiff>,
     projectHistories: {} as Record<string, GitHistory>,
@@ -62,6 +64,7 @@ export const useAppStore = defineStore("app", {
           this.loadDiagnostics(),
           this.loadProjects(),
           this.loadProjectPromptSettings(),
+          this.loadWebControl(),
           this.loadInstances(),
         ]);
       } finally {
@@ -100,6 +103,24 @@ export const useAppStore = defineStore("app", {
     async loadProjectPromptSettings() {
       this.projectPromptSettings = await api<ProjectPromptSettings>("/api/projects/prompt-settings");
       return this.projectPromptSettings;
+    },
+    async loadWebControl() {
+      this.webControl = await api<WebControlStatus>("/api/web-control");
+      return this.webControl;
+    },
+    async saveWebControl(enabled: boolean, port: number) {
+      const ui = useUiStore();
+      this.webControl = await this.runAction("save-web-control", () => api<WebControlStatus>("/api/web-control", {
+        method: "PUT",
+        body: { enabled, port } as unknown as BodyInit,
+      }));
+      await this.loadConfig();
+      ui.toast(
+        enabled ? "网页控制已开启" : "网页控制已关闭",
+        enabled ? `本机网页端口：${port}` : "浏览器控制入口已停止监听。",
+        "success",
+      );
+      return this.webControl;
     },
     async saveGlobalProjectPrompt(enabled: boolean, globalPrompt: string) {
       const ui = useUiStore();

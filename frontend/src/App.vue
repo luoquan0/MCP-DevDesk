@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from "vue";
+import { computed, onBeforeUnmount, onMounted } from "vue";
+import { RouterView, useRoute } from "vue-router";
 import AppShell from "@/components/layout/AppShell.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import ToastStack from "@/components/ui/ToastStack.vue";
@@ -8,6 +9,8 @@ import { useUiStore } from "@/stores/ui";
 
 const appStore = useAppStore();
 const uiStore = useUiStore();
+const route = useRoute();
+const standalonePage = computed(() => route.meta.standalone === true);
 let statusPollingTimer: number | undefined;
 let instancePollingTimer: number | undefined;
 let instanceRefreshPending = false;
@@ -49,7 +52,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <AppShell />
+  <RouterView v-if="standalonePage" />
+  <AppShell v-else />
   <ToastStack />
   <ConfirmDialog />
 </template>

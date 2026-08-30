@@ -92,6 +92,8 @@ export interface Config {
   mcpPort: number;
   adminHost: string;
   adminPort: number;
+  webControlEnabled: boolean;
+  webControlPort: number;
   coreMode: CoreMode;
   coreExecutable: string;
   goCoreExecutable: string;
@@ -141,6 +143,14 @@ export interface ProjectPromptSettings {
   enabled: boolean;
   globalPrompt: string;
   maxPromptBytes: number;
+}
+
+export interface WebControlStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  url?: string;
+  lastError?: string;
 }
 
 export interface Worktree { path: string; head: string; branch?: string; bare: boolean; detached: boolean; }

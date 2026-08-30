@@ -76,6 +76,8 @@ func (s *Store) defaults() model.Config {
 		MCPPort:                 8765,
 		AdminHost:               "127.0.0.1",
 		AdminPort:               17860,
+		WebControlEnabled:       false,
+		WebControlPort:          17861,
 		PermissionMode:          "trusted",
 		FileScope:               "workspace",
 		ToolProfile:             "full",
@@ -128,6 +130,9 @@ func (s *Store) normalize(cfg *model.Config) {
 	}
 	if cfg.AdminPort == 0 {
 		cfg.AdminPort = 17860
+	}
+	if cfg.WebControlPort == 0 {
+		cfg.WebControlPort = 17861
 	}
 	if cfg.PermissionMode == "" {
 		cfg.PermissionMode = "trusted"
@@ -201,8 +206,14 @@ func Validate(cfg model.Config) error {
 	if cfg.MCPPort < 1024 || cfg.MCPPort > 65535 {
 		return errors.New("MCP port must be between 1024 and 65535")
 	}
+	if cfg.WebControlPort < 1024 || cfg.WebControlPort > 65535 {
+		return errors.New("web control port must be between 1024 and 65535")
+	}
 	if cfg.AdminPort == cfg.MCPPort {
 		return errors.New("admin and MCP ports must differ")
+	}
+	if cfg.WebControlEnabled && (cfg.WebControlPort == cfg.AdminPort || cfg.WebControlPort == cfg.MCPPort) {
+		return errors.New("web control port must differ from admin and MCP ports")
 	}
 	if cfg.Workspace == "" {
 		return errors.New("workspace is required")
@@ -341,6 +352,12 @@ func applyUpdate(cfg *model.Config, update model.ConfigUpdate) {
 	}
 	if update.AdminPort != nil {
 		cfg.AdminPort = *update.AdminPort
+	}
+	if update.WebControlEnabled != nil {
+		cfg.WebControlEnabled = *update.WebControlEnabled
+	}
+	if update.WebControlPort != nil {
+		cfg.WebControlPort = *update.WebControlPort
 	}
 	if update.PermissionMode != nil {
 		cfg.PermissionMode = *update.PermissionMode

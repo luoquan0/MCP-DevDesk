@@ -11,5 +11,6 @@ export const router = createRouter({
     { path: "/logs", name: "logs", component: () => import("@/pages/LogsPage.vue") },
     { path: "/security", name: "security", component: () => import("@/pages/SecurityPage.vue") },
     { path: "/settings", name: "settings", component: () => import("@/pages/SettingsPage.vue") },
+    { path: "/control", name: "control", component: () => import("@/pages/ControlPage.vue"), meta: { standalone: true } },
   ],
 });
