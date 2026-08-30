@@ -465,6 +465,45 @@ func TestSecretGenerateAndUpdateEndpoints(t *testing.T) {
 	}
 }
 
+func TestProjectPromptSettingsAndProjectPromptEndpoints(t *testing.T) {
+	server := newTestServer(t)
+	projects := server.app.Projects()
+	if len(projects) == 0 {
+		t.Fatal("expected at least one project")
+	}
+	project := projects[0]
+
+	globalRequest := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/projects/prompt-settings", bytes.NewBufferString(`{"globalPrompt":"finish the whole task before replying"}`))
+	globalRequest.RemoteAddr = "127.0.0.1:45678"
+	globalRequest.Host = "127.0.0.1:17860"
+	globalRequest.Header.Set("Content-Type", "application/json")
+	globalRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(globalRecorder, globalRequest)
+	if globalRecorder.Code != http.StatusOK || !strings.Contains(globalRecorder.Body.String(), "finish the whole task before replying") {
+		t.Fatalf("global prompt update failed: %d %s", globalRecorder.Code, globalRecorder.Body.String())
+	}
+
+	projectRequest := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/api/projects/"+project.ID, bytes.NewBufferString(`{"prompt":"run tests before reporting completion"}`))
+	projectRequest.SetPathValue("id", project.ID)
+	projectRequest.RemoteAddr = "127.0.0.1:45678"
+	projectRequest.Host = "127.0.0.1:17860"
+	projectRequest.Header.Set("Content-Type", "application/json")
+	projectRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(projectRecorder, projectRequest)
+	if projectRecorder.Code != http.StatusOK || !strings.Contains(projectRecorder.Body.String(), "run tests before reporting completion") {
+		t.Fatalf("project prompt update failed: %d %s", projectRecorder.Code, projectRecorder.Body.String())
+	}
+
+	settingsRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/projects/prompt-settings", nil)
+	settingsRequest.RemoteAddr = "127.0.0.1:45678"
+	settingsRequest.Host = "127.0.0.1:17860"
+	settingsRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(settingsRecorder, settingsRequest)
+	if settingsRecorder.Code != http.StatusOK || !strings.Contains(settingsRecorder.Body.String(), `"maxPromptBytes":32768`) {
+		t.Fatalf("prompt settings read failed: %d %s", settingsRecorder.Code, settingsRecorder.Body.String())
+	}
+}
+
 func runWebTestGit(t *testing.T, root string, args ...string) string {
 	t.Helper()
 	command := append([]string{"-C", root}, args...)

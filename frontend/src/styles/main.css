@@ -1450,6 +1450,24 @@ kbd {
   gap: 14px;
 }
 
+.project-prompt-global-card,
+.project-prompt-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.project-prompt-editor {
+  grid-column: 1 / -1;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+
+.project-prompt-field textarea {
+  min-height: 154px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
 .project-list-card .current-project-icon { width: 48px; height: 48px; border-radius: 14px; }
 .project-list-card h3 { font-size: 14px; }
 .project-list-card small { display: block; margin-top: 6px; color: var(--text-tertiary); font-size: 10px; }

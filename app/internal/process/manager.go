@@ -30,13 +30,17 @@ type Manager struct {
 	dataDir        string
 	secrets        *secrets.Store
 	loggingEnabled devlogging.EnabledFunc
+	instructions   func(string) string
 	mcp            managedProcess
 	tunnel         managedProcess
 	login          managedProcess
 }
 
-func NewManager(rootDir, dataDir string, secretStore *secrets.Store, loggingEnabled devlogging.EnabledFunc) *Manager {
+func NewManager(rootDir, dataDir string, secretStore *secrets.Store, loggingEnabled devlogging.EnabledFunc, instructions ...func(string) string) *Manager {
 	m := &Manager{rootDir: rootDir, dataDir: dataDir, secrets: secretStore, loggingEnabled: loggingEnabled}
+	if len(instructions) > 0 {
+		m.instructions = instructions[0]
+	}
 	m.mcp.status.Name = "mcp"
 	m.tunnel.status.Name = "tunnel"
 	m.login.status.Name = "cloudflare-login"
@@ -65,7 +69,20 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 		baseURL = "https://" + cfg.Domain
 	}
 
-	args := mcpArguments(cfg, m.dataDir, baseURL)
+	instructionsFile := ""
+	if cfg.CoreMode == "go" && m.instructions != nil {
+		instructionsFile = filepath.Join(m.dataDir, "project-instructions.md")
+		content := strings.TrimSpace(m.instructions(cfg.Workspace))
+		if content == "" {
+			_ = os.Remove(instructionsFile)
+			instructionsFile = ""
+		} else {
+			if err := os.WriteFile(instructionsFile, []byte(content+"\n"), 0o600); err != nil {
+				return fmt.Errorf("write project instructions: %w", err)
+			}
+		}
+	}
+	args := mcpArguments(cfg, m.dataDir, baseURL, instructionsFile)
 
 	env := mcpEnvironment(cfg, values, baseURL)
 
@@ -81,7 +98,7 @@ func selectedMCPExecutable(cfg model.Config) string {
 	return cfg.CoreExecutable
 }
 
-func mcpArguments(cfg model.Config, dataDir, baseURL string) []string {
+func mcpArguments(cfg model.Config, dataDir, baseURL, instructionsFile string) []string {
 	args := []string{
 		"--workspace", cfg.Workspace,
 		"--host", cfg.MCPHost,
@@ -98,6 +115,9 @@ func mcpArguments(cfg model.Config, dataDir, baseURL string) []string {
 			"--logging-config", filepath.Join(dataDir, "config.json"),
 			"--file-scope", cfg.FileScope,
 		)
+		if strings.TrimSpace(instructionsFile) != "" {
+			args = append(args, "--instructions-file", instructionsFile)
+		}
 		for _, root := range cfg.AllowedRoots {
 			if strings.TrimSpace(root) != "" {
 				args = append(args, "--allowed-root", root)

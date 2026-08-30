@@ -132,8 +132,14 @@ export interface Project {
   id: string;
   name: string;
   path: string;
+  prompt?: string;
   addedAt: string;
   lastOpenedAt: string;
+}
+
+export interface ProjectPromptSettings {
+  globalPrompt: string;
+  maxPromptBytes: number;
 }
 
 export interface Worktree { path: string; head: string; branch?: string; bare: boolean; detached: boolean; }

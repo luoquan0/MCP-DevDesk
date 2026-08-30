@@ -40,7 +40,7 @@ func (a *App) loadManagedInstances() error {
 		runtime := &managedInstance{config: cfgStore}
 		runtime.process = processmanager.NewManager(a.rootDir, dataDir, a.secrets, func() bool {
 			return cfgStore.Get().LoggingEnabled
-		})
+		}, a.projects.EffectivePrompt)
 		a.instanceRuntime[record.ID] = runtime
 	}
 	return nil
@@ -174,7 +174,7 @@ func (a *App) CreateInstance(ctx context.Context, request model.MCPInstanceCreat
 	runtime := &managedInstance{config: cfgStore}
 	runtime.process = processmanager.NewManager(a.rootDir, dataDir, a.secrets, func() bool {
 		return cfgStore.Get().LoggingEnabled
-	})
+	}, a.projects.EffectivePrompt)
 	a.instanceMu.Lock()
 	a.instanceRuntime[record.ID] = runtime
 	a.instanceMu.Unlock()

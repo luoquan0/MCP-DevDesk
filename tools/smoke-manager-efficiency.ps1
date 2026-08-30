@@ -54,7 +54,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.8.3") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.8.4") {
                 $ready = $true
                 break
             }
@@ -62,6 +62,30 @@ try {
         if ($Manager.HasExited) { break }
     }
     if (-not $ready) { throw "Manager did not become healthy" }
+
+    $promptSettings = Send-Json -Method "PUT" -Uri "$BaseUrl/api/projects/prompt-settings" -Body @{ globalPrompt = "SMOKE_GLOBAL_PROMPT: finish the complete task before replying." }
+    if ($promptSettings.StatusCode -ne 200) { throw "Global project prompt endpoint failed" }
+    $projects = (Send-Json -Method "GET" -Uri "$BaseUrl/api/projects").Content | ConvertFrom-Json
+    $project = @($projects)[0]
+    if (-not $project.id) { throw "Manager returned no project for prompt smoke test" }
+    $projectPrompt = Send-Json -Method "PATCH" -Uri "$BaseUrl/api/projects/$($project.id)" -Body @{ prompt = "SMOKE_PROJECT_PROMPT: run validation before reporting completion." }
+    if ($projectPrompt.StatusCode -ne 200) { throw "Project prompt endpoint failed" }
+
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $mcpPort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    $listener.Stop()
+    $configUpdate = Send-Json -Method "PUT" -Uri "$BaseUrl/api/config" -Body @{ coreMode = "go"; mcpPort = $mcpPort }
+    if ($configUpdate.StatusCode -ne 200) { throw "Failed to select Go core for prompt smoke test" }
+    $startMcp = Send-Json -Method "POST" -Uri "$BaseUrl/api/services/start"
+    if ($startMcp.StatusCode -ne 200) { throw "Failed to start Go core for prompt smoke test" }
+    $instructionsPath = Join-Path $TestRoot "data\devdesk\project-instructions.md"
+    if (-not (Test-Path -LiteralPath $instructionsPath)) { throw "Managed project instructions file was not generated" }
+    $instructions = Get-Content -LiteralPath $instructionsPath -Raw
+    if ($instructions -notlike "*SMOKE_GLOBAL_PROMPT*" -or $instructions -notlike "*SMOKE_PROJECT_PROMPT*") {
+        throw "Managed project instructions did not compose global and project prompts"
+    }
+    [void](Send-Json -Method "POST" -Uri "$BaseUrl/api/services/stop")
 
     $primary = (Send-Json -Method "GET" -Uri "$BaseUrl/api/instances/primary").Content | ConvertFrom-Json
     $targetCore = if ($primary.coreMode -eq "go") { "legacy" } else { "go" }
@@ -80,7 +104,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.8.3" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.8.4" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

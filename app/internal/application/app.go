@@ -83,7 +83,7 @@ func New(rootDir, dataDir string) (*App, error) {
 		secrets: secretStore,
 		process: processmanager.NewManager(rootDir, dataDir, secretStore, func() bool {
 			return configStore.Get().LoggingEnabled
-		}),
+		}, projectsStore.EffectivePrompt),
 		projects:        projectsStore,
 		instances:       instanceStore,
 		tunnel:          tunnel.NewClient(),
@@ -100,6 +100,21 @@ func (a *App) RootDir() string { return a.rootDir }
 func (a *App) DataDir() string { return a.dataDir }
 
 func (a *App) Projects() []projectstore.Project { return a.projects.List() }
+
+func (a *App) ProjectPromptSettings() projectstore.PromptSettings {
+	return projectstore.PromptSettings{GlobalPrompt: a.projects.GlobalPrompt()}
+}
+
+func (a *App) UpdateGlobalProjectPrompt(prompt string) (projectstore.PromptSettings, error) {
+	if err := a.projects.SetGlobalPrompt(prompt); err != nil {
+		return projectstore.PromptSettings{}, err
+	}
+	return a.ProjectPromptSettings(), nil
+}
+
+func (a *App) UpdateProjectPrompt(id, prompt string) (projectstore.Project, error) {
+	return a.projects.UpdatePrompt(id, prompt)
+}
 
 func (a *App) AddProject(name, path string) (projectstore.Project, error) {
 	return a.projects.Add(name, path)

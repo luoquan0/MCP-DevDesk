@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
@@ -19,6 +19,9 @@ const browsingProject = ref(false);
 const editingId = ref("");
 const editingPath = ref("");
 const browsingEditId = ref("");
+const promptEditingId = ref("");
+const promptDraft = ref("");
+const globalPromptDraft = ref("");
 const selectedId = ref("");
 const worktreePath = ref("");
 const worktreeBranch = ref("");
@@ -26,6 +29,55 @@ const normalizePath = (value = "") => value.trim().replace(/\\/g, "/").replace(/
 const isActive = (path: string) => normalizePath(path) === normalizePath(app.config?.workspace);
 const currentProject = computed(() => app.projects.find((project) => isActive(project.path)));
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+const completionPromptTemplate = `执行要求：
+1. 收到用户任务后，先完整理解并持续执行，直到当前任务全部完成，或遇到必须由用户提供信息、授权或外部条件才能继续的真实阻塞点。
+2. 不要把同一个任务拆成“下一阶段再做”并提前向用户汇报；只要当前环境允许继续，就直接继续执行，不要停下来询问是否继续。
+3. 在所有可执行步骤完成前，不要发送仅表示进度、计划、“接下来我会……”或“进入下一阶段”的最终回复。
+4. 任务需要读取项目、修改代码、调用工具、测试、构建、打包或验证时，应连续完成这些步骤后再与用户对话。
+5. 最终回复只总结已经完成的事项、验证结果和真实存在的阻塞项。没有阻塞时，不要把本轮可以完成的工作留到下一轮。
+6. 用户明确要求只分析、只评估或不要修改时，以用户当前指令为准。`;
+const globalPromptBytes = computed(() => new TextEncoder().encode(globalPromptDraft.value).length);
+const projectPromptBytes = computed(() => new TextEncoder().encode(promptDraft.value).length);
+
+watch(() => app.projectPromptSettings?.globalPrompt, (value) => {
+  globalPromptDraft.value = value || "";
+}, { immediate: true });
+
+async function saveGlobalPrompt() {
+  try {
+    await app.saveGlobalProjectPrompt(globalPromptDraft.value);
+  } catch (error) {
+    ui.toast("保存全局项目提示词失败", errorMessage(error), "danger");
+  }
+}
+
+function useGlobalCompletionTemplate() {
+  globalPromptDraft.value = completionPromptTemplate;
+}
+
+function startPromptEdit(project: Project) {
+  promptEditingId.value = project.id;
+  promptDraft.value = project.prompt || "";
+  editingId.value = "";
+}
+
+function cancelPromptEdit() {
+  promptEditingId.value = "";
+  promptDraft.value = "";
+}
+
+async function saveProjectPrompt(project: Project) {
+  try {
+    await app.updateProjectPrompt(project.id, promptDraft.value);
+    cancelPromptEdit();
+  } catch (error) {
+    ui.toast("保存项目提示词失败", errorMessage(error), "danger");
+  }
+}
+
+function useProjectCompletionTemplate() {
+  promptDraft.value = completionPromptTemplate;
+}
 
 async function addProject() {
   const path = projectPath.value.trim();
@@ -218,6 +270,29 @@ async function rollbackCommit(commit: GitCommit) {
       <template #actions><AppButton tone="primary" icon="projects" @click="showAdd = !showAdd">添加项目</AppButton></template>
     </PageHeader>
 
+    <AppCard class="project-prompt-global-card">
+      <div class="card-heading">
+        <div>
+          <span class="eyebrow">Global AI instructions</span>
+          <h3>全局项目提示词</h3>
+          <p>对所有项目生效。单项目提示词会在此基础上继续叠加，适合统一限定 AI 的执行方式、完成标准和沟通规则。</p>
+        </div>
+        <StatusPill :tone="globalPromptDraft.trim() ? 'success' : 'neutral'">{{ globalPromptDraft.trim() ? '已启用' : '未设置' }}</StatusPill>
+      </div>
+      <label class="field project-prompt-field">
+        <span>提示词内容</span>
+        <textarea v-model="globalPromptDraft" rows="8" spellcheck="false" placeholder="例如：任务未完成前不要只汇报进度，能继续执行时直接完成所有步骤后再回复用户。" />
+        <small>{{ globalPromptBytes }} / {{ app.projectPromptSettings?.maxPromptBytes || 32768 }} bytes · Go 主核心会在新的 MCP 会话中自动注入。</small>
+      </label>
+      <div class="form-footer">
+        <small>保存不会中断当前会话；正在运行的 Go 核心需要重新启动并由客户端重新建立 MCP 会话后加载新提示词。Python 兼容核心不保证支持该注入机制。</small>
+        <div class="form-footer-actions">
+          <AppButton tone="secondary" @click="useGlobalCompletionTemplate">使用“任务完成后再回复”模板</AppButton>
+          <AppButton tone="primary" :loading="app.actionPending === 'save-global-project-prompt'" @click="saveGlobalPrompt">保存全局提示词</AppButton>
+        </div>
+      </div>
+    </AppCard>
+
     <AppCard class="current-project-card">
       <div class="current-project-icon"><AppIcon name="folder" :size="30" /></div>
       <div class="current-project-copy">
@@ -260,7 +335,7 @@ async function rollbackCommit(commit: GitCommit) {
       <AppCard v-for="project in app.projects" :key="project.id" class="project-list-card">
         <div class="current-project-icon"><AppIcon name="folder" :size="24" /></div>
         <div class="current-project-copy">
-          <div class="current-project-title"><h3>{{ project.name }}</h3><StatusPill v-if="isActive(project.path)" tone="success">当前活动</StatusPill></div>
+          <div class="current-project-title"><h3>{{ project.name }}</h3><StatusPill v-if="isActive(project.path)" tone="success">当前活动</StatusPill><StatusPill v-if="project.prompt" tone="info">已设置提示词</StatusPill></div>
           <div v-if="editingId === project.id" class="project-path-editor">
             <div class="path-picker-row">
               <input v-model="editingPath" :aria-label="`${project.name} 项目路径`" spellcheck="false" />
@@ -278,10 +353,29 @@ async function rollbackCommit(commit: GitCommit) {
           </template>
           <template v-else>
             <AppButton tone="secondary" icon="folder" @click="startEditProject(project)">修改路径</AppButton>
+            <AppButton tone="secondary" icon="settings" @click="startPromptEdit(project)">提示词</AppButton>
             <AppButton tone="secondary" icon="info" :loading="app.actionPending === `inspect-${project.id}`" @click="inspect(project.id)">详情</AppButton>
             <AppButton v-if="!isActive(project.path)" tone="primary" icon="restart" :loading="app.actionPending === `activate-${project.id}`" @click="switchProject(project.id)">切换</AppButton>
             <AppButton v-if="!isActive(project.path)" tone="quiet" :loading="app.actionPending === `remove-${project.id}`" @click="removeProject(project.id, project.name)">移除</AppButton>
           </template>
+        </div>
+        <div v-if="promptEditingId === project.id" class="project-prompt-editor">
+          <div class="card-heading">
+            <div><span class="eyebrow">Project AI instructions</span><h3>{{ project.name }} · 项目提示词</h3><p>只对该项目生效，并叠加在全局项目提示词之后。</p></div>
+          </div>
+          <label class="field project-prompt-field">
+            <span>项目专属提示词</span>
+            <textarea v-model="promptDraft" rows="8" spellcheck="false" placeholder="留空表示只使用全局项目提示词。" />
+            <small>{{ projectPromptBytes }} / {{ app.projectPromptSettings?.maxPromptBytes || 32768 }} bytes</small>
+          </label>
+          <div class="form-footer">
+            <small>保存后不会修改项目目录中的任何文件。新的 Go MCP 会话会自动加载全局提示词 + 当前项目提示词。</small>
+            <div class="form-footer-actions">
+              <AppButton tone="quiet" @click="cancelPromptEdit">取消</AppButton>
+              <AppButton tone="secondary" @click="useProjectCompletionTemplate">使用任务完成模板</AppButton>
+              <AppButton tone="primary" :loading="app.actionPending === `prompt-${project.id}`" @click="saveProjectPrompt(project)">保存项目提示词</AppButton>
+            </div>
+          </div>
         </div>
       </AppCard>
     </section>

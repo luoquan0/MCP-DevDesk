@@ -372,7 +372,7 @@ func TestProjectRulesAreIncludedInInitializeInstructions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Use the project test command."), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	server := mustNewServer(t, Options{Workspace: workspace})
+	server := mustNewServer(t, Options{Workspace: workspace, ManagedInstructions: "Finish all executable steps before replying to the user."})
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
 
@@ -392,8 +392,13 @@ func TestProjectRulesAreIncludedInInitializeInstructions(t *testing.T) {
 		} `json:"result"`
 	}
 	decodeJSON(t, response.Body, &initialized)
-	if !strings.Contains(initialized.Result.Instructions, "AGENTS.md") || !strings.Contains(initialized.Result.Instructions, "Use the project test command") {
+	if !strings.Contains(initialized.Result.Instructions, "Finish all executable steps before replying") ||
+		!strings.Contains(initialized.Result.Instructions, "AGENTS.md") ||
+		!strings.Contains(initialized.Result.Instructions, "Use the project test command") {
 		t.Fatalf("project instructions were not loaded: %q", initialized.Result.Instructions)
+	}
+	if strings.Index(initialized.Result.Instructions, "Finish all executable steps before replying") < strings.Index(initialized.Result.Instructions, "Use the project test command") {
+		t.Fatalf("managed project instructions must be appended after repository guidance: %q", initialized.Result.Instructions)
 	}
 }
 

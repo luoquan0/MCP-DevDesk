@@ -14,6 +14,8 @@ Add-Type -AssemblyName System.Net.Http
 
 $DataDir = Join-Path $env:TEMP ("mcp-devdesk-smoke-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+$InstructionsFile = Join-Path $DataDir "managed-instructions.md"
+Set-Content -LiteralPath $InstructionsFile -Encoding UTF8 -NoNewline -Value "SMOKE_MANAGED_PROJECT_PROMPT: finish all executable steps before replying."
 $BaseUrl = "http://127.0.0.1:$Port"
 $RedirectUri = "http://127.0.0.1:43210/callback"
 $OwnerPassword = "smoke-owner-password"
@@ -64,7 +66,8 @@ function Start-Core {
     $startInfo.RedirectStandardError = $true
     $quotedWorkspace = '"' + ($Workspace -replace '"', '\"') + '"'
     $quotedDataDir = '"' + ($DataDir -replace '"', '\"') + '"'
-    $startInfo.Arguments = "--workspace $quotedWorkspace --host 127.0.0.1 --port $Port --permission-mode safe --tool-profile full --oauth-mode --data-dir $quotedDataDir --server-url $BaseUrl"
+    $quotedInstructions = '"' + ($InstructionsFile -replace '"', '\"') + '"'
+    $startInfo.Arguments = "--workspace $quotedWorkspace --host 127.0.0.1 --port $Port --permission-mode safe --tool-profile full --oauth-mode --data-dir $quotedDataDir --server-url $BaseUrl --instructions-file $quotedInstructions"
     $startInfo.EnvironmentVariables["CODING_TOOLS_MCP_OAUTH_PASSWORD"] = $OwnerPassword
     $startInfo.EnvironmentVariables["CODING_TOOLS_MCP_OAUTH_CLIENT_ID"] = "smoke-static-client"
     $startInfo.EnvironmentVariables["CODING_TOOLS_MCP_OAUTH_TOKEN_SECRET"] = $TokenSecret
@@ -80,7 +83,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.8.3") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.8.4") { return }
             }
         } catch {}
         if ($started.HasExited) { break }
@@ -203,6 +206,7 @@ try {
     if ($initialize.Status -ne 200) { throw "MCP initialize failed: $($initialize.Status) $($initialize.Body)" }
     $initialized = $initialize.Body | ConvertFrom-Json
     if ($initialized.result.protocolVersion -ne "2025-06-18") { throw "MCP protocol negotiation failed" }
+    if ([string]$initialized.result.instructions -notlike "*SMOKE_MANAGED_PROJECT_PROMPT*") { throw "Managed project prompt was not included in MCP initialize instructions" }
     $sessionId = [string]::Join("", $initialize.Response.Headers.GetValues("Mcp-Session-Id"))
     if (-not $sessionId) { throw "MCP initialize returned no session ID" }
     $mcpHeaders["Mcp-Session-Id"] = $sessionId
@@ -270,7 +274,7 @@ try {
     if ($batchCall.Status -ne 200) { throw "read_files call failed: $($batchCall.Status) $($batchCall.Body)" }
     $batchResult = ($batchCall.Body | ConvertFrom-Json).result
     if ($batchResult.isError -or $batchResult.structuredContent.succeeded -ne 2 -or
-        $batchResult.structuredContent.files[1].content -notlike '*0.8.3*') {
+        $batchResult.structuredContent.files[1].content -notlike '*0.8.4*') {
         throw "read_files returned an unexpected result: $($batchCall.Body)"
     }
 

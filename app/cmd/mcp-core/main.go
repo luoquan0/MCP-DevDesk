@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"mcp-devdesk/internal/buildinfo"
 	"mcp-devdesk/internal/mcpcore"
@@ -34,6 +35,7 @@ func main() {
 	serverURL := flag.String("server-url", os.Getenv("CODING_TOOLS_MCP_SERVER_URL"), "public server base URL used for OAuth metadata")
 	auditPath := flag.String("audit-path", "", "JSONL audit log path")
 	loggingConfig := flag.String("logging-config", "", "MCP DevDesk config file used to enable or disable audit logging")
+	instructionsFile := flag.String("instructions-file", "", "UTF-8 MCP DevDesk managed project instructions file")
 	toolProfile := flag.String("tool-profile", envOrDefault("CODING_TOOLS_MCP_TOOL_PROFILE", "full"), "full, read-only, or compat-readonly-all")
 	flag.Parse()
 
@@ -65,6 +67,20 @@ func main() {
 	if resolvedAuditPath == "" {
 		resolvedAuditPath = filepath.Join(resolvedDataDir, "logs", "mcp-audit.jsonl")
 	}
+	managedInstructions := ""
+	if path := strings.TrimSpace(*instructionsFile); path != "" {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			log.Fatalf("read instructions file: %v", readErr)
+		}
+		if len(raw) > 96*1024 {
+			log.Fatalf("instructions file cannot exceed 98304 bytes")
+		}
+		if !utf8.Valid(raw) {
+			log.Fatalf("instructions file must be valid UTF-8")
+		}
+		managedInstructions = strings.TrimSpace(string(raw))
+	}
 
 	baseURL := strings.TrimSuffix(strings.TrimSpace(*serverURL), "/")
 	if baseURL == "" {
@@ -93,18 +109,19 @@ func main() {
 	}
 
 	core, err := mcpcore.New(mcpcore.Options{
-		Name:           "mcp-devdesk-go-core",
-		Version:        buildinfo.Version,
-		Workspace:      resolvedWorkspace,
-		PermissionMode: *permissionMode,
-		AllowNetwork:   *allowNetwork,
-		AuditPath:      resolvedAuditPath,
-		LoggingConfig:  strings.TrimSpace(*loggingConfig),
-		FileScope:      *fileScope,
-		AllowedRoots:   append([]string(nil), allowedRoots...),
-		ToolProfile:    *toolProfile,
-		OAuth:          oauthOptions,
-		AllowedOrigins: []string{issuerURL},
+		Name:                "mcp-devdesk-go-core",
+		Version:             buildinfo.Version,
+		Workspace:           resolvedWorkspace,
+		ManagedInstructions: managedInstructions,
+		PermissionMode:      *permissionMode,
+		AllowNetwork:        *allowNetwork,
+		AuditPath:           resolvedAuditPath,
+		LoggingConfig:       strings.TrimSpace(*loggingConfig),
+		FileScope:           *fileScope,
+		AllowedRoots:        append([]string(nil), allowedRoots...),
+		ToolProfile:         *toolProfile,
+		OAuth:               oauthOptions,
+		AllowedOrigins:      []string{issuerURL},
 	})
 	if err != nil {
 		log.Fatal(err)

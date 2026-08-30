@@ -64,15 +64,16 @@ func TestGoCoreLaunchConfiguration(t *testing.T) {
 	if selected := selectedMCPExecutable(cfg); selected != cfg.GoCoreExecutable {
 		t.Fatalf("selected executable = %q", selected)
 	}
-	args := mcpArguments(cfg, dataDir, "https://mcp.example")
+	args := mcpArguments(cfg, dataDir, "https://mcp.example", `C:\data\project-instructions.md`)
 	wantPairs := map[string]string{
-		"--workspace":       cfg.Workspace,
-		"--host":            cfg.MCPHost,
-		"--port":            "8765",
-		"--permission-mode": cfg.PermissionMode,
-		"--data-dir":        dataDir,
-		"--server-url":      "https://mcp.example",
-		"--file-scope":      cfg.FileScope,
+		"--workspace":         cfg.Workspace,
+		"--host":              cfg.MCPHost,
+		"--port":              "8765",
+		"--permission-mode":   cfg.PermissionMode,
+		"--data-dir":          dataDir,
+		"--server-url":        "https://mcp.example",
+		"--file-scope":        cfg.FileScope,
+		"--instructions-file": `C:\data\project-instructions.md`,
 	}
 	for flag, expected := range wantPairs {
 		if !argumentPairExists(args, flag, expected) {
@@ -100,7 +101,7 @@ func TestLegacyCoreRemainsSelectable(t *testing.T) {
 	if selected := selectedMCPExecutable(cfg); selected != cfg.CoreExecutable {
 		t.Fatalf("selected executable = %q", selected)
 	}
-	args := mcpArguments(cfg, t.TempDir(), "http://127.0.0.1:8765")
+	args := mcpArguments(cfg, t.TempDir(), "http://127.0.0.1:8765", "")
 	if !argumentPairExists(args, "--shell-env-inherit", "core") {
 		t.Fatalf("legacy safe arguments missing shell env restriction: %#v", args)
 	}

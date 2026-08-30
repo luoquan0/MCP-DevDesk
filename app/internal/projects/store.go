@@ -17,24 +17,42 @@ type Project struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	Path         string    `json:"path"`
+	Prompt       string    `json:"prompt,omitempty"`
 	AddedAt      time.Time `json:"addedAt"`
 	LastOpenedAt time.Time `json:"lastOpenedAt"`
 }
 
 type Store struct {
-	mu   sync.RWMutex
-	path string
-	data []Project
+	mu                 sync.RWMutex
+	path               string
+	promptSettingsPath string
+	globalPrompt       string
+	data               []Project
 }
 
-const maxProjects = 256
+const (
+	maxProjects    = 256
+	MaxPromptBytes = 32 * 1024
+)
+
+type PromptSettings struct {
+	GlobalPrompt string `json:"globalPrompt"`
+}
 
 func NewStore(dataDir, initialWorkspace string) (*Store, error) {
-	s := &Store{path: filepath.Join(dataDir, "projects.json")}
+	s := &Store{
+		path:               filepath.Join(dataDir, "projects.json"),
+		promptSettingsPath: filepath.Join(dataDir, "project-prompts.json"),
+	}
 	changed := false
 	if raw, err := os.ReadFile(s.path); err == nil {
 		if err := json.Unmarshal(raw, &s.data); err != nil {
 			return nil, fmt.Errorf("parse projects: %w", err)
+		}
+		for _, project := range s.data {
+			if len([]byte(project.Prompt)) > MaxPromptBytes {
+				return nil, fmt.Errorf("project %q prompt exceeds %d bytes", project.Name, MaxPromptBytes)
+			}
 		}
 		original := append([]Project(nil), s.data...)
 		s.data = normalizeProjects(s.data)
@@ -46,6 +64,18 @@ func NewStore(dataDir, initialWorkspace string) (*Store, error) {
 		if err := s.saveLocked(); err != nil {
 			return nil, fmt.Errorf("migrate projects: %w", err)
 		}
+	}
+	if raw, err := os.ReadFile(s.promptSettingsPath); err == nil {
+		var settings PromptSettings
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			return nil, fmt.Errorf("parse project prompts: %w", err)
+		}
+		if len([]byte(settings.GlobalPrompt)) > MaxPromptBytes {
+			return nil, fmt.Errorf("global project prompt exceeds %d bytes", MaxPromptBytes)
+		}
+		s.globalPrompt = strings.TrimSpace(settings.GlobalPrompt)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read project prompts: %w", err)
 	}
 	if initialWorkspace != "" {
 		if _, err := s.Add("", initialWorkspace); err != nil {
@@ -107,6 +137,77 @@ func (s *Store) Get(id string) (Project, bool) {
 		}
 	}
 	return Project{}, false
+}
+
+func (s *Store) GlobalPrompt() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.globalPrompt
+}
+
+func (s *Store) SetGlobalPrompt(prompt string) error {
+	prompt = strings.TrimSpace(prompt)
+	if len([]byte(prompt)) > MaxPromptBytes {
+		return fmt.Errorf("global project prompt exceeds %d bytes", MaxPromptBytes)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.globalPrompt
+	s.globalPrompt = prompt
+	if err := s.savePromptSettingsLocked(); err != nil {
+		s.globalPrompt = previous
+		return err
+	}
+	return nil
+}
+
+func (s *Store) UpdatePrompt(id, prompt string) (Project, error) {
+	prompt = strings.TrimSpace(prompt)
+	if len([]byte(prompt)) > MaxPromptBytes {
+		return Project{}, fmt.Errorf("project prompt exceeds %d bytes", MaxPromptBytes)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.data {
+		if s.data[i].ID != id {
+			continue
+		}
+		previous := s.data[i]
+		s.data[i].Prompt = prompt
+		if err := s.saveLocked(); err != nil {
+			s.data[i] = previous
+			return Project{}, err
+		}
+		return s.data[i], nil
+	}
+	return Project{}, errors.New("project not found")
+}
+
+func (s *Store) EffectivePrompt(workspace string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	global := strings.TrimSpace(s.globalPrompt)
+	projectPrompt := ""
+	projectName := ""
+	for _, project := range s.data {
+		if samePath(project.Path, workspace) {
+			projectPrompt = strings.TrimSpace(project.Prompt)
+			projectName = project.Name
+			break
+		}
+	}
+	sections := make([]string, 0, 2)
+	if global != "" {
+		sections = append(sections, "# MCP DevDesk 全局项目提示词\n\n"+global)
+	}
+	if projectPrompt != "" {
+		title := "# MCP DevDesk 当前项目提示词"
+		if projectName != "" {
+			title += "：" + projectName
+		}
+		sections = append(sections, title+"\n\n"+projectPrompt)
+	}
+	return strings.Join(sections, "\n\n---\n\n")
 }
 
 func (s *Store) PreparePathUpdate(id, path string) (Project, error) {
@@ -228,6 +329,18 @@ func (s *Store) saveLocked() error {
 	return os.Rename(tmp, s.path)
 }
 
+func (s *Store) savePromptSettingsLocked() error {
+	raw, err := json.MarshalIndent(PromptSettings{GlobalPrompt: s.globalPrompt}, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := s.promptSettingsPath + ".tmp"
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.promptSettingsPath)
+}
+
 func projectID(path string) string {
 	value := uint64(1469598103934665603)
 	for _, b := range []byte(strings.ToLower(path)) {
@@ -268,6 +381,7 @@ func normalizeProjects(items []Project) []Project {
 		item.Path = path
 		item.ID = projectID(path)
 		item.Name = strings.TrimSpace(item.Name)
+		item.Prompt = strings.TrimSpace(item.Prompt)
 		if item.Name == "" {
 			item.Name = filepath.Base(path)
 		}

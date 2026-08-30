@@ -52,6 +52,8 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleUpdateConfig)
 	mux.HandleFunc("GET /api/projects", s.handleListProjects)
+	mux.HandleFunc("GET /api/projects/prompt-settings", s.handleProjectPromptSettings)
+	mux.HandleFunc("PUT /api/projects/prompt-settings", s.handleUpdateProjectPromptSettings)
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
 	mux.HandleFunc("PATCH /api/projects/{id}", s.handleUpdateProject)
 	mux.HandleFunc("POST /api/projects/{id}/activate", s.handleActivateProject)
@@ -133,6 +135,33 @@ func (s *Server) handleListProjects(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.Projects())
 }
 
+func (s *Server) handleProjectPromptSettings(w http.ResponseWriter, _ *http.Request) {
+	settings := s.app.ProjectPromptSettings()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"globalPrompt":   settings.GlobalPrompt,
+		"maxPromptBytes": 32 * 1024,
+	})
+}
+
+func (s *Server) handleUpdateProjectPromptSettings(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		GlobalPrompt string `json:"globalPrompt"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	settings, err := s.app.UpdateGlobalProjectPrompt(request.GlobalPrompt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"globalPrompt":   settings.GlobalPrompt,
+		"maxPromptBytes": 32 * 1024,
+	})
+}
+
 func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name string `json:"name"`
@@ -152,18 +181,37 @@ func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Path string `json:"path"`
+		Path   *string `json:"path"`
+		Prompt *string `json:"prompt"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if request.Path == nil && request.Prompt == nil {
+		writeError(w, http.StatusBadRequest, errors.New("path or prompt is required"))
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
 	defer cancel()
-	project, err := s.app.UpdateProjectPath(ctx, r.PathValue("id"), request.Path)
-	if err != nil {
-		writeError(w, http.StatusConflict, err)
-		return
+	projectID := r.PathValue("id")
+	var project any
+	if request.Path != nil {
+		updated, err := s.app.UpdateProjectPath(ctx, projectID, *request.Path)
+		if err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		projectID = updated.ID
+		project = updated
+	}
+	if request.Prompt != nil {
+		updated, err := s.app.UpdateProjectPrompt(projectID, *request.Prompt)
+		if err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		project = updated
 	}
 	writeJSON(w, http.StatusOK, project)
 }

@@ -31,42 +31,44 @@ const (
 )
 
 type Options struct {
-	Name               string
-	Version            string
-	Workspace          string
-	MaxBodyBytes       int64
-	OAuth              OAuthOptions
-	AllowedOrigins     []string
-	PermissionMode     string
-	AllowNetwork       bool
-	AuditPath          string
-	LoggingConfig      string
-	FileScope          string
-	AllowedRoots       []string
-	ToolProfile        string
-	MaxConcurrentTools int
+	Name                string
+	Version             string
+	Workspace           string
+	ManagedInstructions string
+	MaxBodyBytes        int64
+	OAuth               OAuthOptions
+	AllowedOrigins      []string
+	PermissionMode      string
+	AllowNetwork        bool
+	AuditPath           string
+	LoggingConfig       string
+	FileScope           string
+	AllowedRoots        []string
+	ToolProfile         string
+	MaxConcurrentTools  int
 }
 
 type Server struct {
-	name              string
-	version           string
-	workspace         string
-	maxBodyBytes      int64
-	startedAt         time.Time
-	oauth             *oauthServer
-	allowedOrigins    map[string]struct{}
-	permissionMode    string
-	allowNetwork      bool
-	toolProfile       string
-	audit             *auditLogger
-	commands          *commandManager
-	imageHTTPClient   *http.Client
-	imageURLValidator func(*url.URL) error
-	fileScope         string
-	allowedRoots      []string
-	cwdMu             sync.RWMutex
-	defaultCWD        string
-	projectRules      []projectRule
+	name                string
+	version             string
+	workspace           string
+	maxBodyBytes        int64
+	startedAt           time.Time
+	oauth               *oauthServer
+	allowedOrigins      map[string]struct{}
+	permissionMode      string
+	allowNetwork        bool
+	toolProfile         string
+	audit               *auditLogger
+	commands            *commandManager
+	imageHTTPClient     *http.Client
+	imageURLValidator   func(*url.URL) error
+	fileScope           string
+	allowedRoots        []string
+	cwdMu               sync.RWMutex
+	defaultCWD          string
+	projectRules        []projectRule
+	managedInstructions string
 
 	mu        sync.RWMutex
 	sessions  map[string]*session
@@ -227,24 +229,25 @@ func New(options Options) (*Server, error) {
 		}
 	}
 	server := &Server{
-		name:           options.Name,
-		version:        options.Version,
-		workspace:      options.Workspace,
-		maxBodyBytes:   options.MaxBodyBytes,
-		startedAt:      time.Now(),
-		oauth:          oauth,
-		allowedOrigins: allowedOrigins,
-		permissionMode: options.PermissionMode,
-		allowNetwork:   options.AllowNetwork,
-		toolProfile:    options.ToolProfile,
-		audit:          newAuditLogger(options.AuditPath, options.LoggingConfig),
-		fileScope:      options.FileScope,
-		allowedRoots:   append([]string(nil), options.AllowedRoots...),
-		defaultCWD:     options.Workspace,
-		projectRules:   loadProjectRules(options.Workspace, maxProjectRuleBytes),
-		sessions:       make(map[string]*session),
-		tools:          tools,
-		toolSlots:      make(chan struct{}, options.MaxConcurrentTools),
+		name:                options.Name,
+		version:             options.Version,
+		workspace:           options.Workspace,
+		maxBodyBytes:        options.MaxBodyBytes,
+		startedAt:           time.Now(),
+		oauth:               oauth,
+		allowedOrigins:      allowedOrigins,
+		permissionMode:      options.PermissionMode,
+		allowNetwork:        options.AllowNetwork,
+		toolProfile:         options.ToolProfile,
+		audit:               newAuditLogger(options.AuditPath, options.LoggingConfig),
+		fileScope:           options.FileScope,
+		allowedRoots:        append([]string(nil), options.AllowedRoots...),
+		defaultCWD:          options.Workspace,
+		projectRules:        loadProjectRules(options.Workspace, maxProjectRuleBytes),
+		managedInstructions: strings.TrimSpace(options.ManagedInstructions),
+		sessions:            make(map[string]*session),
+		tools:               tools,
+		toolSlots:           make(chan struct{}, options.MaxConcurrentTools),
 	}
 	server.imageURLValidator = validateImageDownloadURL
 	server.imageHTTPClient = newImageDownloadClient(server.imageURLValidator)
@@ -497,21 +500,30 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request 
 
 func (s *Server) initializeInstructions() string {
 	base := "MCP DevDesk Go core. Use the exposed tools only within the configured workspace and permission policy."
-	if len(s.projectRules) == 0 {
+	if s.managedInstructions == "" && len(s.projectRules) == 0 {
 		return base
 	}
 	var builder strings.Builder
 	builder.WriteString(base)
-	builder.WriteString("\n\nProject instructions loaded from the workspace root:\n")
-	for _, rule := range s.projectRules {
-		builder.WriteString("\n--- ")
-		builder.WriteString(rule.Path)
-		if rule.Truncated {
-			builder.WriteString(" (truncated)")
+	if len(s.projectRules) > 0 {
+		builder.WriteString("\n\nProject instructions loaded from the workspace root:\n")
+		for _, rule := range s.projectRules {
+			builder.WriteString("\n--- ")
+			builder.WriteString(rule.Path)
+			if rule.Truncated {
+				builder.WriteString(" (truncated)")
+			}
+			builder.WriteString(" ---\n")
+			builder.WriteString(rule.Content)
+			if !strings.HasSuffix(rule.Content, "\n") {
+				builder.WriteByte('\n')
+			}
 		}
-		builder.WriteString(" ---\n")
-		builder.WriteString(rule.Content)
-		if !strings.HasSuffix(rule.Content, "\n") {
+	}
+	if s.managedInstructions != "" {
+		builder.WriteString("\n\nMCP DevDesk managed project instructions (highest project-level priority; apply these when repository guidance conflicts):\n\n")
+		builder.WriteString(s.managedInstructions)
+		if !strings.HasSuffix(s.managedInstructions, "\n") {
 			builder.WriteByte('\n')
 		}
 	}

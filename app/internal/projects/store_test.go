@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,5 +151,60 @@ func TestStoreRollsBackFailedTouchAndRemove(t *testing.T) {
 	}
 	if _, ok := store.Get(project.ID); !ok {
 		t.Fatal("project was removed from memory after failed save")
+	}
+}
+
+func TestProjectPromptsPersistAndCompose(t *testing.T) {
+	dataDir := t.TempDir()
+	workspace := filepath.Join(t.TempDir(), "prompt-project")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(dataDir, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := store.List()[0]
+	if err := store.SetGlobalPrompt("完成全部步骤后再回复用户"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.UpdatePrompt(project.ID, "本项目修改代码后必须运行测试")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Prompt == "" {
+		t.Fatal("project prompt was not stored")
+	}
+	effective := store.EffectivePrompt(workspace)
+	if !strings.Contains(effective, "完成全部步骤后再回复用户") || !strings.Contains(effective, "本项目修改代码后必须运行测试") {
+		t.Fatalf("effective prompt is incomplete: %q", effective)
+	}
+
+	reloaded, err := NewStore(dataDir, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.GlobalPrompt() != "完成全部步骤后再回复用户" {
+		t.Fatalf("global prompt was not persisted: %q", reloaded.GlobalPrompt())
+	}
+	reloadedProject, ok := reloaded.Get(project.ID)
+	if !ok || reloadedProject.Prompt != "本项目修改代码后必须运行测试" {
+		t.Fatalf("project prompt was not persisted: %#v", reloadedProject)
+	}
+}
+
+func TestProjectPromptSizeLimit(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := NewStore(t.TempDir(), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := store.List()[0]
+	tooLarge := strings.Repeat("x", MaxPromptBytes+1)
+	if err := store.SetGlobalPrompt(tooLarge); err == nil {
+		t.Fatal("expected global prompt size limit")
+	}
+	if _, err := store.UpdatePrompt(project.ID, tooLarge); err == nil {
+		t.Fatal("expected project prompt size limit")
 	}
 }

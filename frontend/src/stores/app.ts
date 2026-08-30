@@ -18,6 +18,7 @@ import type {
   Project,
   ProjectDetails,
   ProjectDiff,
+  ProjectPromptSettings,
   SecretSummary,
   SecretSaveResult,
   SecretUpdateRequest,
@@ -32,6 +33,7 @@ export const useAppStore = defineStore("app", {
     desktop: null as DesktopStatus | null,
     diagnostics: null as Diagnostics | null,
     projects: [] as Project[],
+    projectPromptSettings: null as ProjectPromptSettings | null,
     projectDetails: {} as Record<string, ProjectDetails>,
     projectDiffs: {} as Record<string, ProjectDiff>,
     projectHistories: {} as Record<string, GitHistory>,
@@ -59,6 +61,7 @@ export const useAppStore = defineStore("app", {
           this.loadDesktop(),
           this.loadDiagnostics(),
           this.loadProjects(),
+          this.loadProjectPromptSettings(),
           this.loadInstances(),
         ]);
       } finally {
@@ -93,6 +96,29 @@ export const useAppStore = defineStore("app", {
     },
     async loadProjects() {
       this.projects = await api<Project[]>("/api/projects");
+    },
+    async loadProjectPromptSettings() {
+      this.projectPromptSettings = await api<ProjectPromptSettings>("/api/projects/prompt-settings");
+      return this.projectPromptSettings;
+    },
+    async saveGlobalProjectPrompt(globalPrompt: string) {
+      const ui = useUiStore();
+      this.projectPromptSettings = await this.runAction("save-global-project-prompt", () => api<ProjectPromptSettings>("/api/projects/prompt-settings", {
+        method: "PUT",
+        body: { globalPrompt } as unknown as BodyInit,
+      }));
+      ui.toast("全局项目提示词已保存", "新的 Go MCP 会话将在核心重新启动或重新连接后加载。", "success");
+      return this.projectPromptSettings;
+    },
+    async updateProjectPrompt(id: string, prompt: string) {
+      const ui = useUiStore();
+      const project = await this.runAction(`prompt-${id}`, () => api<Project>(`/api/projects/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { prompt } as unknown as BodyInit,
+      }));
+      await this.loadProjects();
+      ui.toast("项目提示词已保存", `${project.name} 将在新的 Go MCP 会话中加载该提示词。`, "success");
+      return project;
     },
     async loadInstances() {
       this.instances = await api<MCPInstance[]>("/api/instances");
