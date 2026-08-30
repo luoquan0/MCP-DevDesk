@@ -13,6 +13,11 @@ if (-not (Test-Path -LiteralPath $CorePath)) { throw "Go core executable not fou
 $TestRoot = Join-Path $env:TEMP ("mcp-devdesk-manager-smoke-" + [Guid]::NewGuid().ToString("N"))
 $Manager = $null
 
+$existingManager = Get-Process -Name "MCP-DevDesk-amd64" -ErrorAction SilentlyContinue
+if ($existingManager) {
+    throw "Refusing to run isolated manager smoke test while MCP DevDesk is already running; stop the real manager first to avoid touching its local API."
+}
+
 function Send-Json {
     param(
         [Parameter(Mandatory = $true)][string]$Method,
@@ -54,7 +59,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.8.4") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.8.5") {
                 $ready = $true
                 break
             }
@@ -104,7 +109,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.8.4" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.8.5" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

@@ -759,6 +759,15 @@ func (s *Server) validateOrigin(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Some OAuth popup / embedded-browser environments submit the owner
+		// password form from an opaque browser origin and therefore send
+		// `Origin: null`. Keep the exception narrowly scoped to the built-in
+		// authorization form POST. MCP, token, registration, and every other
+		// endpoint continue to reject opaque origins.
+		if strings.EqualFold(rawOrigin, "null") && isOpaqueOAuthAuthorizationForm(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		origin := normalizeOrigin(rawOrigin)
 		if origin == "" {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "origin is invalid"})
@@ -775,6 +784,14 @@ func (s *Server) validateOrigin(next http.Handler) http.Handler {
 		}
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "origin is not allowed"})
 	})
+}
+
+func isOpaqueOAuthAuthorizationForm(r *http.Request) bool {
+	if r.Method != http.MethodPost || r.URL.Path != "/oauth/authorize" {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && strings.EqualFold(mediaType, "application/x-www-form-urlencoded")
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {

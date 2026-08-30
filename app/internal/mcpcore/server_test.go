@@ -402,6 +402,46 @@ func TestProjectRulesAreIncludedInInitializeInstructions(t *testing.T) {
 	}
 }
 
+func TestOpaqueOriginIsAllowedOnlyForOAuthAuthorizationForm(t *testing.T) {
+	server := &Server{allowedOrigins: map[string]struct{}{}}
+	handler := server.validateOrigin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	allowed := httptest.NewRequest(http.MethodPost, "https://mcp.example/oauth/authorize", strings.NewReader("owner_password=test"))
+	allowed.Header.Set("Origin", "null")
+	allowed.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	allowedRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(allowedRecorder, allowed)
+	if allowedRecorder.Code != http.StatusNoContent {
+		t.Fatalf("opaque OAuth form origin status = %d, want %d; body = %s", allowedRecorder.Code, http.StatusNoContent, allowedRecorder.Body.String())
+	}
+
+	for _, test := range []struct {
+		name        string
+		method      string
+		path        string
+		contentType string
+	}{
+		{name: "mcp", method: http.MethodPost, path: "/mcp", contentType: "application/json"},
+		{name: "token", method: http.MethodPost, path: "/oauth/token", contentType: "application/x-www-form-urlencoded"},
+		{name: "register", method: http.MethodPost, path: "/oauth/register", contentType: "application/json"},
+		{name: "authorize json", method: http.MethodPost, path: "/oauth/authorize", contentType: "application/json"},
+		{name: "authorize get", method: http.MethodGet, path: "/oauth/authorize", contentType: "application/x-www-form-urlencoded"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, "https://mcp.example"+test.path, nil)
+			request.Header.Set("Origin", "null")
+			request.Header.Set("Content-Type", test.contentType)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "origin is invalid") {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestReadFileDoesNotAdvertiseNextLineWhenOneLineIsByteTruncated(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "long.txt"), []byte(strings.Repeat("x", 100)), 0o600); err != nil {

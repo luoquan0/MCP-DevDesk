@@ -83,7 +83,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.8.4") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.8.5") { return }
             }
         } catch {}
         if ($started.HasExited) { break }
@@ -179,7 +179,7 @@ try {
         state = "smoke-state"
         owner_password = $OwnerPassword
     }
-    $authorize = Send-Http -Method "POST" -Uri "$BaseUrl/oauth/authorize" -ContentType "application/x-www-form-urlencoded" -Body $authorizeBody
+    $authorize = Send-Http -Method "POST" -Uri "$BaseUrl/oauth/authorize" -ContentType "application/x-www-form-urlencoded" -Headers @{ Origin = "null" } -Body $authorizeBody
     if ($authorize.Status -ne 302) { throw "Authorization failed: $($authorize.Status) $($authorize.Body)" }
     $location = [string]$authorize.Response.Headers.Location
     $code = Query-Value -Uri $location -Name "code"
@@ -274,7 +274,7 @@ try {
     if ($batchCall.Status -ne 200) { throw "read_files call failed: $($batchCall.Status) $($batchCall.Body)" }
     $batchResult = ($batchCall.Body | ConvertFrom-Json).result
     if ($batchResult.isError -or $batchResult.structuredContent.succeeded -ne 2 -or
-        $batchResult.structuredContent.files[1].content -notlike '*0.8.4*') {
+        $batchResult.structuredContent.files[1].content -notlike '*0.8.5*') {
         throw "read_files returned an unexpected result: $($batchCall.Body)"
     }
 
