@@ -78,6 +78,8 @@ func (s *Store) defaults() model.Config {
 		AdminPort:               17860,
 		WebControlEnabled:       false,
 		WebControlPort:          17861,
+		WebControlLANEnabled:    false,
+		WebControlAuthEnabled:   false,
 		PermissionMode:          "trusted",
 		FileScope:               "workspace",
 		ToolProfile:             "full",
@@ -358,6 +360,12 @@ func applyUpdate(cfg *model.Config, update model.ConfigUpdate) {
 	}
 	if update.WebControlPort != nil {
 		cfg.WebControlPort = *update.WebControlPort
+	}
+	if update.WebControlLANEnabled != nil {
+		cfg.WebControlLANEnabled = *update.WebControlLANEnabled
+	}
+	if update.WebControlAuthEnabled != nil {
+		cfg.WebControlAuthEnabled = *update.WebControlAuthEnabled
 	}
 	if update.PermissionMode != nil {
 		cfg.PermissionMode = *update.PermissionMode

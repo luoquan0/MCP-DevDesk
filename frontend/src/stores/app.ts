@@ -108,16 +108,18 @@ export const useAppStore = defineStore("app", {
       this.webControl = await api<WebControlStatus>("/api/web-control");
       return this.webControl;
     },
-    async saveWebControl(enabled: boolean, port: number) {
+    async saveWebControl(enabled: boolean, port: number, lanEnabled: boolean, authEnabled: boolean, password = "") {
       const ui = useUiStore();
       this.webControl = await this.runAction("save-web-control", () => api<WebControlStatus>("/api/web-control", {
         method: "PUT",
-        body: { enabled, port } as unknown as BodyInit,
+        body: { enabled, port, lanEnabled, authEnabled, password } as unknown as BodyInit,
       }));
       await this.loadConfig();
       ui.toast(
         enabled ? "网页控制已开启" : "网页控制已关闭",
-        enabled ? `本机网页端口：${port}` : "浏览器控制入口已停止监听。",
+        enabled
+          ? (this.webControl.lanUrls?.[0] || this.webControl.url || `网页端口：${port}`)
+          : "浏览器控制入口已停止监听。",
         "success",
       );
       return this.webControl;

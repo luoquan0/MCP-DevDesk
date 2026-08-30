@@ -11,6 +11,7 @@ const appStore = useAppStore();
 const uiStore = useUiStore();
 const route = useRoute();
 const standalonePage = computed(() => route.meta.standalone === true);
+const controlPage = computed(() => route.meta.control === true);
 let statusPollingTimer: number | undefined;
 let instancePollingTimer: number | undefined;
 let instanceRefreshPending = false;
@@ -38,6 +39,7 @@ function refreshAfterVisibilityChange() {
 
 onMounted(async () => {
   uiStore.initializeTheme();
+  if (controlPage.value) return;
   await appStore.bootstrap();
   statusPollingTimer = window.setInterval(refreshStatusWhenVisible, 5000);
   instancePollingTimer = window.setInterval(() => void refreshInstancesWhenVisible(), 15000);

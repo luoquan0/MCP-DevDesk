@@ -3,6 +3,7 @@ package application
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net"
@@ -334,6 +335,23 @@ func (a *App) SwitchWorkspace(ctx context.Context, workspace string) error {
 
 func (a *App) Config() model.PublicConfig {
 	return a.config.Get().Public()
+}
+
+func (a *App) WebControlPasswordConfigured() bool {
+	configured, err := a.secrets.WebControlPasswordConfigured()
+	return err == nil && configured
+}
+
+func (a *App) SetWebControlPassword(password string) error {
+	return a.secrets.SetWebControlPassword(password)
+}
+
+func (a *App) VerifyWebControlPassword(password string) bool {
+	stored, err := a.secrets.WebControlPassword()
+	if err != nil || stored == "" || len(stored) != len(password) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(password)) == 1
 }
 
 func (a *App) UpdateConfig(update model.ConfigUpdate) (model.PublicConfig, error) {

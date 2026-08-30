@@ -19,11 +19,12 @@ import (
 )
 
 type Values struct {
-	OwnerPassword string   `json:"ownerPassword"`
-	ClientID      string   `json:"clientId"`
-	ClientSecret  string   `json:"clientSecret"`
-	TokenSecret   string   `json:"tokenSecret"`
-	RedirectURIs  []string `json:"redirectUris,omitempty"`
+	OwnerPassword      string   `json:"ownerPassword"`
+	ClientID           string   `json:"clientId"`
+	ClientSecret       string   `json:"clientSecret"`
+	TokenSecret        string   `json:"tokenSecret"`
+	RedirectURIs       []string `json:"redirectUris,omitempty"`
+	WebControlPassword string   `json:"webControlPassword,omitempty"`
 }
 
 type secretEnvelope struct {
@@ -183,6 +184,41 @@ func (s *Store) Update(request model.SecretUpdateRequest) (model.SecretSummary, 
 	return summary(values), nil
 }
 
+func (s *Store) WebControlPasswordConfigured() (bool, error) {
+	values, err := s.GetOrCreate()
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(values.WebControlPassword) != "", nil
+}
+
+func (s *Store) WebControlPassword() (string, error) {
+	values, err := s.GetOrCreate()
+	if err != nil {
+		return "", err
+	}
+	return values.WebControlPassword, nil
+}
+
+func (s *Store) SetWebControlPassword(password string) error {
+	password = strings.TrimSpace(password)
+	if len(password) < 8 || len(password) > 256 {
+		return errors.New("web control password must be between 8 and 256 characters")
+	}
+	if hasControl(password) {
+		return errors.New("web control password cannot contain control characters")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values, err := s.getOrCreateLocked()
+	if err != nil {
+		return err
+	}
+	values.WebControlPassword = password
+	return s.saveLocked(values)
+}
+
 func (s *Store) Generate(field string) (model.SecretSummary, error) {
 	field = strings.TrimSpace(field)
 	result := model.SecretSummary{Configured: false}
@@ -245,6 +281,14 @@ func validate(values Values) error {
 	}
 	if hasControl(values.OwnerPassword) {
 		return errors.New("owner password cannot contain control characters")
+	}
+	if values.WebControlPassword != "" {
+		if length := len(values.WebControlPassword); length < 8 || length > 256 {
+			return errors.New("web control password must be between 8 and 256 characters")
+		}
+		if hasControl(values.WebControlPassword) {
+			return errors.New("web control password cannot contain control characters")
+		}
 	}
 	if length := len(values.ClientID); length < 3 || length > 128 || !clientIDPattern.MatchString(values.ClientID) {
 		return errors.New("client ID must be 3 to 128 characters using letters, numbers, dot, underscore, colon, or dash")

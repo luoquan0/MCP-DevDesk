@@ -1485,6 +1485,436 @@ kbd {
   width: 100%;
 }
 
+.web-control-fields,
+.web-control-addresses {
+  display: grid;
+  gap: 12px;
+}
+
+.web-control-addresses > div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.web-control-addresses span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.web-control-addresses code {
+  overflow-wrap: anywhere;
+}
+
+.mobile-control-shell {
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--canvas);
+  color: var(--text);
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-control-header {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 68px;
+  padding: 10px max(16px, env(safe-area-inset-left)) 10px max(16px, env(safe-area-inset-right));
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface-solid) 92%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.mobile-control-brand,
+.mobile-control-header-actions,
+.mobile-project-main,
+.mobile-project-name,
+.mobile-project-actions,
+.mobile-directory-toolbar,
+.mobile-service-actions {
+  display: flex;
+  align-items: center;
+}
+
+.mobile-control-brand {
+  min-width: 0;
+  gap: 10px;
+}
+
+.mobile-control-brand > div {
+  min-width: 0;
+  display: grid;
+}
+
+.mobile-control-brand strong {
+  font-size: 14px;
+}
+
+.mobile-control-brand small {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-control-logo,
+.mobile-project-icon,
+.mobile-login-logo {
+  display: grid;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  background: var(--surface-raised);
+}
+
+.mobile-control-logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+}
+
+.mobile-control-header-actions {
+  flex: none;
+  gap: 6px;
+}
+
+.mobile-control-content {
+  width: min(980px, calc(100% - 28px));
+  margin: 0 auto;
+  padding: 20px 0 calc(94px + env(safe-area-inset-bottom));
+}
+
+.mobile-control-loading {
+  display: grid;
+  min-height: 50vh;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.mobile-control-nav {
+  position: fixed;
+  z-index: 30;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 7px max(12px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  border-top: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface-solid) 94%, transparent);
+  backdrop-filter: blur(20px);
+}
+
+.mobile-control-nav a {
+  display: grid;
+  min-height: 48px;
+  place-items: center;
+  align-content: center;
+  gap: 3px;
+  border-radius: 12px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 10px;
+}
+
+.mobile-control-nav a.router-link-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mobile-control-page-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.mobile-control-page-title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mobile-control-page-title h1,
+.mobile-directory-browser-header h2 {
+  margin: 2px 0 4px;
+  letter-spacing: -0.025em;
+}
+
+.mobile-control-page-title h1 {
+  font-size: 24px;
+}
+
+.mobile-control-page-title p,
+.mobile-directory-browser-header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.mobile-current-project-card,
+.mobile-project-card,
+.mobile-prompt-card,
+.mobile-service-card {
+  display: grid;
+  gap: 14px;
+}
+
+.mobile-current-project-card > span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mobile-current-project-card > strong {
+  font-size: 16px;
+}
+
+.mobile-current-project-card code,
+.mobile-project-main code,
+.mobile-directory-path code,
+.mobile-service-card code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.mobile-project-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mobile-project-main {
+  min-width: 0;
+  gap: 11px;
+}
+
+.mobile-project-main > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.mobile-project-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+.mobile-project-name {
+  min-width: 0;
+  gap: 7px;
+}
+
+.mobile-project-name strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-project-main code {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.mobile-project-actions,
+.mobile-directory-toolbar,
+.mobile-service-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mobile-directory-browser {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 20px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-float);
+}
+
+.mobile-directory-browser-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mobile-directory-browser-header h2 {
+  font-size: 19px;
+}
+
+.mobile-directory-path {
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.mobile-directory-path span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.mobile-directory-list {
+  display: grid;
+  max-height: 52vh;
+  overflow-y: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+}
+
+.mobile-directory-list.is-loading {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.mobile-directory-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mobile-directory-row:last-child {
+  border-bottom: 0;
+}
+
+.mobile-directory-row:hover {
+  background: var(--surface-hover);
+}
+
+.mobile-directory-row code {
+  grid-column: 2 / 3;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.mobile-directory-row > span:last-child {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  color: var(--text-tertiary);
+  font-size: 20px;
+}
+
+.mobile-directory-empty {
+  padding: 30px 16px;
+  color: var(--text-tertiary);
+  text-align: center;
+  font-size: 11px;
+}
+
+.mobile-service-actions > * {
+  min-width: 112px;
+}
+
+.mobile-login-page {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--canvas);
+}
+
+.mobile-login-card {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 20px;
+  padding: 28px;
+  border: 1px solid var(--hairline);
+  border-radius: 24px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-float);
+}
+
+.mobile-login-logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+}
+
+.mobile-login-heading h1 {
+  margin: 4px 0 6px;
+  font-size: 24px;
+}
+
+.mobile-login-heading p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.mobile-login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.mobile-control-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+@media (max-width: 680px) {
+  .mobile-control-content {
+    width: min(100% - 20px, 980px);
+    padding-top: 14px;
+  }
+
+  .mobile-control-page-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mobile-control-page-title > .app-button,
+  .mobile-control-page-title > button {
+    width: 100%;
+  }
+
+  .mobile-project-actions > * {
+    flex: 1 1 100px;
+  }
+
+  .mobile-directory-toolbar > * {
+    flex: 1 1 92px;
+  }
+
+  .mobile-directory-browser {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .mobile-login-page {
+    align-items: start;
+    padding: max(48px, env(safe-area-inset-top)) 16px 24px;
+  }
+
+  .mobile-login-card {
+    padding: 22px;
+  }
+}
+
 .web-control-page {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;

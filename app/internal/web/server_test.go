@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,6 +72,23 @@ func newTestServer(t *testing.T) *Server {
 	return server
 }
 
+func attachTestControlServer(t *testing.T, server *Server) (*ControlServer, http.Handler) {
+	t.Helper()
+	control := NewControlServer(server.app)
+	server.SetControlServer(control)
+	handler, err := server.ControlHandler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	control.SetHandler(handler)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = control.Shutdown(ctx)
+	})
+	return control, handler
+}
+
 func TestHealthEndpointAllowsLoopback(t *testing.T) {
 	server := newTestServer(t)
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/health", nil)
@@ -115,13 +133,7 @@ func TestStaticDashboardIsEmbedded(t *testing.T) {
 
 func TestWebControlCanEnableMoveAndDisable(t *testing.T) {
 	server := newTestServer(t)
-	control := NewControlServer(server.Handler())
-	server.SetControlServer(control)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = control.Shutdown(ctx)
-	})
+	_, _ = attachTestControlServer(t, server)
 
 	freePort := func() int {
 		for {
@@ -143,9 +155,9 @@ func TestWebControlCanEnableMoveAndDisable(t *testing.T) {
 		secondPort = freePort()
 	}
 
-	update := func(enabled bool, port int) WebControlStatus {
+	update := func(enabled bool, port int, lanEnabled bool) WebControlStatus {
 		t.Helper()
-		body, err := json.Marshal(map[string]any{"enabled": enabled, "port": port})
+		body, err := json.Marshal(map[string]any{"enabled": enabled, "port": port, "lanEnabled": lanEnabled})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -167,7 +179,7 @@ func TestWebControlCanEnableMoveAndDisable(t *testing.T) {
 
 	reachable := func(port int) bool {
 		client := &http.Client{Timeout: 250 * time.Millisecond}
-		response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/health", port))
+		response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/control/auth/status", port))
 		if err != nil {
 			return false
 		}
@@ -186,26 +198,142 @@ func TestWebControlCanEnableMoveAndDisable(t *testing.T) {
 		t.Fatalf("port %d reachable=%v, want %v", port, reachable(port), wanted)
 	}
 
-	status := update(true, firstPort)
-	if !status.Enabled || !status.Running || status.Port != firstPort || !strings.Contains(status.URL, fmt.Sprintf(":%d/#/control", firstPort)) {
+	status := update(true, firstPort, true)
+	if !status.Enabled || !status.Running || !status.LANEnabled || status.Port != firstPort || !strings.Contains(status.URL, fmt.Sprintf(":%d/#/control/projects", firstPort)) {
 		t.Fatalf("unexpected enabled status: %+v", status)
 	}
 	waitReachable(firstPort, true)
+	status = update(true, firstPort, false)
+	if !status.Enabled || !status.Running || status.LANEnabled || status.Port != firstPort {
+		t.Fatalf("unexpected loopback rebind status: %+v", status)
+	}
+	waitReachable(firstPort, true)
+	status = update(true, firstPort, true)
+	if !status.Enabled || !status.Running || !status.LANEnabled || status.Port != firstPort {
+		t.Fatalf("unexpected LAN rebind status: %+v", status)
+	}
+	waitReachable(firstPort, true)
 
-	status = update(true, secondPort)
-	if !status.Enabled || !status.Running || status.Port != secondPort {
+	status = update(true, secondPort, true)
+	if !status.Enabled || !status.Running || !status.LANEnabled || status.Port != secondPort {
 		t.Fatalf("unexpected moved status: %+v", status)
 	}
 	waitReachable(secondPort, true)
 	waitReachable(firstPort, false)
 
-	status = update(false, secondPort)
+	status = update(false, secondPort, true)
 	if status.Enabled || status.Running || status.Port != secondPort || status.URL != "" {
 		t.Fatalf("unexpected disabled status: %+v", status)
 	}
 	waitReachable(secondPort, false)
 	if cfg := server.app.Config(); cfg.WebControlEnabled || cfg.WebControlPort != secondPort {
 		t.Fatalf("web control config not persisted: %+v", cfg)
+	}
+}
+
+func TestWebControlPasswordProtectsLANAPI(t *testing.T) {
+	server := newTestServer(t)
+	control, handler := attachTestControlServer(t, server)
+	if err := server.app.SetWebControlPassword("mobile-pass-123"); err != nil {
+		t.Fatal(err)
+	}
+	authEnabled := true
+	lanEnabled := true
+	if _, err := server.app.UpdateConfig(model.ConfigUpdate{
+		WebControlAuthEnabled: &authEnabled,
+		WebControlLANEnabled:  &lanEnabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	control.InvalidateSessions()
+
+	request := httptest.NewRequest(http.MethodGet, "http://192.168.1.5/api/control/projects", nil)
+	request.RemoteAddr = "192.168.1.20:45678"
+	request.Host = "192.168.1.5:17861"
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated LAN request status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	wrongLogin := httptest.NewRequest(http.MethodPost, "http://192.168.1.5/api/control/auth/login", bytes.NewBufferString(`{"password":"wrong"}`))
+	wrongLogin.RemoteAddr = "192.168.1.20:45678"
+	wrongLogin.Host = "192.168.1.5:17861"
+	wrongLogin.Header.Set("Origin", "http://192.168.1.5:17861")
+	wrongLogin.Header.Set("Content-Type", "application/json")
+	wrongRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(wrongRecorder, wrongLogin)
+	if wrongRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password status = %d, body = %s", wrongRecorder.Code, wrongRecorder.Body.String())
+	}
+
+	login := httptest.NewRequest(http.MethodPost, "http://192.168.1.5/api/control/auth/login", bytes.NewBufferString(`{"password":"mobile-pass-123"}`))
+	login.RemoteAddr = "192.168.1.20:45678"
+	login.Host = "192.168.1.5:17861"
+	login.Header.Set("Origin", "http://192.168.1.5:17861")
+	login.Header.Set("Content-Type", "application/json")
+	loginRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(loginRecorder, login)
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+	cookies := loginRecorder.Result().Cookies()
+	if len(cookies) == 0 || cookies[0].Name != webControlSessionCookie || !cookies[0].HttpOnly {
+		t.Fatalf("login did not return HttpOnly session cookie: %+v", cookies)
+	}
+
+	authorized := httptest.NewRequest(http.MethodGet, "http://192.168.1.5/api/control/projects", nil)
+	authorized.RemoteAddr = "192.168.1.20:45678"
+	authorized.Host = "192.168.1.5:17861"
+	authorized.AddCookie(cookies[0])
+	authorizedRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(authorizedRecorder, authorized)
+	if authorizedRecorder.Code != http.StatusOK {
+		t.Fatalf("authorized request status = %d, body = %s", authorizedRecorder.Code, authorizedRecorder.Body.String())
+	}
+
+	publicRemote := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/control/auth/status", nil)
+	publicRemote.RemoteAddr = "203.0.113.10:45678"
+	publicRemote.Host = "127.0.0.1:17861"
+	publicRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(publicRecorder, publicRemote)
+	if publicRecorder.Code != http.StatusForbidden {
+		t.Fatalf("public remote status = %d, want %d", publicRecorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestControlDirectoryListingCanAddProject(t *testing.T) {
+	server := newTestServer(t)
+	_, handler := attachTestControlServer(t, server)
+	root := server.app.Status().RootDirectory
+	projectPath := filepath.Join(root, "mobile-project")
+	childPath := filepath.Join(projectPath, "src")
+	if err := os.MkdirAll(childPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	browse := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/control/directories?path="+url.QueryEscape(root), nil)
+	browse.RemoteAddr = "127.0.0.1:45678"
+	browse.Host = "127.0.0.1:17861"
+	browseRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(browseRecorder, browse)
+	if browseRecorder.Code != http.StatusOK || !strings.Contains(browseRecorder.Body.String(), "mobile-project") {
+		t.Fatalf("directory browse failed: %d %s", browseRecorder.Code, browseRecorder.Body.String())
+	}
+
+	body, err := json.Marshal(map[string]string{"name": "Phone Project", "path": projectPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/control/projects", bytes.NewReader(body))
+	add.RemoteAddr = "127.0.0.1:45678"
+	add.Host = "127.0.0.1:17861"
+	add.Header.Set("Origin", "http://127.0.0.1:17861")
+	add.Header.Set("Content-Type", "application/json")
+	addRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(addRecorder, add)
+	if addRecorder.Code != http.StatusCreated || !strings.Contains(addRecorder.Body.String(), "Phone Project") {
+		t.Fatalf("project add through control API failed: %d %s", addRecorder.Code, addRecorder.Body.String())
 	}
 }
 

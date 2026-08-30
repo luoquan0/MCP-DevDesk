@@ -22,7 +22,8 @@ function Send-Json {
     param(
         [Parameter(Mandatory = $true)][string]$Method,
         [Parameter(Mandatory = $true)][string]$Uri,
-        [object]$Body = $null
+        [object]$Body = $null,
+        [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession = $null
     )
     $parameters = @{
         Method = $Method
@@ -33,6 +34,9 @@ function Send-Json {
     if ($null -ne $Body) {
         $parameters.ContentType = "application/json"
         $parameters.Body = ($Body | ConvertTo-Json -Depth 8 -Compress)
+    }
+    if ($null -ne $WebSession) {
+        $parameters.WebSession = $WebSession
     }
     return Invoke-WebRequest @parameters
 }
@@ -59,7 +63,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.9.0") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.10.0") {
                 $ready = $true
                 break
             }
@@ -72,22 +76,39 @@ try {
     $webListener.Start()
     $webPort = ([System.Net.IPEndPoint]$webListener.LocalEndpoint).Port
     $webListener.Stop()
-    $webControl = Send-Json -Method "PUT" -Uri "$BaseUrl/api/web-control" -Body @{ enabled = $true; port = $webPort }
+    $webPassword = "SMOKE-WEB-CONTROL-123"
+    $webControl = Send-Json -Method "PUT" -Uri "$BaseUrl/api/web-control" -Body @{ enabled = $true; port = $webPort; lanEnabled = $true; authEnabled = $true; password = $webPassword }
     if ($webControl.StatusCode -ne 200) { throw "Web control enable endpoint failed" }
     $webStatus = $webControl.Content | ConvertFrom-Json
-    if (-not $webStatus.enabled -or -not $webStatus.running -or $webStatus.port -ne $webPort -or $webStatus.url -notlike "*:$webPort/#/control") {
+    if (-not $webStatus.enabled -or -not $webStatus.running -or -not $webStatus.lanEnabled -or -not $webStatus.authEnabled -or -not $webStatus.passwordConfigured -or $webStatus.port -ne $webPort -or $webStatus.url -notlike "*:$webPort/#/control/projects") {
         throw "Web control did not report the expected running state"
     }
-    $webHealth = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/health"
-    $webHealthParsed = $webHealth.Content | ConvertFrom-Json
-    if ($webHealth.StatusCode -ne 200 -or -not $webHealthParsed.ok -or $webHealthParsed.version -ne "0.9.0") {
-        throw "Web control port did not expose the manager API"
+    $authStatus = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/control/auth/status"
+    $authParsed = $authStatus.Content | ConvertFrom-Json
+    if ($authStatus.StatusCode -ne 200 -or -not $authParsed.required -or $authParsed.authenticated) {
+        throw "Web control auth status did not require login"
     }
+    $webSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $login = Send-Json -Method "POST" -Uri "http://127.0.0.1:$webPort/api/control/auth/login" -Body @{ password = $webPassword } -WebSession $webSession
+    $loginParsed = $login.Content | ConvertFrom-Json
+    if ($login.StatusCode -ne 200 -or -not $loginParsed.authenticated) { throw "Web control login failed" }
+    $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/control/overview" -WebSession $webSession
+    $overviewParsed = $overview.Content | ConvertFrom-Json
+    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.10.0") { throw "Authenticated web control overview failed" }
+
+    $phoneProject = Join-Path $TestRoot "phone-project"
+    New-Item -ItemType Directory -Force -Path $phoneProject | Out-Null
+    $encodedRoot = [Uri]::EscapeDataString($TestRoot)
+    $directoryBrowse = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/control/directories?path=$encodedRoot" -WebSession $webSession
+    if ($directoryBrowse.StatusCode -ne 200 -or $directoryBrowse.Content -notlike "*phone-project*") { throw "Web control directory browser failed" }
+    $phoneProjectAdd = Send-Json -Method "POST" -Uri "http://127.0.0.1:$webPort/api/control/projects" -Body @{ name = "Phone Project"; path = $phoneProject } -WebSession $webSession
+    if ($phoneProjectAdd.StatusCode -ne 201 -or $phoneProjectAdd.Content -notlike "*Phone Project*") { throw "Web control project add failed" }
+
     $webPage = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/"
     if ($webPage.StatusCode -ne 200 -or $webPage.Content -notlike "*MCP DevDesk*") {
         throw "Web control port did not expose the embedded frontend"
     }
-    $webControlOff = Send-Json -Method "PUT" -Uri "$BaseUrl/api/web-control" -Body @{ enabled = $false; port = $webPort }
+    $webControlOff = Send-Json -Method "PUT" -Uri "$BaseUrl/api/web-control" -Body @{ enabled = $false; port = $webPort; lanEnabled = $true; authEnabled = $true }
     $webStatusOff = $webControlOff.Content | ConvertFrom-Json
     if ($webControlOff.StatusCode -ne 200 -or $webStatusOff.enabled -or $webStatusOff.running) {
         throw "Web control disable endpoint failed"
@@ -96,7 +117,7 @@ try {
     $promptSettings = Send-Json -Method "PUT" -Uri "$BaseUrl/api/projects/prompt-settings" -Body @{ enabled = $true; globalPrompt = "SMOKE_GLOBAL_PROMPT: finish the complete task before replying." }
     if ($promptSettings.StatusCode -ne 200) { throw "Global project prompt endpoint failed" }
     $projects = (Send-Json -Method "GET" -Uri "$BaseUrl/api/projects").Content | ConvertFrom-Json
-    $project = @($projects)[0]
+    $project = @($projects) | Where-Object { $_.path -eq $TestRoot } | Select-Object -First 1
     if (-not $project.id) { throw "Manager returned no project for prompt smoke test" }
     $projectPrompt = Send-Json -Method "PATCH" -Uri "$BaseUrl/api/projects/$($project.id)" -Body @{ prompt = "SMOKE_PROJECT_PROMPT: run validation before reporting completion." }
     if ($projectPrompt.StatusCode -ne 200) { throw "Project prompt endpoint failed" }
@@ -140,7 +161,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.9.0" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.10.0" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

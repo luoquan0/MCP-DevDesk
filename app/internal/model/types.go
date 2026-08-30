@@ -14,6 +14,8 @@ type Config struct {
 	AdminPort               int      `json:"adminPort"`
 	WebControlEnabled       bool     `json:"webControlEnabled"`
 	WebControlPort          int      `json:"webControlPort"`
+	WebControlLANEnabled    bool     `json:"webControlLanEnabled"`
+	WebControlAuthEnabled   bool     `json:"webControlAuthEnabled"`
 	PermissionMode          string   `json:"permissionMode"`
 	FileScope               string   `json:"fileScope"`
 	ToolProfile             string   `json:"toolProfile"`
@@ -45,6 +47,8 @@ type PublicConfig struct {
 	AdminPort               int      `json:"adminPort"`
 	WebControlEnabled       bool     `json:"webControlEnabled"`
 	WebControlPort          int      `json:"webControlPort"`
+	WebControlLANEnabled    bool     `json:"webControlLanEnabled"`
+	WebControlAuthEnabled   bool     `json:"webControlAuthEnabled"`
 	PermissionMode          string   `json:"permissionMode"`
 	FileScope               string   `json:"fileScope"`
 	ToolProfile             string   `json:"toolProfile"`
@@ -77,6 +81,8 @@ func (c Config) Public() PublicConfig {
 		AdminPort:               c.AdminPort,
 		WebControlEnabled:       c.WebControlEnabled,
 		WebControlPort:          c.WebControlPort,
+		WebControlLANEnabled:    c.WebControlLANEnabled,
+		WebControlAuthEnabled:   c.WebControlAuthEnabled,
 		PermissionMode:          c.PermissionMode,
 		FileScope:               c.FileScope,
 		ToolProfile:             c.ToolProfile,
@@ -106,6 +112,8 @@ type ConfigUpdate struct {
 	AdminPort               *int      `json:"adminPort"`
 	WebControlEnabled       *bool     `json:"webControlEnabled"`
 	WebControlPort          *int      `json:"webControlPort"`
+	WebControlLANEnabled    *bool     `json:"webControlLanEnabled"`
+	WebControlAuthEnabled   *bool     `json:"webControlAuthEnabled"`
 	PermissionMode          *string   `json:"permissionMode"`
 	FileScope               *string   `json:"fileScope"`
 	ToolProfile             *string   `json:"toolProfile"`

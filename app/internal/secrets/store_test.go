@@ -61,6 +61,36 @@ func TestStoreGeneratesUpdatesAndPersistsSecrets(t *testing.T) {
 	}
 }
 
+func TestWebControlPasswordPersistsInsideProtectedSecretStore(t *testing.T) {
+	dataDir := t.TempDir()
+	store := NewStore(dataDir)
+	password := "phone-control-123"
+	if err := store.SetWebControlPassword(password); err != nil {
+		t.Fatal(err)
+	}
+	configured, err := store.WebControlPasswordConfigured()
+	if err != nil || !configured {
+		t.Fatalf("web control password configured=%v err=%v", configured, err)
+	}
+	stored, err := os.ReadFile(filepath.Join(dataDir, "secrets.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), password) {
+		t.Fatal("web control password was stored in plaintext")
+	}
+	reloaded, err := NewStore(dataDir).WebControlPassword()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded != password {
+		t.Fatalf("reloaded web control password = %q", reloaded)
+	}
+	if err := store.SetWebControlPassword("short"); err == nil {
+		t.Fatal("short web control password was accepted")
+	}
+}
+
 func TestPlaintextSecretsAreMigrated(t *testing.T) {
 	dataDir := t.TempDir()
 	values := Values{

@@ -465,7 +465,7 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if update.WebControlEnabled != nil || update.WebControlPort != nil {
+	if update.WebControlEnabled != nil || update.WebControlPort != nil || update.WebControlLANEnabled != nil || update.WebControlAuthEnabled != nil {
 		writeError(w, http.StatusBadRequest, errors.New("web control settings must be updated through /api/web-control"))
 		return
 	}
@@ -756,12 +756,15 @@ func (s *Server) handleWebControlStatus(w http.ResponseWriter, _ *http.Request) 
 	cfg := s.app.Config()
 	if s.control == nil {
 		writeJSON(w, http.StatusOK, WebControlStatus{
-			Enabled: cfg.WebControlEnabled,
-			Port:    cfg.WebControlPort,
+			Enabled:            cfg.WebControlEnabled,
+			Port:               cfg.WebControlPort,
+			LANEnabled:         cfg.WebControlLANEnabled,
+			AuthEnabled:        cfg.WebControlAuthEnabled,
+			PasswordConfigured: s.app.WebControlPasswordConfigured(),
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.control.Status(cfg.WebControlEnabled, cfg.WebControlPort))
+	writeJSON(w, http.StatusOK, s.control.Status(cfg.WebControlEnabled, cfg.WebControlPort, cfg.WebControlLANEnabled, cfg.WebControlAuthEnabled))
 }
 
 func (s *Server) handleUpdateWebControl(w http.ResponseWriter, r *http.Request) {
@@ -770,42 +773,70 @@ func (s *Server) handleUpdateWebControl(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var request struct {
-		Enabled *bool `json:"enabled"`
-		Port    *int  `json:"port"`
+		Enabled     *bool   `json:"enabled"`
+		Port        *int    `json:"port"`
+		LANEnabled  *bool   `json:"lanEnabled"`
+		AuthEnabled *bool   `json:"authEnabled"`
+		Password    *string `json:"password"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if request.Enabled == nil && request.Port == nil {
-		writeError(w, http.StatusBadRequest, errors.New("enabled or port is required"))
+	if request.Enabled == nil && request.Port == nil && request.LANEnabled == nil && request.AuthEnabled == nil && request.Password == nil {
+		writeError(w, http.StatusBadRequest, errors.New("web control setting is required"))
 		return
 	}
 
 	previous := s.app.Config()
 	enabled := previous.WebControlEnabled
 	port := previous.WebControlPort
+	lanEnabled := previous.WebControlLANEnabled
+	authEnabled := previous.WebControlAuthEnabled
 	if request.Enabled != nil {
 		enabled = *request.Enabled
 	}
 	if request.Port != nil {
 		port = *request.Port
 	}
+	if request.LANEnabled != nil {
+		lanEnabled = *request.LANEnabled
+	}
+	if request.AuthEnabled != nil {
+		authEnabled = *request.AuthEnabled
+	}
+	passwordChanged := request.Password != nil && strings.TrimSpace(*request.Password) != ""
+	if authEnabled && !s.app.WebControlPasswordConfigured() && !passwordChanged {
+		writeError(w, http.StatusBadRequest, errors.New("启用网页密码认证前请先设置密码"))
+		return
+	}
+	if passwordChanged {
+		if err := s.app.SetWebControlPassword(*request.Password); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
 
 	updated, err := s.app.UpdateConfig(model.ConfigUpdate{
-		WebControlEnabled: &enabled,
-		WebControlPort:    &port,
+		WebControlEnabled:     &enabled,
+		WebControlPort:        &port,
+		WebControlLANEnabled:  &lanEnabled,
+		WebControlAuthEnabled: &authEnabled,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.control.Apply(updated.WebControlEnabled, updated.WebControlPort); err != nil {
+	if err := s.control.Apply(updated.WebControlEnabled, updated.WebControlPort, updated.WebControlLANEnabled); err != nil {
 		rollbackEnabled := previous.WebControlEnabled
 		rollbackPort := previous.WebControlPort
+		rollbackLAN := previous.WebControlLANEnabled
+		rollbackAuth := previous.WebControlAuthEnabled
 		_, rollbackErr := s.app.UpdateConfig(model.ConfigUpdate{
-			WebControlEnabled: &rollbackEnabled,
-			WebControlPort:    &rollbackPort,
+			WebControlEnabled:     &rollbackEnabled,
+			WebControlPort:        &rollbackPort,
+			WebControlLANEnabled:  &rollbackLAN,
+			WebControlAuthEnabled: &rollbackAuth,
 		})
 		if rollbackErr != nil {
 			writeError(w, http.StatusConflict, fmt.Errorf("apply web control: %w; rollback config: %v", err, rollbackErr))
@@ -814,8 +845,11 @@ func (s *Server) handleUpdateWebControl(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, err)
 		return
 	}
+	if passwordChanged || previous.WebControlAuthEnabled != updated.WebControlAuthEnabled {
+		s.control.InvalidateSessions()
+	}
 
-	writeJSON(w, http.StatusOK, s.control.Status(updated.WebControlEnabled, updated.WebControlPort))
+	writeJSON(w, http.StatusOK, s.control.Status(updated.WebControlEnabled, updated.WebControlPort, updated.WebControlLANEnabled, updated.WebControlAuthEnabled))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

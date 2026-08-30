@@ -11,6 +11,17 @@ export const router = createRouter({
     { path: "/logs", name: "logs", component: () => import("@/pages/LogsPage.vue") },
     { path: "/security", name: "security", component: () => import("@/pages/SecurityPage.vue") },
     { path: "/settings", name: "settings", component: () => import("@/pages/SettingsPage.vue") },
-    { path: "/control", name: "control", component: () => import("@/pages/ControlPage.vue"), meta: { standalone: true } },
+    { path: "/control/login", name: "control-login", component: () => import("@/pages/ControlLoginPage.vue"), meta: { standalone: true, control: true } },
+    {
+      path: "/control",
+      component: () => import("@/pages/ControlLayout.vue"),
+      meta: { standalone: true, control: true },
+      children: [
+        { path: "", redirect: { name: "control-projects" } },
+        { path: "projects", name: "control-projects", component: () => import("@/pages/ControlProjectsPage.vue") },
+        { path: "prompts", name: "control-prompts", component: () => import("@/pages/ControlPromptsPage.vue") },
+        { path: "services", name: "control-services", component: () => import("@/pages/ControlServicesPage.vue") },
+      ],
+    },
   ],
 });

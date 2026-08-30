@@ -16,6 +16,9 @@ const secretsEncrypted = ref(false);
 const restartAfterSave = ref(true);
 const webControlEnabled = ref(false);
 const webControlPort = ref(17861);
+const webControlLanEnabled = ref(false);
+const webControlAuthEnabled = ref(false);
+const webControlPassword = ref("");
 const globalPromptEnabled = ref(false);
 const globalPromptDraft = ref("");
 const globalPromptBytes = computed(() => new TextEncoder().encode(globalPromptDraft.value).length);
@@ -49,6 +52,8 @@ watch(() => app.projectPromptSettings, (settings) => {
 watch(() => [app.webControl, app.config?.webControlPort] as const, ([status, configuredPort]) => {
   webControlEnabled.value = Boolean(status?.enabled ?? app.config?.webControlEnabled);
   webControlPort.value = status?.port || configuredPort || 17861;
+  webControlLanEnabled.value = Boolean(status?.lanEnabled ?? app.config?.webControlLanEnabled);
+  webControlAuthEnabled.value = Boolean(status?.authEnabled ?? app.config?.webControlAuthEnabled);
 }, { immediate: true });
 
 const themes: Array<{ id: ThemeMode; label: string; description: string; icon: string }> = [
@@ -80,14 +85,21 @@ async function saveWebControl() {
     return;
   }
   try {
-    await app.saveWebControl(webControlEnabled.value, port);
+    await app.saveWebControl(
+      webControlEnabled.value,
+      port,
+      webControlLanEnabled.value,
+      webControlAuthEnabled.value,
+      webControlPassword.value,
+    );
+    webControlPassword.value = "";
   } catch (error) {
     ui.toast("保存网页控制失败", error instanceof Error ? error.message : String(error), "danger");
   }
 }
 
 function openWebControl() {
-  const url = app.webControl?.url || `http://127.0.0.1:${webControlPort.value}/#/control`;
+  const url = app.webControl?.url || `http://127.0.0.1:${webControlPort.value}/#/control/projects`;
   if (!app.webControl?.running) {
     ui.toast("网页控制尚未运行", "请先开启网页控制并保存设置。", "info");
     return;
@@ -267,7 +279,7 @@ onMounted(loadSecrets);
         <div>
           <span class="eyebrow">Browser control</span>
           <h3>网页控制</h3>
-          <p>提供一个独立的浏览器控制面板，第一版用于切换项目、编辑提示词和启动/停止/重启 MCP。</p>
+          <p>提供独立的手机/浏览器控制面板，可通过局域网管理电脑上的项目目录、提示词和 MCP 服务。</p>
         </div>
         <StatusPill :tone="app.webControl?.running ? 'success' : webControlEnabled ? 'warning' : 'neutral'">
           {{ app.webControl?.running ? '运行中' : webControlEnabled ? '未启动' : '已关闭' }}
@@ -278,18 +290,43 @@ onMounted(loadSecrets);
           <ToggleSwitch
             v-model="webControlEnabled"
             label="启用网页控制"
-            description="保存后立即启停独立网页端口；当前版本仅允许本机浏览器访问。"
+            description="保存后立即启停独立网页端口。"
+          />
+          <ToggleSwitch
+            v-model="webControlLanEnabled"
+            label="允许局域网访问"
+            description="开启后监听电脑全部 IPv4 网卡，手机连接同一局域网即可访问。"
+          />
+          <ToggleSwitch
+            v-model="webControlAuthEnabled"
+            label="启用密码认证"
+            description="建议局域网访问时开启；未登录的设备只能看到登录页。"
           />
         </div>
-        <label class="field web-control-port-field">
-          <span>网页端口</span>
-          <input v-model.number="webControlPort" type="number" min="1024" max="65535" step="1" inputmode="numeric" />
-          <small>不能与内部管理端口 {{ app.config?.adminPort || 17860 }} 或 MCP 端口 {{ app.config?.mcpPort || '--' }} 重复。</small>
-        </label>
+        <div class="web-control-fields">
+          <label class="field web-control-port-field">
+            <span>网页端口</span>
+            <input v-model.number="webControlPort" type="number" min="1024" max="65535" step="1" inputmode="numeric" />
+            <small>不能与内部管理端口 {{ app.config?.adminPort || 17860 }} 或 MCP 端口 {{ app.config?.mcpPort || '--' }} 重复。</small>
+          </label>
+          <label class="field">
+            <span>网页登录密码</span>
+            <input v-model="webControlPassword" type="password" autocomplete="new-password" :placeholder="app.webControl?.passwordConfigured ? '已设置；留空保持原密码' : '至少 8 个字符'" />
+            <small>{{ app.webControl?.passwordConfigured ? '已有密码；填写新值会立即替换并注销旧网页会话。' : '启用密码认证前必须先设置密码。' }}</small>
+          </label>
+        </div>
+      </div>
+      <div v-if="webControlLanEnabled && !webControlAuthEnabled" class="inline-alert warning">
+        <AppIcon name="info" :size="16" />
+        <span>局域网访问未启用密码认证时，同一网络中的其他设备也能修改项目和控制 MCP。建议同时开启密码认证。</span>
+      </div>
+      <div v-if="app.webControl?.running" class="web-control-addresses top-divider">
+        <div><span>本机地址</span><code>{{ app.webControl.url }}</code></div>
+        <div v-for="url in app.webControl.lanUrls || []" :key="url"><span>局域网地址</span><code>{{ url }}</code></div>
       </div>
       <div class="form-footer top-divider">
         <small>
-          地址：{{ app.webControl?.url || `http://127.0.0.1:${webControlPort}/#/control` }}
+          网页分为“项目 / 提示词 / 服务”三个页面；项目页可直接浏览电脑磁盘和文件夹。
           <template v-if="app.webControl?.lastError"> · {{ app.webControl.lastError }}</template>
         </small>
         <div class="form-footer-actions">

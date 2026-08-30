@@ -74,6 +74,9 @@ func TestWebControlDefaultsDisabledAndUsesDedicatedPort(t *testing.T) {
 	if cfg.WebControlPort != 17861 {
 		t.Fatalf("default web control port = %d, want 17861", cfg.WebControlPort)
 	}
+	if cfg.WebControlLANEnabled || cfg.WebControlAuthEnabled {
+		t.Fatalf("web control LAN/auth must be disabled by default: %+v", cfg)
+	}
 }
 
 func TestWebControlRejectsAdminOrMCPPortWhenEnabled(t *testing.T) {

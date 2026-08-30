@@ -95,12 +95,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize web server: %v", err)
 	}
-	controlServer := web.NewControlServer(server.Handler())
+	controlServer := web.NewControlServer(app)
 	server.SetControlServer(controlServer)
-	if err := controlServer.Apply(cfg.WebControlEnabled, cfg.WebControlPort); err != nil {
+	controlHandler, err := server.ControlHandler()
+	if err != nil {
+		log.Fatalf("initialize web control handler: %v", err)
+	}
+	controlServer.SetHandler(controlHandler)
+	if err := controlServer.Apply(cfg.WebControlEnabled, cfg.WebControlPort, cfg.WebControlLANEnabled); err != nil {
 		log.Printf("web control startup failed: %v", err)
 	} else if cfg.WebControlEnabled {
-		log.Printf("web control listening on http://127.0.0.1:%d/#/control", cfg.WebControlPort)
+		log.Printf("web control listening on port %d (LAN=%t)", cfg.WebControlPort, cfg.WebControlLANEnabled)
 	}
 
 	serverErrors := make(chan error, 1)

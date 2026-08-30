@@ -94,6 +94,8 @@ export interface Config {
   adminPort: number;
   webControlEnabled: boolean;
   webControlPort: number;
+  webControlLanEnabled: boolean;
+  webControlAuthEnabled: boolean;
   coreMode: CoreMode;
   coreExecutable: string;
   goCoreExecutable: string;
@@ -149,8 +151,40 @@ export interface WebControlStatus {
   enabled: boolean;
   running: boolean;
   port: number;
+  lanEnabled: boolean;
+  authEnabled: boolean;
+  passwordConfigured: boolean;
   url?: string;
+  lanUrls?: string[];
   lastError?: string;
+}
+
+export interface WebControlAuthStatus {
+  required: boolean;
+  authenticated: boolean;
+}
+
+export interface WebControlOverview {
+  version: string;
+  workspace: string;
+  coreMode: CoreMode;
+  mcpPort: number;
+  mcpRunning: boolean;
+  tunnelRunning: boolean;
+  localMcpUrl?: string;
+  remoteMcpUrl?: string;
+}
+
+export interface ControlDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface ControlDirectoryListing {
+  path: string;
+  parent?: string;
+  roots?: ControlDirectoryEntry[];
+  directories: ControlDirectoryEntry[];
 }
 
 export interface Worktree { path: string; head: string; branch?: string; bare: boolean; detached: boolean; }
