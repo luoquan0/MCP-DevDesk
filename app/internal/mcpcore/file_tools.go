@@ -217,6 +217,14 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 			return nil, err
 		}
 		return map[string]any{"workspace": root}, nil
+	case "get_instructions":
+		managed := s.currentManagedInstructions()
+		return map[string]any{
+			"instructions":              s.initializeInstructions(),
+			"managedInstructions":       managed,
+			"managedInstructionsActive": managed != "",
+			"projectRules":              append([]projectRule(nil), s.projectRules...),
+		}, nil
 	case "read_file":
 		var args readFileArgs
 		if err := decodeToolArguments(arguments, &args); err != nil {

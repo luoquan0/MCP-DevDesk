@@ -70,7 +70,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 		} `json:"result"`
 	}
 	decodeJSON(t, listResponse.Body, &listResult)
-	if len(listResult.Result.Tools) != 32 {
+	if len(listResult.Result.Tools) != 33 {
 		t.Fatalf("tool count = %d", len(listResult.Result.Tools))
 	}
 
@@ -273,7 +273,7 @@ func TestExposedToolSchemasAreValidAndUnique(t *testing.T) {
 			t.Fatalf("tool %q input schema is not JSON encodable: %v", tool.Name, err)
 		}
 	}
-	if len(seen) != 32 {
+	if len(seen) != 33 {
 		t.Fatalf("tool count = %d", len(seen))
 	}
 }
@@ -399,6 +399,104 @@ func TestProjectRulesAreIncludedInInitializeInstructions(t *testing.T) {
 	}
 	if strings.Index(initialized.Result.Instructions, "Finish all executable steps before replying") < strings.Index(initialized.Result.Instructions, "Use the project test command") {
 		t.Fatalf("managed project instructions must be appended after repository guidance: %q", initialized.Result.Instructions)
+	}
+}
+
+func TestManagedInstructionsReloadInvalidatesSessionsAndIsReadable(t *testing.T) {
+	workspace := t.TempDir()
+	instructionsPath := filepath.Join(t.TempDir(), "project-instructions.md")
+	if err := os.WriteFile(instructionsPath, []byte("managed prompt v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := mustNewServer(t, Options{
+		Workspace:               workspace,
+		ManagedInstructions:     "managed prompt v1",
+		ManagedInstructionsFile: instructionsPath,
+	})
+	server.mu.Lock()
+	server.sessions["old-session"] = &session{Protocol: ProtocolVersion}
+	server.mu.Unlock()
+
+	if err := os.WriteFile(instructionsPath, []byte("managed prompt v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.refreshManagedInstructions(); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.currentManagedInstructions(); got != "managed prompt v2" {
+		t.Fatalf("managed instructions = %q", got)
+	}
+	server.mu.RLock()
+	sessionCount := len(server.sessions)
+	server.mu.RUnlock()
+	if sessionCount != 0 {
+		t.Fatalf("stale MCP sessions were not invalidated: %d", sessionCount)
+	}
+
+	result, err := server.executeTool("get_instructions", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["managedInstructions"] != "managed prompt v2" || !strings.Contains(result["instructions"].(string), "managed prompt v2") {
+		t.Fatalf("get_instructions returned stale content: %#v", result)
+	}
+	found := false
+	for _, tool := range server.tools {
+		if tool.Name == "get_instructions" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("get_instructions is not exposed in tools/list")
+	}
+
+	if err := os.Remove(instructionsPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.refreshManagedInstructions(); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.currentManagedInstructions(); got != "" {
+		t.Fatalf("managed instructions were not cleared after file removal: %q", got)
+	}
+}
+
+func TestManagedInstructionsFileCanAppearAfterCoreStartup(t *testing.T) {
+	workspace := t.TempDir()
+	instructionsPath := filepath.Join(t.TempDir(), "project-instructions.md")
+	server := mustNewServer(t, Options{
+		Workspace:               workspace,
+		ManagedInstructionsFile: instructionsPath,
+	})
+	server.mu.Lock()
+	server.sessions["old-session"] = &session{Protocol: ProtocolVersion}
+	server.mu.Unlock()
+
+	if err := server.refreshManagedInstructions(); err != nil {
+		t.Fatal(err)
+	}
+	server.mu.RLock()
+	before := len(server.sessions)
+	server.mu.RUnlock()
+	if before != 1 {
+		t.Fatalf("missing unchanged instructions file invalidated session unexpectedly: %d", before)
+	}
+
+	if err := os.WriteFile(instructionsPath, []byte("first prompt after startup\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.refreshManagedInstructions(); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.currentManagedInstructions(); got != "first prompt after startup" {
+		t.Fatalf("managed instructions = %q", got)
+	}
+	server.mu.RLock()
+	after := len(server.sessions)
+	server.mu.RUnlock()
+	if after != 0 {
+		t.Fatalf("new instructions did not invalidate the old MCP session: %d", after)
 	}
 }
 

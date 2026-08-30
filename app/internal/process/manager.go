@@ -69,18 +69,9 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 		baseURL = "https://" + cfg.Domain
 	}
 
-	instructionsFile := ""
-	if cfg.CoreMode == "go" && m.instructions != nil {
-		instructionsFile = filepath.Join(m.dataDir, "project-instructions.md")
-		content := strings.TrimSpace(m.instructions(cfg.Workspace))
-		if content == "" {
-			_ = os.Remove(instructionsFile)
-			instructionsFile = ""
-		} else {
-			if err := os.WriteFile(instructionsFile, []byte(content+"\n"), 0o600); err != nil {
-				return fmt.Errorf("write project instructions: %w", err)
-			}
-		}
+	instructionsFile, err := m.syncInstructionsFile(cfg)
+	if err != nil {
+		return err
 	}
 	args := mcpArguments(cfg, m.dataDir, baseURL, instructionsFile)
 
@@ -89,6 +80,45 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 	stdout := filepath.Join(m.dataDir, "logs", "mcp-stdout.log")
 	stderr := filepath.Join(m.dataDir, "logs", "mcp-stderr.log")
 	return m.start(&m.mcp, executable, args, m.rootDir, env, stdout, stderr, cfg.HideChildProcessWindows)
+}
+
+// SyncInstructions writes the effective MCP DevDesk instructions for cfg without
+// restarting the core. A running Go core watches this file and invalidates its
+// current MCP sessions when the contents change so the client reconnects and
+// receives the new initialize instructions.
+func (m *Manager) SyncInstructions(cfg model.Config) error {
+	_, err := m.syncInstructionsFile(cfg)
+	return err
+}
+
+func (m *Manager) syncInstructionsFile(cfg model.Config) (string, error) {
+	if cfg.CoreMode != "go" || m.instructions == nil {
+		return "", nil
+	}
+	path := filepath.Join(m.dataDir, "project-instructions.md")
+	content := strings.TrimSpace(m.instructions(cfg.Workspace))
+	if content == "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("remove project instructions: %w", err)
+		}
+		// Always return the watched path for Go cores, even when the file does
+		// not exist yet. This lets a running core notice the first prompt saved
+		// after startup instead of requiring a manual restart.
+		return path, nil
+	}
+	desired := content + "\n"
+	if current, err := os.ReadFile(path); err == nil && string(current) == desired {
+		return path, nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read project instructions: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", fmt.Errorf("create project instructions directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(desired), 0o600); err != nil {
+		return "", fmt.Errorf("write project instructions: %w", err)
+	}
+	return path, nil
 }
 
 func selectedMCPExecutable(cfg model.Config) string {

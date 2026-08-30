@@ -107,7 +107,7 @@ export const useAppStore = defineStore("app", {
         method: "PUT",
         body: { globalPrompt } as unknown as BodyInit,
       }));
-      ui.toast("全局项目提示词已保存", "新的 Go MCP 会话将在核心重新启动或重新连接后加载。", "success");
+      ui.toast("全局项目提示词已保存", "Go MCP 核心已同步提示词；现有连接会自动重新握手并加载新内容。", "success");
       return this.projectPromptSettings;
     },
     async updateProjectPrompt(id: string, prompt: string) {
@@ -117,7 +117,7 @@ export const useAppStore = defineStore("app", {
         body: { prompt } as unknown as BodyInit,
       }));
       await this.loadProjects();
-      ui.toast("项目提示词已保存", `${project.name} 将在新的 Go MCP 会话中加载该提示词。`, "success");
+      ui.toast("项目提示词已保存", `${project.name} 的 Go MCP 提示词已同步，连接会自动刷新。`, "success");
       return project;
     },
     async loadInstances() {

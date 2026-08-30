@@ -15,7 +15,6 @@ Add-Type -AssemblyName System.Net.Http
 $DataDir = Join-Path $env:TEMP ("mcp-devdesk-smoke-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 $InstructionsFile = Join-Path $DataDir "managed-instructions.md"
-Set-Content -LiteralPath $InstructionsFile -Encoding UTF8 -NoNewline -Value "SMOKE_MANAGED_PROJECT_PROMPT: finish all executable steps before replying."
 $BaseUrl = "http://127.0.0.1:$Port"
 $RedirectUri = "http://127.0.0.1:43210/callback"
 $OwnerPassword = "smoke-owner-password"
@@ -83,7 +82,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.8.6") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.8.7") { return }
             }
         } catch {}
         if ($started.HasExited) { break }
@@ -223,7 +222,7 @@ try {
     if ($initialize.Status -ne 200) { throw "MCP initialize failed: $($initialize.Status) $($initialize.Body)" }
     $initialized = $initialize.Body | ConvertFrom-Json
     if ($initialized.result.protocolVersion -ne "2025-06-18") { throw "MCP protocol negotiation failed" }
-    if ([string]$initialized.result.instructions -notlike "*SMOKE_MANAGED_PROJECT_PROMPT*") { throw "Managed project prompt was not included in MCP initialize instructions" }
+    if ([string]$initialized.result.instructions -like "*SMOKE_MANAGED_PROJECT_PROMPT*") { throw "Managed project prompt unexpectedly existed before it was saved" }
     $sessionId = [string]::Join("", $initialize.Response.Headers.GetValues("Mcp-Session-Id"))
     if (-not $sessionId) { throw "MCP initialize returned no session ID" }
     $mcpHeaders["Mcp-Session-Id"] = $sessionId
@@ -235,8 +234,8 @@ try {
     $tools = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
     if ($tools.Status -ne 200) { throw "tools/list failed: $($tools.Status) $($tools.Body)" }
     $toolList = ($tools.Body | ConvertFrom-Json).result.tools
-    if ($toolList.Count -lt 32) { throw "tools/list returned too few tools: $($toolList.Count)" }
-    foreach ($requiredTool in @("read_files", "project_snapshot")) {
+    if ($toolList.Count -lt 33) { throw "tools/list returned too few tools: $($toolList.Count)" }
+    foreach ($requiredTool in @("read_files", "project_snapshot", "get_instructions")) {
         if (-not ($toolList | Where-Object { $_.name -eq $requiredTool } | Select-Object -First 1)) {
             throw "$requiredTool tool is missing"
         }
@@ -273,6 +272,40 @@ try {
     $call = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"server_info","arguments":{}}}'
     if ($call.Status -ne 200 -or ($call.Body | ConvertFrom-Json).result.isError) { throw "tools/call failed: $($call.Status) $($call.Body)" }
 
+    $instructionsCall = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"get_instructions","arguments":{}}}'
+    $instructionsResult = ($instructionsCall.Body | ConvertFrom-Json).result
+    if ($instructionsCall.Status -ne 200 -or $instructionsResult.isError -or
+        $instructionsResult.structuredContent.managedInstructionsActive) {
+        throw "get_instructions unexpectedly reported a managed prompt before save: $($instructionsCall.Status) $($instructionsCall.Body)"
+    }
+
+    Set-Content -LiteralPath $InstructionsFile -Encoding UTF8 -NoNewline -Value "SMOKE_MANAGED_PROJECT_PROMPT: first runtime prompt save works."
+    $staleAfterPromptChange = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":301,"method":"ping"}'
+    if ($staleAfterPromptChange.Status -ne 404) {
+        throw "Prompt change must invalidate the old MCP session, got $($staleAfterPromptChange.Status): $($staleAfterPromptChange.Body)"
+    }
+    $mcpHeaders.Remove("Mcp-Session-Id")
+    $mcpHeaders.Remove("MCP-Protocol-Version")
+    $reinitialize = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":302,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+    if ($reinitialize.Status -ne 200) { throw "MCP reinitialize after prompt change failed: $($reinitialize.Status) $($reinitialize.Body)" }
+    $reinitialized = $reinitialize.Body | ConvertFrom-Json
+    if ([string]$reinitialized.result.instructions -notlike "*SMOKE_MANAGED_PROJECT_PROMPT*") {
+        throw "Updated managed prompt was not included after automatic MCP reinitialize"
+    }
+    $sessionId = [string]::Join("", $reinitialize.Response.Headers.GetValues("Mcp-Session-Id"))
+    if (-not $sessionId) { throw "MCP reinitialize returned no session ID" }
+    $mcpHeaders["Mcp-Session-Id"] = $sessionId
+    $mcpHeaders["MCP-Protocol-Version"] = "2025-06-18"
+    $renotification = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    if ($renotification.Status -ne 202) { throw "Reinitialized notification response is invalid: $($renotification.Status) $($renotification.Body)" }
+
+    $updatedInstructionsCall = Send-Http -Method "POST" -Uri "$BaseUrl/mcp" -ContentType "application/json" -Headers $mcpHeaders -Body '{"jsonrpc":"2.0","id":303,"method":"tools/call","params":{"name":"get_instructions","arguments":{}}}'
+    $updatedInstructionsResult = ($updatedInstructionsCall.Body | ConvertFrom-Json).result
+    if ($updatedInstructionsCall.Status -ne 200 -or $updatedInstructionsResult.isError -or
+        [string]$updatedInstructionsResult.structuredContent.managedInstructions -notlike "*SMOKE_MANAGED_PROJECT_PROMPT*") {
+        throw "get_instructions did not return the updated runtime prompt: $($updatedInstructionsCall.Status) $($updatedInstructionsCall.Body)"
+    }
+
     $batchRequest = @{
         jsonrpc = "2.0"
         id = 31
@@ -291,7 +324,7 @@ try {
     if ($batchCall.Status -ne 200) { throw "read_files call failed: $($batchCall.Status) $($batchCall.Body)" }
     $batchResult = ($batchCall.Body | ConvertFrom-Json).result
     if ($batchResult.isError -or $batchResult.structuredContent.succeeded -ne 2 -or
-        $batchResult.structuredContent.files[1].content -notlike '*0.8.6*') {
+        $batchResult.structuredContent.files[1].content -notlike '*0.8.7*') {
         throw "read_files returned an unexpected result: $($batchCall.Body)"
     }
 

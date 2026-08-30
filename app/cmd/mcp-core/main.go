@@ -70,16 +70,18 @@ func main() {
 	managedInstructions := ""
 	if path := strings.TrimSpace(*instructionsFile); path != "" {
 		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 			log.Fatalf("read instructions file: %v", readErr)
 		}
-		if len(raw) > 96*1024 {
-			log.Fatalf("instructions file cannot exceed 98304 bytes")
+		if readErr == nil {
+			if len(raw) > 96*1024 {
+				log.Fatalf("instructions file cannot exceed 98304 bytes")
+			}
+			if !utf8.Valid(raw) {
+				log.Fatalf("instructions file must be valid UTF-8")
+			}
+			managedInstructions = strings.TrimSpace(string(raw))
 		}
-		if !utf8.Valid(raw) {
-			log.Fatalf("instructions file must be valid UTF-8")
-		}
-		managedInstructions = strings.TrimSpace(string(raw))
 	}
 
 	baseURL := strings.TrimSuffix(strings.TrimSpace(*serverURL), "/")
@@ -109,19 +111,20 @@ func main() {
 	}
 
 	core, err := mcpcore.New(mcpcore.Options{
-		Name:                "mcp-devdesk-go-core",
-		Version:             buildinfo.Version,
-		Workspace:           resolvedWorkspace,
-		ManagedInstructions: managedInstructions,
-		PermissionMode:      *permissionMode,
-		AllowNetwork:        *allowNetwork,
-		AuditPath:           resolvedAuditPath,
-		LoggingConfig:       strings.TrimSpace(*loggingConfig),
-		FileScope:           *fileScope,
-		AllowedRoots:        append([]string(nil), allowedRoots...),
-		ToolProfile:         *toolProfile,
-		OAuth:               oauthOptions,
-		AllowedOrigins:      []string{issuerURL},
+		Name:                    "mcp-devdesk-go-core",
+		Version:                 buildinfo.Version,
+		Workspace:               resolvedWorkspace,
+		ManagedInstructions:     managedInstructions,
+		ManagedInstructionsFile: strings.TrimSpace(*instructionsFile),
+		PermissionMode:          *permissionMode,
+		AllowNetwork:            *allowNetwork,
+		AuditPath:               resolvedAuditPath,
+		LoggingConfig:           strings.TrimSpace(*loggingConfig),
+		FileScope:               *fileScope,
+		AllowedRoots:            append([]string(nil), allowedRoots...),
+		ToolProfile:             *toolProfile,
+		OAuth:                   oauthOptions,
+		AllowedOrigins:          []string{issuerURL},
 	})
 	if err != nil {
 		log.Fatal(err)

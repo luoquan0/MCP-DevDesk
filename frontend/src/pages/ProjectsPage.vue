@@ -282,10 +282,10 @@ async function rollbackCommit(commit: GitCommit) {
       <label class="field project-prompt-field">
         <span>提示词内容</span>
         <textarea v-model="globalPromptDraft" rows="8" spellcheck="false" placeholder="例如：任务未完成前不要只汇报进度，能继续执行时直接完成所有步骤后再回复用户。" />
-        <small>{{ globalPromptBytes }} / {{ app.projectPromptSettings?.maxPromptBytes || 32768 }} bytes · Go 主核心会在新的 MCP 会话中自动注入。</small>
+        <small>{{ globalPromptBytes }} / {{ app.projectPromptSettings?.maxPromptBytes || 32768 }} bytes · Go 核心会把保存后的内容注入 MCP initialize instructions。</small>
       </label>
       <div class="form-footer">
-        <small>保存不会中断当前会话；正在运行的 Go 核心需要重新启动并由客户端重新建立 MCP 会话后加载新提示词。Python 兼容核心不保证支持该注入机制。</small>
+        <small>保存后会立即同步到所有 Go MCP 实例；运行中的核心检测到变化后会刷新旧会话，让客户端重新握手并加载新提示词。Legacy/Python 兼容核心不支持该注入机制。</small>
         <div class="form-footer-actions">
           <AppButton tone="secondary" @click="useGlobalCompletionTemplate">使用“任务完成后再回复”模板</AppButton>
           <AppButton tone="primary" :loading="app.actionPending === 'save-global-project-prompt'" @click="saveGlobalPrompt">保存全局提示词</AppButton>
@@ -369,7 +369,7 @@ async function rollbackCommit(commit: GitCommit) {
             <small>{{ projectPromptBytes }} / {{ app.projectPromptSettings?.maxPromptBytes || 32768 }} bytes</small>
           </label>
           <div class="form-footer">
-            <small>保存后不会修改项目目录中的任何文件。新的 Go MCP 会话会自动加载全局提示词 + 当前项目提示词。</small>
+            <small>保存后不会修改项目目录中的任何文件。对应 Go MCP 实例会立即同步，并在自动重新握手后加载“全局提示词 + 当前项目提示词”。</small>
             <div class="form-footer-actions">
               <AppButton tone="quiet" @click="cancelPromptEdit">取消</AppButton>
               <AppButton tone="secondary" @click="useProjectCompletionTemplate">使用任务完成模板</AppButton>

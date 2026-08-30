@@ -11,64 +11,69 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	ProtocolVersion        = "2025-06-18"
-	LegacyProtocolVersion  = "2025-03-26"
-	SessionHeader          = "Mcp-Session-Id"
-	ProtocolVersionHeader  = "MCP-Protocol-Version"
-	defaultMaxBodyBytes    = int64(1 << 20)
-	defaultToolConcurrency = 8
-	maxMCPSessions         = 64
-	maxSessionEvents       = 64
-	maxSessionEventBytes   = 2 * 1024 * 1024
-	mcpSessionTTL          = 12 * time.Hour
+	ProtocolVersion            = "2025-06-18"
+	LegacyProtocolVersion      = "2025-03-26"
+	SessionHeader              = "Mcp-Session-Id"
+	ProtocolVersionHeader      = "MCP-Protocol-Version"
+	defaultMaxBodyBytes        = int64(1 << 20)
+	defaultToolConcurrency     = 8
+	maxMCPSessions             = 64
+	maxSessionEvents           = 64
+	maxSessionEventBytes       = 2 * 1024 * 1024
+	mcpSessionTTL              = 12 * time.Hour
+	maxManagedInstructionBytes = 96 * 1024
 )
 
 type Options struct {
-	Name                string
-	Version             string
-	Workspace           string
-	ManagedInstructions string
-	MaxBodyBytes        int64
-	OAuth               OAuthOptions
-	AllowedOrigins      []string
-	PermissionMode      string
-	AllowNetwork        bool
-	AuditPath           string
-	LoggingConfig       string
-	FileScope           string
-	AllowedRoots        []string
-	ToolProfile         string
-	MaxConcurrentTools  int
+	Name                    string
+	Version                 string
+	Workspace               string
+	ManagedInstructions     string
+	ManagedInstructionsFile string
+	MaxBodyBytes            int64
+	OAuth                   OAuthOptions
+	AllowedOrigins          []string
+	PermissionMode          string
+	AllowNetwork            bool
+	AuditPath               string
+	LoggingConfig           string
+	FileScope               string
+	AllowedRoots            []string
+	ToolProfile             string
+	MaxConcurrentTools      int
 }
 
 type Server struct {
-	name                string
-	version             string
-	workspace           string
-	maxBodyBytes        int64
-	startedAt           time.Time
-	oauth               *oauthServer
-	allowedOrigins      map[string]struct{}
-	permissionMode      string
-	allowNetwork        bool
-	toolProfile         string
-	audit               *auditLogger
-	commands            *commandManager
-	imageHTTPClient     *http.Client
-	imageURLValidator   func(*url.URL) error
-	fileScope           string
-	allowedRoots        []string
-	cwdMu               sync.RWMutex
-	defaultCWD          string
-	projectRules        []projectRule
-	managedInstructions string
+	name                    string
+	version                 string
+	workspace               string
+	maxBodyBytes            int64
+	startedAt               time.Time
+	oauth                   *oauthServer
+	allowedOrigins          map[string]struct{}
+	permissionMode          string
+	allowNetwork            bool
+	toolProfile             string
+	audit                   *auditLogger
+	commands                *commandManager
+	imageHTTPClient         *http.Client
+	imageURLValidator       func(*url.URL) error
+	fileScope               string
+	allowedRoots            []string
+	cwdMu                   sync.RWMutex
+	defaultCWD              string
+	projectRules            []projectRule
+	managedInstructions     string
+	managedInstructionsFile string
 
 	mu        sync.RWMutex
 	sessions  map[string]*session
@@ -199,6 +204,12 @@ func New(options Options) (*Server, error) {
 			Description: "Return the workspace currently assigned to the Go MCP core.",
 			InputSchema: emptyObjectSchema,
 		},
+		{
+			Name:        "get_instructions",
+			Title:       "Get Effective Instructions",
+			Description: "Return the effective MCP DevDesk instructions currently applied to this connection, including workspace guidance and managed global/project prompts. Use this to verify which instructions are actually active.",
+			InputSchema: emptyObjectSchema,
+		},
 	}
 	tools = append(tools, previewFileTools()...)
 	tools = append(tools, gitTools()...)
@@ -229,25 +240,26 @@ func New(options Options) (*Server, error) {
 		}
 	}
 	server := &Server{
-		name:                options.Name,
-		version:             options.Version,
-		workspace:           options.Workspace,
-		maxBodyBytes:        options.MaxBodyBytes,
-		startedAt:           time.Now(),
-		oauth:               oauth,
-		allowedOrigins:      allowedOrigins,
-		permissionMode:      options.PermissionMode,
-		allowNetwork:        options.AllowNetwork,
-		toolProfile:         options.ToolProfile,
-		audit:               newAuditLogger(options.AuditPath, options.LoggingConfig),
-		fileScope:           options.FileScope,
-		allowedRoots:        append([]string(nil), options.AllowedRoots...),
-		defaultCWD:          options.Workspace,
-		projectRules:        loadProjectRules(options.Workspace, maxProjectRuleBytes),
-		managedInstructions: strings.TrimSpace(options.ManagedInstructions),
-		sessions:            make(map[string]*session),
-		tools:               tools,
-		toolSlots:           make(chan struct{}, options.MaxConcurrentTools),
+		name:                    options.Name,
+		version:                 options.Version,
+		workspace:               options.Workspace,
+		maxBodyBytes:            options.MaxBodyBytes,
+		startedAt:               time.Now(),
+		oauth:                   oauth,
+		allowedOrigins:          allowedOrigins,
+		permissionMode:          options.PermissionMode,
+		allowNetwork:            options.AllowNetwork,
+		toolProfile:             options.ToolProfile,
+		audit:                   newAuditLogger(options.AuditPath, options.LoggingConfig),
+		fileScope:               options.FileScope,
+		allowedRoots:            append([]string(nil), options.AllowedRoots...),
+		defaultCWD:              options.Workspace,
+		projectRules:            loadProjectRules(options.Workspace, maxProjectRuleBytes),
+		managedInstructions:     strings.TrimSpace(options.ManagedInstructions),
+		managedInstructionsFile: strings.TrimSpace(options.ManagedInstructionsFile),
+		sessions:                make(map[string]*session),
+		tools:                   tools,
+		toolSlots:               make(chan struct{}, options.MaxConcurrentTools),
 	}
 	server.imageURLValidator = validateImageDownloadURL
 	server.imageHTTPClient = newImageDownloadClient(server.imageURLValidator)
@@ -329,6 +341,10 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePostJSON(w http.ResponseWriter, r *http.Request) {
+	if err := s.refreshManagedInstructions(); err != nil {
+		writeRPCError(w, http.StatusInternalServerError, json.RawMessage("null"), -32603, "failed to refresh managed instructions", err.Error())
+		return
+	}
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		writeJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": "Content-Type must be application/json"})
@@ -500,7 +516,8 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request 
 
 func (s *Server) initializeInstructions() string {
 	base := "MCP DevDesk Go core. Use the exposed tools only within the configured workspace and permission policy."
-	if s.managedInstructions == "" && len(s.projectRules) == 0 {
+	managedInstructions := s.currentManagedInstructions()
+	if managedInstructions == "" && len(s.projectRules) == 0 {
 		return base
 	}
 	var builder strings.Builder
@@ -520,14 +537,52 @@ func (s *Server) initializeInstructions() string {
 			}
 		}
 	}
-	if s.managedInstructions != "" {
+	if managedInstructions != "" {
 		builder.WriteString("\n\nMCP DevDesk managed project instructions (highest project-level priority; apply these when repository guidance conflicts):\n\n")
-		builder.WriteString(s.managedInstructions)
-		if !strings.HasSuffix(s.managedInstructions, "\n") {
+		builder.WriteString(managedInstructions)
+		if !strings.HasSuffix(managedInstructions, "\n") {
 			builder.WriteByte('\n')
 		}
 	}
 	return builder.String()
+}
+
+func (s *Server) currentManagedInstructions() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.managedInstructions
+}
+
+func (s *Server) refreshManagedInstructions() error {
+	path := strings.TrimSpace(s.managedInstructionsFile)
+	if path == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		raw = nil
+	}
+	if len(raw) > maxManagedInstructionBytes {
+		return fmt.Errorf("instructions file cannot exceed %d bytes", maxManagedInstructionBytes)
+	}
+	if !utf8.Valid(raw) {
+		return errors.New("instructions file must be valid UTF-8")
+	}
+	next := strings.TrimSpace(string(raw))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if next == s.managedInstructions {
+		return nil
+	}
+	s.managedInstructions = next
+	// MCP has no standard notification for changed initialize instructions.
+	// Drop existing sessions so the next client request is forced through a
+	// fresh initialize handshake and receives the updated prompt immediately.
+	s.sessions = make(map[string]*session)
+	return nil
 }
 
 func compactToolResultText(name string, structured map[string]any, full []byte) string {

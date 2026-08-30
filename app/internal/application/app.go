@@ -106,14 +106,76 @@ func (a *App) ProjectPromptSettings() projectstore.PromptSettings {
 }
 
 func (a *App) UpdateGlobalProjectPrompt(prompt string) (projectstore.PromptSettings, error) {
+	previous := a.projects.GlobalPrompt()
 	if err := a.projects.SetGlobalPrompt(prompt); err != nil {
 		return projectstore.PromptSettings{}, err
+	}
+	if err := a.syncManagedInstructionFiles(""); err != nil {
+		rollbackErr := a.projects.SetGlobalPrompt(previous)
+		rollbackSyncErr := a.syncManagedInstructionFiles("")
+		if rollbackErr != nil || rollbackSyncErr != nil {
+			return projectstore.PromptSettings{}, fmt.Errorf("sync global project prompt: %w; rollback failed: store=%v sync=%v", err, rollbackErr, rollbackSyncErr)
+		}
+		return projectstore.PromptSettings{}, fmt.Errorf("sync global project prompt: %w", err)
 	}
 	return a.ProjectPromptSettings(), nil
 }
 
 func (a *App) UpdateProjectPrompt(id, prompt string) (projectstore.Project, error) {
-	return a.projects.UpdatePrompt(id, prompt)
+	previous, ok := a.projects.Get(id)
+	if !ok {
+		return projectstore.Project{}, errors.New("project not found")
+	}
+	updated, err := a.projects.UpdatePrompt(id, prompt)
+	if err != nil {
+		return projectstore.Project{}, err
+	}
+	if err := a.syncManagedInstructionFiles(updated.Path); err != nil {
+		_, rollbackErr := a.projects.UpdatePrompt(id, previous.Prompt)
+		rollbackSyncErr := a.syncManagedInstructionFiles(previous.Path)
+		if rollbackErr != nil || rollbackSyncErr != nil {
+			return projectstore.Project{}, fmt.Errorf("sync project prompt: %w; rollback failed: store=%v sync=%v", err, rollbackErr, rollbackSyncErr)
+		}
+		return projectstore.Project{}, fmt.Errorf("sync project prompt: %w", err)
+	}
+	return updated, nil
+}
+
+func (a *App) syncManagedInstructionFiles(workspace string) error {
+	var problems []string
+
+	a.mu.Lock()
+	primaryCfg := a.config.Get()
+	if workspace == "" || samePath(primaryCfg.Workspace, workspace) {
+		if err := a.process.SyncInstructions(primaryCfg); err != nil {
+			problems = append(problems, "primary: "+err.Error())
+		}
+	}
+	a.mu.Unlock()
+
+	a.instanceMu.RLock()
+	runtimes := make(map[string]*managedInstance, len(a.instanceRuntime))
+	for id, runtime := range a.instanceRuntime {
+		runtimes[id] = runtime
+	}
+	a.instanceMu.RUnlock()
+	for id, runtime := range runtimes {
+		if runtime == nil {
+			continue
+		}
+		runtime.mu.Lock()
+		cfg := runtime.config.Get()
+		if workspace == "" || samePath(cfg.Workspace, workspace) {
+			if err := runtime.process.SyncInstructions(cfg); err != nil {
+				problems = append(problems, id+": "+err.Error())
+			}
+		}
+		runtime.mu.Unlock()
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 func (a *App) AddProject(name, path string) (projectstore.Project, error) {
@@ -142,6 +204,9 @@ func (a *App) UpdateProjectPath(ctx context.Context, id, path string) (projectst
 
 	updated, err := a.projects.UpdatePath(id, candidate.Path)
 	if err == nil {
+		if syncErr := a.syncManagedInstructionFiles(updated.Path); syncErr != nil {
+			return projectstore.Project{}, fmt.Errorf("project path updated but prompt synchronization failed: %w", syncErr)
+		}
 		return updated, nil
 	}
 	if !active {

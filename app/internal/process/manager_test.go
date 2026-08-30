@@ -1,6 +1,7 @@
 package process
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -85,6 +86,61 @@ func TestGoCoreLaunchConfiguration(t *testing.T) {
 	}
 	if countArgument(args, "--allowed-root") != 2 {
 		t.Fatalf("allowed root argument count = %d", countArgument(args, "--allowed-root"))
+	}
+}
+
+func TestSyncInstructionsUpdatesAndRemovesManagedFile(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	current := "global prompt v1"
+	manager := NewManager("", dataDir, nil, nil, func(gotWorkspace string) string {
+		if gotWorkspace != workspace {
+			t.Fatalf("workspace = %q, want %q", gotWorkspace, workspace)
+		}
+		return current
+	})
+	cfg := model.Config{CoreMode: "go", Workspace: workspace}
+	path := filepath.Join(dataDir, "project-instructions.md")
+
+	if err := manager.SyncInstructions(cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "global prompt v1\n" {
+		t.Fatalf("instructions = %q", raw)
+	}
+
+	current = "global prompt v2"
+	if err := manager.SyncInstructions(cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "global prompt v2\n" {
+		t.Fatalf("updated instructions = %q", raw)
+	}
+
+	current = ""
+	if err := manager.SyncInstructions(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("instructions file still exists, stat err = %v", err)
+	}
+	watchedPath, err := manager.syncInstructionsFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if watchedPath != path {
+		t.Fatalf("empty prompt watch path = %q, want %q", watchedPath, path)
 	}
 }
 
