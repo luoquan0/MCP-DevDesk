@@ -376,6 +376,7 @@ func (s *oauthServer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", authorizationContentSecurityPolicy(request.redirectURI))
 		_ = authorizationPage.Execute(w, map[string]string{
 			"ClientName":          request.clientName,
 			"ClientID":            request.clientID,
@@ -423,6 +424,16 @@ func (s *oauthServer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	redirect.RawQuery = query.Encode()
 	http.Redirect(w, r, redirect.String(), http.StatusFound)
+}
+
+func authorizationContentSecurityPolicy(redirectURI string) string {
+	policy := "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
+	if validateRedirectURI(redirectURI) == nil {
+		if origin := normalizeOrigin(redirectURI); origin != "" {
+			policy += " " + origin
+		}
+	}
+	return policy + "; frame-ancestors 'none'; base-uri 'none'"
 }
 
 type validatedAuthorizationRequest struct {

@@ -83,7 +83,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.8.5") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.8.6") { return }
             }
         } catch {}
         if ($started.HasExited) { break }
@@ -168,6 +168,23 @@ try {
     if (-not $registered.client_id) { throw "Dynamic registration returned no client_id" }
 
     $verifier = "s" * 43
+    $authorizeQuery = Form-Encode @{
+        response_type = "code"
+        client_id = $registered.client_id
+        redirect_uri = $RedirectUri
+        code_challenge = (Base64Url-Sha256 $verifier)
+        code_challenge_method = "S256"
+        resource = $BaseUrl
+        scope = "mcp"
+        state = "smoke-state"
+    }
+    $authorizePage = Send-Http -Method "GET" -Uri "$BaseUrl/oauth/authorize?$authorizeQuery"
+    if ($authorizePage.Status -ne 200) { throw "Authorization page failed: $($authorizePage.Status) $($authorizePage.Body)" }
+    $authorizeCsp = [string]::Join(",", $authorizePage.Response.Headers.GetValues("Content-Security-Policy"))
+    if ($authorizeCsp -notlike "*form-action 'self' http://127.0.0.1:43210*") {
+        throw "Authorization page CSP does not allow the validated callback origin: $authorizeCsp"
+    }
+
     $authorizeBody = Form-Encode @{
         response_type = "code"
         client_id = $registered.client_id
@@ -274,7 +291,7 @@ try {
     if ($batchCall.Status -ne 200) { throw "read_files call failed: $($batchCall.Status) $($batchCall.Body)" }
     $batchResult = ($batchCall.Body | ConvertFrom-Json).result
     if ($batchResult.isError -or $batchResult.structuredContent.succeeded -ne 2 -or
-        $batchResult.structuredContent.files[1].content -notlike '*0.8.5*') {
+        $batchResult.structuredContent.files[1].content -notlike '*0.8.6*') {
         throw "read_files returned an unexpected result: $($batchCall.Body)"
     }
 

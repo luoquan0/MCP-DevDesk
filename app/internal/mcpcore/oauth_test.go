@@ -51,6 +51,27 @@ func TestOAuthPKCEAndProtectedMCP(t *testing.T) {
 		t.Fatal("dynamic registration did not return a client ID")
 	}
 
+	authorizePageValues := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {registered.ClientID},
+		"redirect_uri":          {"http://127.0.0.1:43210/callback"},
+		"state":                 {"test-state"},
+		"code_challenge":        {pkceChallenge(strings.Repeat("a", 43))},
+		"code_challenge_method": {"S256"},
+		"resource":              {resource},
+		"scope":                 {"mcp"},
+	}
+	authorizePageRequest := httptest.NewRequest(http.MethodGet, issuer+"/oauth/authorize?"+authorizePageValues.Encode(), nil)
+	authorizePageRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(authorizePageRecorder, authorizePageRequest)
+	if authorizePageRecorder.Code != http.StatusOK {
+		t.Fatalf("authorize page status = %d, body = %s", authorizePageRecorder.Code, authorizePageRecorder.Body.String())
+	}
+	authorizeCSP := authorizePageRecorder.Header().Get("Content-Security-Policy")
+	if !strings.Contains(authorizeCSP, "form-action 'self' http://127.0.0.1:43210") {
+		t.Fatalf("authorize page CSP does not allow validated redirect origin: %q", authorizeCSP)
+	}
+
 	verifier := strings.Repeat("a", 43)
 	authorizeValues := url.Values{
 		"response_type":         {"code"},
@@ -143,6 +164,21 @@ func TestOAuthPKCEAndProtectedMCP(t *testing.T) {
 	handler.ServeHTTP(reuseRecorder, reuseRequest)
 	if reuseRecorder.Code != http.StatusBadRequest {
 		t.Fatalf("reused refresh token status = %d", reuseRecorder.Code)
+	}
+}
+
+func TestAuthorizationContentSecurityPolicyUsesOnlyValidatedRedirectOrigin(t *testing.T) {
+	policy := authorizationContentSecurityPolicy("https://chatgpt.com/connector/oauth/callback?state=abc")
+	if !strings.Contains(policy, "form-action 'self' https://chatgpt.com") {
+		t.Fatalf("validated HTTPS redirect origin missing from policy: %q", policy)
+	}
+	if strings.Contains(policy, "/connector/oauth/callback") || strings.Contains(policy, "state=abc") || strings.Contains(policy, "*") {
+		t.Fatalf("policy contains redirect path/query or wildcard: %q", policy)
+	}
+
+	invalid := authorizationContentSecurityPolicy("javascript://example.invalid/callback")
+	if invalid != "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" {
+		t.Fatalf("invalid redirect URI weakened policy: %q", invalid)
 	}
 }
 
