@@ -65,7 +65,7 @@ func TestGoCoreLaunchConfiguration(t *testing.T) {
 	if selected := selectedMCPExecutable(cfg); selected != cfg.GoCoreExecutable {
 		t.Fatalf("selected executable = %q", selected)
 	}
-	args := mcpArguments(cfg, dataDir, "https://mcp.example", `C:\data\project-instructions.md`)
+	args := mcpArguments(cfg, dataDir, "https://mcp.example", `C:\data\global-instructions.md`)
 	wantPairs := map[string]string{
 		"--workspace":         cfg.Workspace,
 		"--host":              cfg.MCPHost,
@@ -74,7 +74,7 @@ func TestGoCoreLaunchConfiguration(t *testing.T) {
 		"--data-dir":          dataDir,
 		"--server-url":        "https://mcp.example",
 		"--file-scope":        cfg.FileScope,
-		"--instructions-file": `C:\data\project-instructions.md`,
+		"--instructions-file": `C:\data\global-instructions.md`,
 	}
 	for flag, expected := range wantPairs {
 		if !argumentPairExists(args, flag, expected) {
@@ -103,7 +103,7 @@ func TestSyncInstructionsUpdatesAndRemovesManagedFile(t *testing.T) {
 		return current
 	})
 	cfg := model.Config{CoreMode: "go", Workspace: workspace}
-	path := filepath.Join(dataDir, "project-instructions.md")
+	path := filepath.Join(dataDir, "global-instructions.md")
 
 	if err := manager.SyncInstructions(cfg); err != nil {
 		t.Fatal(err)

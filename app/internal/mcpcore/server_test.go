@@ -397,8 +397,50 @@ func TestProjectRulesAreIncludedInInitializeInstructions(t *testing.T) {
 		!strings.Contains(initialized.Result.Instructions, "Use the project test command") {
 		t.Fatalf("project instructions were not loaded: %q", initialized.Result.Instructions)
 	}
-	if strings.Index(initialized.Result.Instructions, "Finish all executable steps before replying") < strings.Index(initialized.Result.Instructions, "Use the project test command") {
-		t.Fatalf("managed project instructions must be appended after repository guidance: %q", initialized.Result.Instructions)
+	if strings.Index(initialized.Result.Instructions, "Finish all executable steps before replying") > strings.Index(initialized.Result.Instructions, "Use the project test command") {
+		t.Fatalf("global instructions must appear before more specific repository guidance: %q", initialized.Result.Instructions)
+	}
+}
+
+func TestProjectRulesReloadWhenAgentsFileChanges(t *testing.T) {
+	workspace := t.TempDir()
+	server := mustNewServer(t, Options{Workspace: workspace})
+	server.mu.Lock()
+	server.sessions["old-session"] = &session{Protocol: ProtocolVersion}
+	server.mu.Unlock()
+
+	agentsPath := filepath.Join(workspace, "AGENTS.md")
+	if err := os.WriteFile(agentsPath, []byte("project rule v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server.refreshProjectRules()
+	rules := server.currentProjectRules()
+	if len(rules) != 1 || !strings.Contains(rules[0].Content, "project rule v1") {
+		t.Fatalf("new AGENTS.md was not loaded: %#v", rules)
+	}
+	server.mu.RLock()
+	sessionCount := len(server.sessions)
+	server.mu.RUnlock()
+	if sessionCount != 0 {
+		t.Fatalf("new AGENTS.md did not invalidate stale sessions: %d", sessionCount)
+	}
+
+	server.mu.Lock()
+	server.sessions["second-session"] = &session{Protocol: ProtocolVersion}
+	server.mu.Unlock()
+	if err := os.WriteFile(agentsPath, []byte("project rule v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server.refreshProjectRules()
+	rules = server.currentProjectRules()
+	if len(rules) != 1 || !strings.Contains(rules[0].Content, "project rule v2") {
+		t.Fatalf("updated AGENTS.md was not loaded: %#v", rules)
+	}
+	server.mu.RLock()
+	sessionCount = len(server.sessions)
+	server.mu.RUnlock()
+	if sessionCount != 0 {
+		t.Fatalf("updated AGENTS.md did not invalidate stale sessions: %d", sessionCount)
 	}
 }
 

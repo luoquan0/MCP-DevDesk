@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ManagerPath = "",
     [string]$CorePath = ""
 )
@@ -59,7 +59,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.8.8") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.8.9") {
                 $ready = $true
                 break
             }
@@ -68,7 +68,7 @@ try {
     }
     if (-not $ready) { throw "Manager did not become healthy" }
 
-    $promptSettings = Send-Json -Method "PUT" -Uri "$BaseUrl/api/projects/prompt-settings" -Body @{ globalPrompt = "SMOKE_GLOBAL_PROMPT: finish the complete task before replying." }
+    $promptSettings = Send-Json -Method "PUT" -Uri "$BaseUrl/api/projects/prompt-settings" -Body @{ enabled = $true; globalPrompt = "SMOKE_GLOBAL_PROMPT: finish the complete task before replying." }
     if ($promptSettings.StatusCode -ne 200) { throw "Global project prompt endpoint failed" }
     $projects = (Send-Json -Method "GET" -Uri "$BaseUrl/api/projects").Content | ConvertFrom-Json
     $project = @($projects)[0]
@@ -84,11 +84,17 @@ try {
     if ($configUpdate.StatusCode -ne 200) { throw "Failed to select Go core for prompt smoke test" }
     $startMcp = Send-Json -Method "POST" -Uri "$BaseUrl/api/services/start"
     if ($startMcp.StatusCode -ne 200) { throw "Failed to start Go core for prompt smoke test" }
-    $instructionsPath = Join-Path $TestRoot "data\devdesk\project-instructions.md"
-    if (-not (Test-Path -LiteralPath $instructionsPath)) { throw "Managed project instructions file was not generated" }
+    $instructionsPath = Join-Path $TestRoot "data\devdesk\global-instructions.md"
+    if (-not (Test-Path -LiteralPath $instructionsPath)) { throw "Global instructions file was not generated" }
     $instructions = Get-Content -LiteralPath $instructionsPath -Raw
-    if ($instructions -notlike "*SMOKE_GLOBAL_PROMPT*" -or $instructions -notlike "*SMOKE_PROJECT_PROMPT*") {
-        throw "Managed project instructions did not compose global and project prompts"
+    if ($instructions -notlike "*SMOKE_GLOBAL_PROMPT*" -or $instructions -like "*SMOKE_PROJECT_PROMPT*") {
+        throw "Global instructions file must contain only the enabled global prompt"
+    }
+    $agentsPath = Join-Path $TestRoot "AGENTS.md"
+    if (-not (Test-Path -LiteralPath $agentsPath)) { throw "Project prompt was not written to AGENTS.md" }
+    $agents = Get-Content -LiteralPath $agentsPath -Raw
+    if ($agents -notlike "*SMOKE_PROJECT_PROMPT*") {
+        throw "Project AGENTS.md did not contain the project prompt"
     }
     [void](Send-Json -Method "POST" -Uri "$BaseUrl/api/services/stop")
 
@@ -109,7 +115,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.8.8" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.8.9" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

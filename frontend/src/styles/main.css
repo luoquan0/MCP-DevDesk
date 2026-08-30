@@ -1450,7 +1450,7 @@ kbd {
   gap: 14px;
 }
 
-.project-prompt-global-card,
+.global-prompt-card,
 .project-prompt-editor {
   display: grid;
   gap: 14px;

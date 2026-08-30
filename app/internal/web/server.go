@@ -138,6 +138,7 @@ func (s *Server) handleListProjects(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleProjectPromptSettings(w http.ResponseWriter, _ *http.Request) {
 	settings := s.app.ProjectPromptSettings()
 	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":        settings.Enabled,
 		"globalPrompt":   settings.GlobalPrompt,
 		"maxPromptBytes": 32 * 1024,
 	})
@@ -145,18 +146,20 @@ func (s *Server) handleProjectPromptSettings(w http.ResponseWriter, _ *http.Requ
 
 func (s *Server) handleUpdateProjectPromptSettings(w http.ResponseWriter, r *http.Request) {
 	var request struct {
+		Enabled      bool   `json:"enabled"`
 		GlobalPrompt string `json:"globalPrompt"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	settings, err := s.app.UpdateGlobalProjectPrompt(request.GlobalPrompt)
+	settings, err := s.app.UpdateGlobalProjectPrompt(request.Enabled, request.GlobalPrompt)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":        settings.Enabled,
 		"globalPrompt":   settings.GlobalPrompt,
 		"maxPromptBytes": 32 * 1024,
 	})

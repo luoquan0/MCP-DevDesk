@@ -101,13 +101,18 @@ export const useAppStore = defineStore("app", {
       this.projectPromptSettings = await api<ProjectPromptSettings>("/api/projects/prompt-settings");
       return this.projectPromptSettings;
     },
-    async saveGlobalProjectPrompt(globalPrompt: string) {
+    async saveGlobalProjectPrompt(enabled: boolean, globalPrompt: string) {
       const ui = useUiStore();
       this.projectPromptSettings = await this.runAction("save-global-project-prompt", () => api<ProjectPromptSettings>("/api/projects/prompt-settings", {
         method: "PUT",
-        body: { globalPrompt } as unknown as BodyInit,
+        body: { enabled, globalPrompt } as unknown as BodyInit,
       }));
-      ui.toast("全局项目提示词已保存", "Go MCP 核心已同步提示词；现有连接会自动重新握手并加载新内容。", "success");
+      const active = this.projectPromptSettings.enabled && Boolean(this.projectPromptSettings.globalPrompt.trim());
+      ui.toast(
+        "全局提示词设置已保存",
+        active ? "全局提示词已启用并同步到 Go MCP。" : "当前不会注入全局提示词。",
+        "success",
+      );
       return this.projectPromptSettings;
     },
     async updateProjectPrompt(id: string, prompt: string) {
@@ -117,7 +122,7 @@ export const useAppStore = defineStore("app", {
         body: { prompt } as unknown as BodyInit,
       }));
       await this.loadProjects();
-      ui.toast("项目提示词已保存", `${project.name} 的 Go MCP 提示词已同步，连接会自动刷新。`, "success");
+      ui.toast("AGENTS.md 已保存", `${project.name} 的项目指令已写入项目根目录。`, "success");
       return project;
     },
     async loadInstances() {

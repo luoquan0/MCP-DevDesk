@@ -219,11 +219,14 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 		return map[string]any{"workspace": root}, nil
 	case "get_instructions":
 		managed := s.currentManagedInstructions()
+		projectRules := s.currentProjectRules()
 		return map[string]any{
 			"instructions":              s.initializeInstructions(),
+			"globalInstructions":        managed,
+			"globalInstructionsActive":  managed != "",
 			"managedInstructions":       managed,
 			"managedInstructionsActive": managed != "",
-			"projectRules":              append([]projectRule(nil), s.projectRules...),
+			"projectRules":              projectRules,
 		}, nil
 	case "read_file":
 		var args readFileArgs
@@ -728,10 +731,10 @@ func (s *Server) projectSnapshot(args projectSnapshotArgs) (map[string]any, erro
 		"buildFiles":        buildFiles,
 		"primaryLanguages":  languages,
 		"git":               git,
-		"instructionFiles":  projectRuleMetadata(s.projectRules),
+		"instructionFiles":  projectRuleMetadata(s.currentProjectRules()),
 	}
 	if includeInstructions {
-		result["instructions"] = append([]projectRule(nil), s.projectRules...)
+		result["instructions"] = s.currentProjectRules()
 	}
 	return result, nil
 }

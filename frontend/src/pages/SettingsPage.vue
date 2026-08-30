@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
@@ -14,6 +14,16 @@ const ui = useUiStore();
 const secretsLoading = ref(false);
 const secretsEncrypted = ref(false);
 const restartAfterSave = ref(true);
+const globalPromptEnabled = ref(false);
+const globalPromptDraft = ref("");
+const globalPromptBytes = computed(() => new TextEncoder().encode(globalPromptDraft.value).length);
+const globalPromptActive = computed(() => globalPromptEnabled.value && Boolean(globalPromptDraft.value.trim()));
+const globalPromptTemplate = `# 全局 Agent 规则
+
+## 通用执行原则
+- 优先完成用户当前要求中能够直接执行的步骤，不要为了汇报进度而中断可继续完成的工作。
+- 修改代码后执行与改动相关的测试、构建或验证；无法执行时明确说明原因。
+- 不覆盖项目自己的 AGENTS.md 规则；项目级约束应保留在项目目录中。`;
 const secretForm = reactive({
   ownerPassword: "",
   clientId: "",
@@ -28,6 +38,11 @@ const visible = reactive<Record<keyof typeof secretForm, boolean>>({
   tokenSecret: false,
   redirectUrisText: true,
 });
+
+watch(() => app.projectPromptSettings, (settings) => {
+  globalPromptEnabled.value = Boolean(settings?.enabled);
+  globalPromptDraft.value = settings?.globalPrompt || "";
+}, { immediate: true });
 
 const themes: Array<{ id: ThemeMode; label: string; description: string; icon: string }> = [
   { id: "system", label: "跟随系统", description: "根据 Windows 外观自动切换", icon: "monitor" },
@@ -49,6 +64,18 @@ async function setLogging(enabled: boolean) {
   } catch (error) {
     ui.toast("日志设置失败", error instanceof Error ? error.message : String(error), "danger");
   }
+}
+
+async function saveGlobalPrompt() {
+  try {
+    await app.saveGlobalProjectPrompt(globalPromptEnabled.value, globalPromptDraft.value);
+  } catch (error) {
+    ui.toast("保存全局提示词失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
+function useGlobalPromptTemplate() {
+  globalPromptDraft.value = globalPromptTemplate;
 }
 
 async function loadSecrets() {
@@ -205,6 +232,43 @@ onMounted(loadSecrets);
         </div>
       </AppCard>
     </section>
+
+    <AppCard class="global-prompt-card">
+      <div class="card-heading">
+        <div>
+          <span class="eyebrow">Global AI instructions</span>
+          <h3>全局提示词</h3>
+          <p>只保存在 MCP DevDesk 设置中，不写入任何项目目录。只有开关开启且内容非空时才会注入 Go MCP。</p>
+        </div>
+        <StatusPill :tone="globalPromptActive ? 'success' : globalPromptEnabled ? 'warning' : 'neutral'">
+          {{ globalPromptActive ? '已生效' : globalPromptEnabled ? '已开启但为空' : '已关闭' }}
+        </StatusPill>
+      </div>
+      <div class="toggle-list">
+        <ToggleSwitch
+          v-model="globalPromptEnabled"
+          label="启用全局提示词"
+          description="关闭时即使保留了文本也不会注入；项目目录中的 AGENTS.md 不受此开关影响。"
+        />
+      </div>
+      <label class="field project-prompt-field top-divider">
+        <span>全局提示词内容</span>
+        <textarea
+          v-model="globalPromptDraft"
+          rows="8"
+          spellcheck="false"
+          placeholder="# 全局 Agent 规则&#10;&#10;只填写所有项目都应该遵守的通用规则。项目专属规则请写入该项目根目录的 AGENTS.md。"
+        />
+        <small>{{ globalPromptBytes }} / {{ app.projectPromptSettings?.maxPromptBytes || 32768 }} bytes · 实际生效条件：开关开启 + 内容非空。</small>
+      </label>
+      <div class="form-footer">
+        <small>保存后会同步到运行中的 Go MCP 实例；全局规则只存在 DevDesk 数据目录，不会复制到每个项目文件夹。</small>
+        <div class="form-footer-actions">
+          <AppButton tone="secondary" @click="useGlobalPromptTemplate">使用通用模板</AppButton>
+          <AppButton tone="primary" :loading="app.actionPending === 'save-global-project-prompt'" @click="saveGlobalPrompt">保存全局提示词</AppButton>
+        </div>
+      </div>
+    </AppCard>
 
     <AppCard class="credentials-card">
       <div class="card-heading credentials-heading">

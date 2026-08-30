@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type Project struct {
@@ -23,11 +24,12 @@ type Project struct {
 }
 
 type Store struct {
-	mu                 sync.RWMutex
-	path               string
-	promptSettingsPath string
-	globalPrompt       string
-	data               []Project
+	mu                  sync.RWMutex
+	path                string
+	promptSettingsPath  string
+	globalPromptEnabled bool
+	globalPrompt        string
+	data                []Project
 }
 
 const (
@@ -36,6 +38,7 @@ const (
 )
 
 type PromptSettings struct {
+	Enabled      bool   `json:"enabled"`
 	GlobalPrompt string `json:"globalPrompt"`
 }
 
@@ -57,6 +60,17 @@ func NewStore(dataDir, initialWorkspace string) (*Store, error) {
 		original := append([]Project(nil), s.data...)
 		s.data = normalizeProjects(s.data)
 		changed = !reflect.DeepEqual(original, s.data)
+		for i := range s.data {
+			legacyPrompt := strings.TrimSpace(s.data[i].Prompt)
+			if legacyPrompt == "" {
+				continue
+			}
+			if err := migrateLegacyPromptToAgents(s.data[i].Path, legacyPrompt); err != nil {
+				return nil, fmt.Errorf("migrate project %q prompt to AGENTS.md: %w", s.data[i].Name, err)
+			}
+			s.data[i].Prompt = ""
+			changed = true
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read projects: %w", err)
 	}
@@ -66,7 +80,10 @@ func NewStore(dataDir, initialWorkspace string) (*Store, error) {
 		}
 	}
 	if raw, err := os.ReadFile(s.promptSettingsPath); err == nil {
-		var settings PromptSettings
+		var settings struct {
+			Enabled      *bool  `json:"enabled"`
+			GlobalPrompt string `json:"globalPrompt"`
+		}
 		if err := json.Unmarshal(raw, &settings); err != nil {
 			return nil, fmt.Errorf("parse project prompts: %w", err)
 		}
@@ -74,6 +91,14 @@ func NewStore(dataDir, initialWorkspace string) (*Store, error) {
 			return nil, fmt.Errorf("global project prompt exceeds %d bytes", MaxPromptBytes)
 		}
 		s.globalPrompt = strings.TrimSpace(settings.GlobalPrompt)
+		if settings.Enabled != nil {
+			s.globalPromptEnabled = *settings.Enabled
+		} else {
+			s.globalPromptEnabled = s.globalPrompt != ""
+			if err := s.savePromptSettingsLocked(); err != nil {
+				return nil, fmt.Errorf("migrate global prompt settings: %w", err)
+			}
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read project prompts: %w", err)
 	}
@@ -87,8 +112,11 @@ func NewStore(dataDir, initialWorkspace string) (*Store, error) {
 
 func (s *Store) List() []Project {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	items := append([]Project(nil), s.data...)
+	s.mu.RUnlock()
+	for i := range items {
+		items[i].Prompt, _ = readProjectAgents(items[i].Path)
+	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].LastOpenedAt.After(items[j].LastOpenedAt) })
 	return items
 }
@@ -130,13 +158,21 @@ func (s *Store) Add(name, path string) (Project, error) {
 
 func (s *Store) Get(id string) (Project, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	var result Project
+	found := false
 	for _, item := range s.data {
 		if item.ID == id {
-			return item, true
+			result = item
+			found = true
+			break
 		}
 	}
-	return Project{}, false
+	s.mu.RUnlock()
+	if !found {
+		return Project{}, false
+	}
+	result.Prompt, _ = readProjectAgents(result.Path)
+	return result, true
 }
 
 func (s *Store) GlobalPrompt() string {
@@ -145,16 +181,25 @@ func (s *Store) GlobalPrompt() string {
 	return s.globalPrompt
 }
 
-func (s *Store) SetGlobalPrompt(prompt string) error {
+func (s *Store) GlobalPromptEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.globalPromptEnabled
+}
+
+func (s *Store) SetPromptSettings(enabled bool, prompt string) error {
 	prompt = strings.TrimSpace(prompt)
 	if len([]byte(prompt)) > MaxPromptBytes {
 		return fmt.Errorf("global project prompt exceeds %d bytes", MaxPromptBytes)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previousEnabled := s.globalPromptEnabled
 	previous := s.globalPrompt
+	s.globalPromptEnabled = enabled
 	s.globalPrompt = prompt
 	if err := s.savePromptSettingsLocked(); err != nil {
+		s.globalPromptEnabled = previousEnabled
 		s.globalPrompt = previous
 		return err
 	}
@@ -166,48 +211,38 @@ func (s *Store) UpdatePrompt(id, prompt string) (Project, error) {
 	if len([]byte(prompt)) > MaxPromptBytes {
 		return Project{}, fmt.Errorf("project prompt exceeds %d bytes", MaxPromptBytes)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.data {
-		if s.data[i].ID != id {
-			continue
+	s.mu.RLock()
+	var project Project
+	found := false
+	for _, item := range s.data {
+		if item.ID == id {
+			project = item
+			found = true
+			break
 		}
-		previous := s.data[i]
-		s.data[i].Prompt = prompt
-		if err := s.saveLocked(); err != nil {
-			s.data[i] = previous
-			return Project{}, err
-		}
-		return s.data[i], nil
 	}
-	return Project{}, errors.New("project not found")
+	s.mu.RUnlock()
+	if !found {
+		return Project{}, errors.New("project not found")
+	}
+	if err := writeProjectAgents(project.Path, prompt); err != nil {
+		return Project{}, err
+	}
+	project.Prompt = prompt
+	return project, nil
 }
 
 func (s *Store) EffectivePrompt(workspace string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if !s.globalPromptEnabled {
+		return ""
+	}
 	global := strings.TrimSpace(s.globalPrompt)
-	projectPrompt := ""
-	projectName := ""
-	for _, project := range s.data {
-		if samePath(project.Path, workspace) {
-			projectPrompt = strings.TrimSpace(project.Prompt)
-			projectName = project.Name
-			break
-		}
+	if global == "" {
+		return ""
 	}
-	sections := make([]string, 0, 2)
-	if global != "" {
-		sections = append(sections, "# MCP DevDesk 全局项目提示词\n\n"+global)
-	}
-	if projectPrompt != "" {
-		title := "# MCP DevDesk 当前项目提示词"
-		if projectName != "" {
-			title += "：" + projectName
-		}
-		sections = append(sections, title+"\n\n"+projectPrompt)
-	}
-	return strings.Join(sections, "\n\n---\n\n")
+	return "# MCP DevDesk 全局提示词\n\n" + global
 }
 
 func (s *Store) PreparePathUpdate(id, path string) (Project, error) {
@@ -330,7 +365,7 @@ func (s *Store) saveLocked() error {
 }
 
 func (s *Store) savePromptSettingsLocked() error {
-	raw, err := json.MarshalIndent(PromptSettings{GlobalPrompt: s.globalPrompt}, "", "  ")
+	raw, err := json.MarshalIndent(PromptSettings{Enabled: s.globalPromptEnabled, GlobalPrompt: s.globalPrompt}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -339,6 +374,67 @@ func (s *Store) savePromptSettingsLocked() error {
 		return err
 	}
 	return os.Rename(tmp, s.promptSettingsPath)
+}
+
+func projectAgentsPath(projectPath string) string {
+	return filepath.Join(projectPath, "AGENTS.md")
+}
+
+func readProjectAgents(projectPath string) (string, error) {
+	raw, err := os.ReadFile(projectAgentsPath(projectPath))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read AGENTS.md: %w", err)
+	}
+	if len(raw) > MaxPromptBytes {
+		return "", fmt.Errorf("AGENTS.md exceeds %d bytes", MaxPromptBytes)
+	}
+	if !utf8.Valid(raw) {
+		return "", errors.New("AGENTS.md must be valid UTF-8")
+	}
+	return strings.TrimSpace(string(raw)), nil
+}
+
+func writeProjectAgents(projectPath, prompt string) error {
+	prompt = strings.TrimSpace(prompt)
+	path := projectAgentsPath(projectPath)
+	if prompt == "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove AGENTS.md: %w", err)
+		}
+		return nil
+	}
+	if len([]byte(prompt)) > MaxPromptBytes {
+		return fmt.Errorf("AGENTS.md exceeds %d bytes", MaxPromptBytes)
+	}
+	if err := os.WriteFile(path, []byte(prompt+"\n"), 0o600); err != nil {
+		return fmt.Errorf("write AGENTS.md: %w", err)
+	}
+	return nil
+}
+
+func migrateLegacyPromptToAgents(projectPath, legacyPrompt string) error {
+	legacyPrompt = strings.TrimSpace(legacyPrompt)
+	if legacyPrompt == "" {
+		return nil
+	}
+	existing, err := readProjectAgents(projectPath)
+	if err != nil {
+		return err
+	}
+	if existing == "" {
+		return writeProjectAgents(projectPath, legacyPrompt)
+	}
+	if strings.Contains(existing, legacyPrompt) {
+		return nil
+	}
+	combined := existing + "\n\n## MCP DevDesk migrated instructions\n\n" + legacyPrompt
+	if len([]byte(combined)) > MaxPromptBytes {
+		return fmt.Errorf("existing AGENTS.md plus migrated prompt exceeds %d bytes", MaxPromptBytes)
+	}
+	return writeProjectAgents(projectPath, combined)
 }
 
 func projectID(path string) string {

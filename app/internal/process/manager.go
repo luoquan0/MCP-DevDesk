@@ -82,10 +82,9 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 	return m.start(&m.mcp, executable, args, m.rootDir, env, stdout, stderr, cfg.HideChildProcessWindows)
 }
 
-// SyncInstructions writes the effective MCP DevDesk instructions for cfg without
-// restarting the core. A running Go core watches this file and invalidates its
-// current MCP sessions when the contents change so the client reconnects and
-// receives the new initialize instructions.
+// SyncInstructions writes the optional MCP DevDesk global instructions for cfg
+// without restarting the core. Project-local instructions live in AGENTS.md /
+// CLAUDE.md inside the workspace and are watched directly by the Go core.
 func (m *Manager) SyncInstructions(cfg model.Config) error {
 	_, err := m.syncInstructionsFile(cfg)
 	return err
@@ -95,7 +94,11 @@ func (m *Manager) syncInstructionsFile(cfg model.Config) (string, error) {
 	if cfg.CoreMode != "go" || m.instructions == nil {
 		return "", nil
 	}
-	path := filepath.Join(m.dataDir, "project-instructions.md")
+	path := filepath.Join(m.dataDir, "global-instructions.md")
+	legacyPath := filepath.Join(m.dataDir, "project-instructions.md")
+	if err := os.Remove(legacyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("remove legacy project instructions: %w", err)
+	}
 	content := strings.TrimSpace(m.instructions(cfg.Workspace))
 	if content == "" {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {

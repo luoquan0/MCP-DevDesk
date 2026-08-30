@@ -102,16 +102,20 @@ func (a *App) DataDir() string { return a.dataDir }
 func (a *App) Projects() []projectstore.Project { return a.projects.List() }
 
 func (a *App) ProjectPromptSettings() projectstore.PromptSettings {
-	return projectstore.PromptSettings{GlobalPrompt: a.projects.GlobalPrompt()}
+	return projectstore.PromptSettings{
+		Enabled:      a.projects.GlobalPromptEnabled(),
+		GlobalPrompt: a.projects.GlobalPrompt(),
+	}
 }
 
-func (a *App) UpdateGlobalProjectPrompt(prompt string) (projectstore.PromptSettings, error) {
+func (a *App) UpdateGlobalProjectPrompt(enabled bool, prompt string) (projectstore.PromptSettings, error) {
+	previousEnabled := a.projects.GlobalPromptEnabled()
 	previous := a.projects.GlobalPrompt()
-	if err := a.projects.SetGlobalPrompt(prompt); err != nil {
+	if err := a.projects.SetPromptSettings(enabled, prompt); err != nil {
 		return projectstore.PromptSettings{}, err
 	}
 	if err := a.syncManagedInstructionFiles(""); err != nil {
-		rollbackErr := a.projects.SetGlobalPrompt(previous)
+		rollbackErr := a.projects.SetPromptSettings(previousEnabled, previous)
 		rollbackSyncErr := a.syncManagedInstructionFiles("")
 		if rollbackErr != nil || rollbackSyncErr != nil {
 			return projectstore.PromptSettings{}, fmt.Errorf("sync global project prompt: %w; rollback failed: store=%v sync=%v", err, rollbackErr, rollbackSyncErr)
@@ -122,23 +126,7 @@ func (a *App) UpdateGlobalProjectPrompt(prompt string) (projectstore.PromptSetti
 }
 
 func (a *App) UpdateProjectPrompt(id, prompt string) (projectstore.Project, error) {
-	previous, ok := a.projects.Get(id)
-	if !ok {
-		return projectstore.Project{}, errors.New("project not found")
-	}
-	updated, err := a.projects.UpdatePrompt(id, prompt)
-	if err != nil {
-		return projectstore.Project{}, err
-	}
-	if err := a.syncManagedInstructionFiles(updated.Path); err != nil {
-		_, rollbackErr := a.projects.UpdatePrompt(id, previous.Prompt)
-		rollbackSyncErr := a.syncManagedInstructionFiles(previous.Path)
-		if rollbackErr != nil || rollbackSyncErr != nil {
-			return projectstore.Project{}, fmt.Errorf("sync project prompt: %w; rollback failed: store=%v sync=%v", err, rollbackErr, rollbackSyncErr)
-		}
-		return projectstore.Project{}, fmt.Errorf("sync project prompt: %w", err)
-	}
-	return updated, nil
+	return a.projects.UpdatePrompt(id, prompt)
 }
 
 func (a *App) syncManagedInstructionFiles(workspace string) error {
@@ -204,9 +192,6 @@ func (a *App) UpdateProjectPath(ctx context.Context, id, path string) (projectst
 
 	updated, err := a.projects.UpdatePath(id, candidate.Path)
 	if err == nil {
-		if syncErr := a.syncManagedInstructionFiles(updated.Path); syncErr != nil {
-			return projectstore.Project{}, fmt.Errorf("project path updated but prompt synchronization failed: %w", syncErr)
-		}
 		return updated, nil
 	}
 	if !active {

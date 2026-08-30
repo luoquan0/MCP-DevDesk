@@ -138,6 +138,7 @@ export interface Project {
 }
 
 export interface ProjectPromptSettings {
+  enabled: boolean;
   globalPrompt: string;
   maxPromptBytes: number;
 }

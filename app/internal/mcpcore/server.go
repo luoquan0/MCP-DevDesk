@@ -208,7 +208,7 @@ func New(options Options) (*Server, error) {
 		{
 			Name:        "get_instructions",
 			Title:       "Get Effective Instructions",
-			Description: "Return the effective MCP DevDesk instructions currently applied to this connection, including workspace guidance and managed global/project prompts. Use this to verify which instructions are actually active.",
+			Description: "Return the effective instructions currently applied to this connection, including the optional MCP DevDesk global prompt and project-local AGENTS.md/CLAUDE.md rules. Use this to verify which instructions are actually active.",
 			InputSchema: emptyObjectSchema,
 		},
 	}
@@ -346,6 +346,7 @@ func (s *Server) handlePostJSON(w http.ResponseWriter, r *http.Request) {
 		writeRPCError(w, http.StatusInternalServerError, json.RawMessage("null"), -32603, "failed to refresh managed instructions", err.Error())
 		return
 	}
+	s.refreshProjectRules()
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		writeJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": "Content-Type must be application/json"})
@@ -520,7 +521,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request 
 }
 
 func (s *Server) instructionsForToolSession(sessionID string) string {
-	if sessionID == "" || (s.currentManagedInstructions() == "" && len(s.projectRules) == 0) {
+	if sessionID == "" || (s.currentManagedInstructions() == "" && len(s.currentProjectRules()) == 0) {
 		return ""
 	}
 	s.mu.Lock()
@@ -538,14 +539,22 @@ func (s *Server) instructionsForToolSession(sessionID string) string {
 func (s *Server) initializeInstructions() string {
 	base := "MCP DevDesk Go core. Use the exposed tools only within the configured workspace and permission policy."
 	managedInstructions := s.currentManagedInstructions()
-	if managedInstructions == "" && len(s.projectRules) == 0 {
+	projectRules := s.currentProjectRules()
+	if managedInstructions == "" && len(projectRules) == 0 {
 		return base
 	}
 	var builder strings.Builder
 	builder.WriteString(base)
-	if len(s.projectRules) > 0 {
-		builder.WriteString("\n\nProject instructions loaded from the workspace root:\n")
-		for _, rule := range s.projectRules {
+	if managedInstructions != "" {
+		builder.WriteString("\n\nMCP DevDesk global instructions (general defaults for all projects; project-specific repository instructions take precedence on conflicts):\n\n")
+		builder.WriteString(managedInstructions)
+		if !strings.HasSuffix(managedInstructions, "\n") {
+			builder.WriteByte('\n')
+		}
+	}
+	if len(projectRules) > 0 {
+		builder.WriteString("\n\nProject-specific instructions loaded from the workspace root. These are more specific than the MCP DevDesk global instructions:\n")
+		for _, rule := range projectRules {
 			builder.WriteString("\n--- ")
 			builder.WriteString(rule.Path)
 			if rule.Truncated {
@@ -558,13 +567,6 @@ func (s *Server) initializeInstructions() string {
 			}
 		}
 	}
-	if managedInstructions != "" {
-		builder.WriteString("\n\nMCP DevDesk managed project instructions (highest project-level priority; apply these when repository guidance conflicts):\n\n")
-		builder.WriteString(managedInstructions)
-		if !strings.HasSuffix(managedInstructions, "\n") {
-			builder.WriteByte('\n')
-		}
-	}
 	return builder.String()
 }
 
@@ -572,6 +574,38 @@ func (s *Server) currentManagedInstructions() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.managedInstructions
+}
+
+func (s *Server) currentProjectRules() []projectRule {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]projectRule(nil), s.projectRules...)
+}
+
+func (s *Server) refreshProjectRules() {
+	next := loadProjectRules(s.workspace, maxProjectRuleBytes)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if projectRulesEqual(next, s.projectRules) {
+		return
+	}
+	s.projectRules = next
+	// Project-local AGENTS.md / CLAUDE.md may change while the core stays
+	// running. Invalidate sessions so the next client request reinitializes
+	// with the latest repository instructions.
+	s.sessions = make(map[string]*session)
+}
+
+func projectRulesEqual(left, right []projectRule) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) refreshManagedInstructions() error {

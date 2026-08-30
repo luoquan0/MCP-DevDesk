@@ -241,7 +241,7 @@ func (s *Server) executeCompatibilityTool(name string, arguments map[string]any)
 			"maxWritableFile":     maxWritableFileBytes,
 			"maxBatchReadFiles":   maxBatchReadFiles,
 			"maxBatchReadBytes":   maxBatchReadTotalBytes,
-			"projectInstructions": projectRuleMetadata(s.projectRules),
+			"projectInstructions": projectRuleMetadata(s.currentProjectRules()),
 			"oauthEnabled":        s.oauth != nil,
 			"streamableHTTP":      true,
 			"sseReplaySupported":  true,
