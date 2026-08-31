@@ -218,6 +218,42 @@ func TestDownloadRetriesAndResumesPartialPackage(t *testing.T) {
 	}
 }
 
+func TestDownloadRestartsWhenPartialRangeIsRejected(t *testing.T) {
+	payload := []byte("fresh portable package")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Header.Get("Range") != "" {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	manager, err := NewManager(t.TempDir(), "0.12.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "package.tmp")
+	if err := os.WriteFile(target, []byte("stale-partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.downloadFile(context.Background(), server.URL, target); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	raw, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != string(payload) {
+		t.Fatalf("downloaded payload = %q, want %q", raw, payload)
+	}
+}
+
 func TestPackageDownloadDoesNotRetryPermanentHTTPError(t *testing.T) {
 	payload := []byte("payload")
 	digest := sha256.Sum256(payload)
