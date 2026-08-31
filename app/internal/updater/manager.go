@@ -473,7 +473,7 @@ func retryableDownloadError(err error) bool {
 	}
 	var statusErr *downloadHTTPError
 	if errors.As(err, &statusErr) {
-		return statusErr.status == http.StatusRequestTimeout || statusErr.status == http.StatusTooManyRequests || statusErr.status >= 500
+		return statusErr.status == http.StatusRequestTimeout || statusErr.status == http.StatusTooManyRequests || statusErr.status == http.StatusRequestedRangeNotSatisfiable || statusErr.status >= 500
 	}
 	return true
 }
