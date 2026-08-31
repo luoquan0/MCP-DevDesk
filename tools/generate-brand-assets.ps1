@@ -6,9 +6,14 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
 if ([string]::IsNullOrWhiteSpace($Source)) {
-    $Source = Get-ChildItem -LiteralPath (Join-Path $Root "logo") -File -Filter "*.png" |
-        Sort-Object Name |
-        Select-Object -First 1 -ExpandProperty FullName
+    $preferredSource = Join-Path $Root "new-logo.png"
+    if (Test-Path -LiteralPath $preferredSource) {
+        $Source = $preferredSource
+    } else {
+        $Source = Get-ChildItem -LiteralPath (Join-Path $Root "logo") -File -Filter "*.png" |
+            Sort-Object Name |
+            Select-Object -First 1 -ExpandProperty FullName
+    }
 }
 
 if (-not $Source -or -not (Test-Path -LiteralPath $Source)) {

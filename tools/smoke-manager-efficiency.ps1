@@ -63,7 +63,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.6") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.7") {
                 $ready = $true
                 break
             }
@@ -94,7 +94,7 @@ try {
     if ($login.StatusCode -ne 200 -or -not $loginParsed.authenticated) { throw "Web control login failed" }
     $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/status" -WebSession $webSession
     $overviewParsed = $overview.Content | ConvertFrom-Json
-    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.6") { throw "Authenticated full web UI API failed" }
+    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.7") { throw "Authenticated full web UI API failed" }
 
     $appearance = Send-Json -Method "PUT" -Uri "http://127.0.0.1:$webPort/api/appearance" -Body @{ theme = "dark"; customColorsEnabled = $true; primaryColor = "#ff3366"; secondaryColor = "#22aa88"; backgroundOpacity = 47 } -WebSession $webSession
     $appearanceParsed = $appearance.Content | ConvertFrom-Json
@@ -199,7 +199,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.12.6" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.12.7" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 
