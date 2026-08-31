@@ -27,7 +27,11 @@ jobs:
           if ($env:GITHUB_REF -like "refs/tags/v*") {
             $releaseTag = $env:GITHUB_REF_NAME
           } else {
-            $releaseTag = "v0.12.8"
+            $versionLine = Select-String -LiteralPath "app\internal\buildinfo\version.go" -Pattern 'const Version = "([^"]+)"'
+            if (-not $versionLine) {
+              throw "Could not resolve version from app/internal/buildinfo/version.go"
+            }
+            $releaseTag = "v" + $versionLine.Matches[0].Groups[1].Value
           }
           "RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -88,17 +92,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$env:RELEASE_TAG" `
-            "dist\MCP-DevDesk-amd64.exe" `
-            "dist\MCP-DevDesk-amd64.exe.sha256" `
-            "dist\MCP-DevDesk-Portable-amd64.zip" `
-            "dist\MCP-DevDesk-Portable-amd64.zip.sha256" `
-            "dist\devdesk-updater-amd64.exe" `
-            "dist\devdesk-updater-amd64.exe.sha256" `
-            "dist\devdeskctl-amd64.exe" `
-            "dist\devdeskctl-amd64.exe.sha256" `
-            "dist\mcp-core-amd64.exe" `
-            "dist\mcp-core-amd64.exe.sha256" `
-            --title "MCP DevDesk $env:RELEASE_TAG" `
-            --generate-notes `
-            --verify-tag
+          $assets = @(
+            "dist\MCP-DevDesk-amd64.exe",
+            "dist\MCP-DevDesk-amd64.exe.sha256",
+            "dist\MCP-DevDesk-Portable-amd64.zip",
+            "dist\MCP-DevDesk-Portable-amd64.zip.sha256",
+            "dist\devdesk-updater-amd64.exe",
+            "dist\devdesk-updater-amd64.exe.sha256",
+            "dist\devdeskctl-amd64.exe",
+            "dist\devdeskctl-amd64.exe.sha256",
+            "dist\mcp-core-amd64.exe",
+            "dist\mcp-core-amd64.exe.sha256"
+          )
+          gh release view "$env:RELEASE_TAG" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "$env:RELEASE_TAG" $assets --clobber
+            gh release edit "$env:RELEASE_TAG" --title "MCP DevDesk $env:RELEASE_TAG" --latest
+          } else {
+            gh release create "$env:RELEASE_TAG" $assets `
+              --title "MCP DevDesk $env:RELEASE_TAG" `
+              --generate-notes `
+              --verify-tag
+          }
