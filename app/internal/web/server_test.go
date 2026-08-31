@@ -383,6 +383,44 @@ func TestGenericConfigRejectsWebControlFields(t *testing.T) {
 	}
 }
 
+func TestProjectFolderAPIOrganizesProjects(t *testing.T) {
+	server := newTestServer(t)
+	projects := server.app.Projects()
+	if len(projects) == 0 {
+		t.Fatal("expected initial project")
+	}
+
+	create := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/project-folders", bytes.NewBufferString(`{"name":"客户项目/2026"}`))
+	create.RemoteAddr = "127.0.0.1:45678"
+	create.Host = "127.0.0.1:17860"
+	create.Header.Set("Content-Type", "application/json")
+	createRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(createRecorder, create)
+	if createRecorder.Code != http.StatusCreated || !strings.Contains(createRecorder.Body.String(), "客户项目/2026") {
+		t.Fatalf("create project folder failed: %d %s", createRecorder.Code, createRecorder.Body.String())
+	}
+
+	assign := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/api/projects/"+projects[0].ID, bytes.NewBufferString(`{"folder":"客户项目/2026"}`))
+	assign.SetPathValue("id", projects[0].ID)
+	assign.RemoteAddr = "127.0.0.1:45678"
+	assign.Host = "127.0.0.1:17860"
+	assign.Header.Set("Content-Type", "application/json")
+	assignRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(assignRecorder, assign)
+	if assignRecorder.Code != http.StatusOK || !strings.Contains(assignRecorder.Body.String(), `"folder":"客户项目/2026"`) {
+		t.Fatalf("assign project folder failed: %d %s", assignRecorder.Code, assignRecorder.Body.String())
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/project-folders", nil)
+	list.RemoteAddr = "127.0.0.1:45678"
+	list.Host = "127.0.0.1:17860"
+	listRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(listRecorder, list)
+	if listRecorder.Code != http.StatusOK || !strings.Contains(listRecorder.Body.String(), "客户项目/2026") {
+		t.Fatalf("list project folders failed: %d %s", listRecorder.Code, listRecorder.Body.String())
+	}
+}
+
 func TestDesktopStatusAndStartupEndpoints(t *testing.T) {
 	server := newTestServer(t)
 	desktop := &fakeDesktop{status: model.DesktopStatus{

@@ -34,6 +34,7 @@ export const useAppStore = defineStore("app", {
     desktop: null as DesktopStatus | null,
     diagnostics: null as Diagnostics | null,
     projects: [] as Project[],
+    projectFolders: [] as string[],
     projectPromptSettings: null as ProjectPromptSettings | null,
     webControl: null as WebControlStatus | null,
     webControlClient: false,
@@ -64,6 +65,7 @@ export const useAppStore = defineStore("app", {
           this.loadDesktop(),
           this.loadDiagnostics(),
           this.loadProjects(),
+          this.loadProjectFolders(),
           this.loadProjectPromptSettings(),
           this.loadWebControl(),
           this.loadInstances(),
@@ -104,6 +106,26 @@ export const useAppStore = defineStore("app", {
       this.projects = await api<Project[]>("/api/projects");
       return this.projects;
     },
+    async loadProjectFolders() {
+      this.projectFolders = await api<string[]>("/api/project-folders");
+      return this.projectFolders;
+    },
+    async addProjectFolder(name: string) {
+      const result = await this.runAction("add-project-folder", () => api<{ name: string }>("/api/project-folders", {
+        method: "POST",
+        body: { name } as unknown as BodyInit,
+      }));
+      await this.loadProjectFolders();
+      return result.name;
+    },
+    async updateProjectFolder(id: string, folder: string) {
+      const project = await this.runAction(`folder-${id}`, () => api<Project>(`/api/projects/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { folder } as unknown as BodyInit,
+      }));
+      await this.loadProjects();
+      return project;
+    },
     async loadProjectPromptSettings() {
       const next = await api<ProjectPromptSettings>("/api/projects/prompt-settings");
       const current = this.projectPromptSettings;
@@ -124,6 +146,7 @@ export const useAppStore = defineStore("app", {
         this.loadConfig(),
         this.loadDesktop(),
         this.loadProjects(),
+        this.loadProjectFolders(),
         this.loadProjectPromptSettings(),
         this.loadWebControl(),
         this.loadInstances(),
@@ -237,12 +260,13 @@ export const useAppStore = defineStore("app", {
     },
     async addProject(path: string, name = "") {
       const ui = useUiStore();
-      await this.runAction("add-project", () => api<Project>("/api/projects", {
+      const project = await this.runAction("add-project", () => api<Project>("/api/projects", {
         method: "POST",
         body: { path, name } as unknown as BodyInit,
       }));
       await this.loadProjects();
       ui.toast("项目已添加", path, "success");
+      return project;
     },
     async updateProjectPath(id: string, path: string) {
       const ui = useUiStore();

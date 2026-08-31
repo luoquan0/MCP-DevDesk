@@ -18,6 +18,7 @@ type Project struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	Path         string    `json:"path"`
+	Folder       string    `json:"folder,omitempty"`
 	Prompt       string    `json:"prompt,omitempty"`
 	AddedAt      time.Time `json:"addedAt"`
 	LastOpenedAt time.Time `json:"lastOpenedAt"`
@@ -26,9 +27,11 @@ type Project struct {
 type Store struct {
 	mu                  sync.RWMutex
 	path                string
+	foldersPath         string
 	promptSettingsPath  string
 	globalPromptEnabled bool
 	globalPrompt        string
+	folders             []string
 	data                []Project
 }
 
@@ -45,6 +48,7 @@ type PromptSettings struct {
 func NewStore(dataDir, initialWorkspace string) (*Store, error) {
 	s := &Store{
 		path:               filepath.Join(dataDir, "projects.json"),
+		foldersPath:        filepath.Join(dataDir, "project-folders.json"),
 		promptSettingsPath: filepath.Join(dataDir, "project-prompts.json"),
 	}
 	changed := false
@@ -78,6 +82,14 @@ func NewStore(dataDir, initialWorkspace string) (*Store, error) {
 		if err := s.saveLocked(); err != nil {
 			return nil, fmt.Errorf("migrate projects: %w", err)
 		}
+	}
+	if raw, err := os.ReadFile(s.foldersPath); err == nil {
+		if err := json.Unmarshal(raw, &s.folders); err != nil {
+			return nil, fmt.Errorf("parse project folders: %w", err)
+		}
+		s.folders = normalizeFolders(s.folders)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read project folders: %w", err)
 	}
 	if raw, err := os.ReadFile(s.promptSettingsPath); err == nil {
 		var settings struct {
@@ -119,6 +131,65 @@ func (s *Store) List() []Project {
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].LastOpenedAt.After(items[j].LastOpenedAt) })
 	return items
+}
+
+func (s *Store) Folders() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.folders...)
+}
+
+func (s *Store) AddFolder(name string) (string, error) {
+	name = normalizeFolder(name)
+	if name == "" {
+		return "", errors.New("folder name is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.folders {
+		if strings.EqualFold(existing, name) {
+			return existing, nil
+		}
+	}
+	previous := append([]string(nil), s.folders...)
+	s.folders = normalizeFolders(append(s.folders, name))
+	if err := s.saveFoldersLocked(); err != nil {
+		s.folders = previous
+		return "", err
+	}
+	return name, nil
+}
+
+func (s *Store) SetFolder(id, folder string) (Project, error) {
+	folder = normalizeFolder(folder)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if folder != "" {
+		matched := ""
+		for _, existing := range s.folders {
+			if strings.EqualFold(existing, folder) {
+				matched = existing
+				break
+			}
+		}
+		if matched == "" {
+			return Project{}, errors.New("project folder does not exist")
+		}
+		folder = matched
+	}
+	for i := range s.data {
+		if s.data[i].ID != id {
+			continue
+		}
+		previous := s.data[i]
+		s.data[i].Folder = folder
+		if err := s.saveLocked(); err != nil {
+			s.data[i] = previous
+			return Project{}, err
+		}
+		return s.data[i], nil
+	}
+	return Project{}, errors.New("project not found")
 }
 
 func (s *Store) Add(name, path string) (Project, error) {
@@ -364,6 +435,18 @@ func (s *Store) saveLocked() error {
 	return os.Rename(tmp, s.path)
 }
 
+func (s *Store) saveFoldersLocked() error {
+	raw, err := json.MarshalIndent(s.folders, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := s.foldersPath + ".tmp"
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.foldersPath)
+}
+
 func (s *Store) savePromptSettingsLocked() error {
 	raw, err := json.MarshalIndent(PromptSettings{Enabled: s.globalPromptEnabled, GlobalPrompt: s.globalPrompt}, "", "  ")
 	if err != nil {
@@ -477,6 +560,7 @@ func normalizeProjects(items []Project) []Project {
 		item.Path = path
 		item.ID = projectID(path)
 		item.Name = strings.TrimSpace(item.Name)
+		item.Folder = normalizeFolder(item.Folder)
 		item.Prompt = strings.TrimSpace(item.Prompt)
 		if item.Name == "" {
 			item.Name = filepath.Base(path)
@@ -495,5 +579,38 @@ func normalizeProjects(items []Project) []Project {
 		indexes[key] = len(result)
 		result = append(result, item)
 	}
+	return result
+}
+
+func normalizeFolder(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	parts := strings.FieldsFunc(value, func(r rune) bool { return r == '/' })
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." || part == ".." {
+			continue
+		}
+		clean = append(clean, part)
+	}
+	return strings.Join(clean, "/")
+}
+
+func normalizeFolders(items []string) []string {
+	seen := make(map[string]struct{}, len(items))
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		item = normalizeFolder(item)
+		if item == "" {
+			continue
+		}
+		key := strings.ToLower(item)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, item)
+	}
+	sort.Slice(result, func(i, j int) bool { return strings.ToLower(result[i]) < strings.ToLower(result[j]) })
 	return result
 }

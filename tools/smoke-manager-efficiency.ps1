@@ -63,7 +63,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.11.1") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.0") {
                 $ready = $true
                 break
             }
@@ -94,7 +94,7 @@ try {
     if ($login.StatusCode -ne 200 -or -not $loginParsed.authenticated) { throw "Web control login failed" }
     $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/status" -WebSession $webSession
     $overviewParsed = $overview.Content | ConvertFrom-Json
-    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.11.1") { throw "Authenticated full web UI API failed" }
+    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.0") { throw "Authenticated full web UI API failed" }
 
     $phoneProject = Join-Path $TestRoot "phone-project"
     New-Item -ItemType Directory -Force -Path $phoneProject | Out-Null
@@ -103,6 +103,11 @@ try {
     if ($directoryBrowse.StatusCode -ne 200 -or $directoryBrowse.Content -notlike "*phone-project*") { throw "Web control directory browser failed" }
     $phoneProjectAdd = Send-Json -Method "POST" -Uri "http://127.0.0.1:$webPort/api/projects" -Body @{ name = "Phone Project"; path = $phoneProject } -WebSession $webSession
     if ($phoneProjectAdd.StatusCode -ne 201 -or $phoneProjectAdd.Content -notlike "*Phone Project*") { throw "Web control project add failed" }
+    $phoneProjectParsed = $phoneProjectAdd.Content | ConvertFrom-Json
+    $folderAdd = Send-Json -Method "POST" -Uri "http://127.0.0.1:$webPort/api/project-folders" -Body @{ name = "Smoke Folder" } -WebSession $webSession
+    if ($folderAdd.StatusCode -ne 201 -or $folderAdd.Content -notlike "*Smoke Folder*") { throw "Project folder create failed" }
+    $folderAssign = Send-Json -Method "PATCH" -Uri "http://127.0.0.1:$webPort/api/projects/$($phoneProjectParsed.id)" -Body @{ folder = "Smoke Folder" } -WebSession $webSession
+    if ($folderAssign.StatusCode -ne 200 -or $folderAssign.Content -notlike "*Smoke Folder*") { throw "Project folder assignment failed" }
 
     $webPage = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/"
     if ($webPage.StatusCode -ne 200 -or $webPage.Content -notlike "*MCP DevDesk*") {
@@ -161,7 +166,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.11.1" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.12.0" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

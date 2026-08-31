@@ -57,6 +57,8 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleUpdateConfig)
 	mux.HandleFunc("GET /api/projects", s.handleListProjects)
+	mux.HandleFunc("GET /api/project-folders", s.handleListProjectFolders)
+	mux.HandleFunc("POST /api/project-folders", s.handleAddProjectFolder)
 	mux.HandleFunc("GET /api/projects/prompt-settings", s.handleProjectPromptSettings)
 	mux.HandleFunc("PUT /api/projects/prompt-settings", s.handleUpdateProjectPromptSettings)
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
@@ -149,6 +151,26 @@ func (s *Server) handleListProjects(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.Projects())
 }
 
+func (s *Server) handleListProjectFolders(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.app.ProjectFolders())
+}
+
+func (s *Server) handleAddProjectFolder(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	folder, err := s.app.AddProjectFolder(request.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"name": folder})
+}
+
 func (s *Server) handleProjectPromptSettings(w http.ResponseWriter, _ *http.Request) {
 	settings := s.app.ProjectPromptSettings()
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -199,14 +221,15 @@ func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Path   *string `json:"path"`
+		Folder *string `json:"folder"`
 		Prompt *string `json:"prompt"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if request.Path == nil && request.Prompt == nil {
-		writeError(w, http.StatusBadRequest, errors.New("path or prompt is required"))
+	if request.Path == nil && request.Folder == nil && request.Prompt == nil {
+		writeError(w, http.StatusBadRequest, errors.New("path, folder or prompt is required"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
@@ -220,6 +243,14 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		projectID = updated.ID
+		project = updated
+	}
+	if request.Folder != nil {
+		updated, err := s.app.UpdateProjectFolder(projectID, *request.Folder)
+		if err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
 		project = updated
 	}
 	if request.Prompt != nil {

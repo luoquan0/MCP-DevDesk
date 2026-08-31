@@ -13,9 +13,7 @@ const searchInput = ref<HTMLInputElement | null>(null);
 
 const commands = computed(() => [
   { label: "打开概览", hint: "页面", icon: "overview", run: () => router.push("/") },
-  { label: "打开项目", hint: "页面", icon: "projects", run: () => router.push("/projects") },
-  { label: "打开 MCP 实例", hint: "页面", icon: "server", run: () => router.push("/instances") },
-  { label: "打开服务", hint: "页面", icon: "services", run: () => router.push("/services") },
+  { label: "打开项目与运行", hint: "页面", icon: "projects", run: () => router.push("/workspace") },
   { label: "打开 Cloudflare", hint: "页面", icon: "cloud", run: () => router.push("/cloudflare") },
   { label: "查看日志与诊断", hint: "页面", icon: "logs", run: () => router.push("/logs") },
   { label: "启动全部服务", hint: "动作", icon: "play", run: () => app.serviceAction("start") },

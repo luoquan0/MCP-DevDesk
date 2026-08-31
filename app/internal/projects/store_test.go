@@ -120,6 +120,45 @@ func TestStoreUpdatesProjectPathAndRejectsDuplicates(t *testing.T) {
 	}
 }
 
+func TestProjectFoldersPersistAndAssignWithoutMovingProject(t *testing.T) {
+	dataDir := t.TempDir()
+	workspace := filepath.Join(t.TempDir(), "folder-project")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(dataDir, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := store.AddFolder("客户项目/2026")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := store.List()[0]
+	updated, err := store.SetFolder(project.ID, folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Folder != "客户项目/2026" {
+		t.Fatalf("project folder = %q", updated.Folder)
+	}
+	if updated.Path != filepath.Clean(workspace) {
+		t.Fatalf("project path changed while assigning virtual folder: %q", updated.Path)
+	}
+
+	reloaded, err := NewStore(dataDir, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Folders()) != 1 || reloaded.Folders()[0] != "客户项目/2026" {
+		t.Fatalf("folders were not persisted: %#v", reloaded.Folders())
+	}
+	reloadedProject, ok := reloaded.Get(project.ID)
+	if !ok || reloadedProject.Folder != "客户项目/2026" {
+		t.Fatalf("project folder assignment was not persisted: %#v", reloadedProject)
+	}
+}
+
 func TestStoreRollsBackFailedTouchAndRemove(t *testing.T) {
 	dataDir := t.TempDir()
 	first := filepath.Join(t.TempDir(), "first")

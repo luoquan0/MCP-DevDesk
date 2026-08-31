@@ -13,9 +13,7 @@ const ui = useUiStore();
 
 const navigation = [
   { to: "/", label: "概览", icon: "overview" },
-  { to: "/projects", label: "项目", icon: "projects" },
-  { to: "/instances", label: "MCP 实例", icon: "server" },
-  { to: "/services", label: "服务", icon: "services" },
+  { to: "/workspace", label: "项目与运行", icon: "projects" },
   { to: "/cloudflare", label: "Cloudflare", icon: "cloud" },
   { to: "/logs", label: "日志与诊断", icon: "logs" },
   { to: "/security", label: "权限与安全", icon: "security" },

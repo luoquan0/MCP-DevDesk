@@ -136,6 +136,7 @@ export interface Project {
   id: string;
   name: string;
   path: string;
+  folder?: string;
   prompt?: string;
   addedAt: string;
   lastOpenedAt: string;

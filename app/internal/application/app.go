@@ -102,6 +102,16 @@ func (a *App) DataDir() string { return a.dataDir }
 
 func (a *App) Projects() []projectstore.Project { return a.projects.List() }
 
+func (a *App) ProjectFolders() []string { return a.projects.Folders() }
+
+func (a *App) AddProjectFolder(name string) (string, error) {
+	return a.projects.AddFolder(name)
+}
+
+func (a *App) UpdateProjectFolder(id, folder string) (projectstore.Project, error) {
+	return a.projects.SetFolder(id, folder)
+}
+
 func (a *App) ProjectPromptSettings() projectstore.PromptSettings {
 	return projectstore.PromptSettings{
 		Enabled:      a.projects.GlobalPromptEnabled(),
@@ -185,6 +195,12 @@ func (a *App) UpdateProjectPath(ctx context.Context, id, path string) (projectst
 	}
 
 	active := strings.EqualFold(filepath.Clean(a.config.Get().Workspace), filepath.Clean(current.Path))
+	linkedInstances := make([]string, 0)
+	for _, record := range a.instances.List() {
+		if record.ProjectID == id {
+			linkedInstances = append(linkedInstances, record.ID)
+		}
+	}
 	if active {
 		if err := a.SwitchWorkspace(ctx, candidate.Path); err != nil {
 			return projectstore.Project{}, err
@@ -192,22 +208,66 @@ func (a *App) UpdateProjectPath(ctx context.Context, id, path string) (projectst
 	}
 
 	updated, err := a.projects.UpdatePath(id, candidate.Path)
-	if err == nil {
-		return updated, nil
-	}
-	if !active {
+	if err != nil {
+		if !active {
+			return projectstore.Project{}, err
+		}
+
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+		if rollbackErr := a.SwitchWorkspace(rollbackCtx, current.Path); rollbackErr != nil {
+			return projectstore.Project{}, fmt.Errorf("update project path: %w; workspace rollback failed: %v", err, rollbackErr)
+		}
 		return projectstore.Project{}, err
 	}
 
-	rollbackCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-	defer cancel()
-	if rollbackErr := a.SwitchWorkspace(rollbackCtx, current.Path); rollbackErr != nil {
-		return projectstore.Project{}, fmt.Errorf("update project path: %w; workspace rollback failed: %v", err, rollbackErr)
+	migrated := make([]string, 0, len(linkedInstances))
+	for _, instanceID := range linkedInstances {
+		newProjectID := updated.ID
+		newWorkspace := updated.Path
+		if _, migrateErr := a.UpdateInstance(ctx, instanceID, model.MCPInstanceUpdateRequest{
+			ProjectID: &newProjectID,
+			Workspace: &newWorkspace,
+		}); migrateErr != nil {
+			var rollbackProblems []string
+			rolledBack, projectRollbackErr := a.projects.UpdatePath(updated.ID, current.Path)
+			if projectRollbackErr != nil {
+				rollbackProblems = append(rollbackProblems, "project="+projectRollbackErr.Error())
+			} else {
+				for _, migratedID := range migrated {
+					oldProjectID := rolledBack.ID
+					oldWorkspace := rolledBack.Path
+					if _, instanceRollbackErr := a.UpdateInstance(context.Background(), migratedID, model.MCPInstanceUpdateRequest{
+						ProjectID: &oldProjectID,
+						Workspace: &oldWorkspace,
+					}); instanceRollbackErr != nil {
+						rollbackProblems = append(rollbackProblems, migratedID+"="+instanceRollbackErr.Error())
+					}
+				}
+			}
+			if active {
+				rollbackCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+				if switchErr := a.SwitchWorkspace(rollbackCtx, current.Path); switchErr != nil {
+					rollbackProblems = append(rollbackProblems, "workspace="+switchErr.Error())
+				}
+				cancel()
+			}
+			if len(rollbackProblems) > 0 {
+				return projectstore.Project{}, fmt.Errorf("update linked MCP instance %s after project path change: %w; rollback problems: %s", instanceID, migrateErr, strings.Join(rollbackProblems, "; "))
+			}
+			return projectstore.Project{}, fmt.Errorf("update linked MCP instance %s after project path change: %w", instanceID, migrateErr)
+		}
+		migrated = append(migrated, instanceID)
 	}
-	return projectstore.Project{}, err
+	return updated, nil
 }
 
 func (a *App) RemoveProject(id string) error {
+	for _, record := range a.instances.List() {
+		if record.ProjectID == id {
+			return fmt.Errorf("project is used by MCP instance %q; remove or reconfigure that instance first", record.Name)
+		}
+	}
 	return a.projects.Remove(id, a.config.Get().Workspace)
 }
 

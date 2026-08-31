@@ -69,6 +69,58 @@ func TestAdditionalInstancePersistsAndUsesIsolatedDataDirectory(t *testing.T) {
 	}
 }
 
+func TestProjectPathChangeKeepsLinkedInstanceAttached(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"coding-tools-mcp.exe", "mcp-core.exe", "cloudflared.exe"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("placeholder"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldPath := filepath.Join(root, "old-project")
+	newPath := filepath.Join(root, "new-project")
+	for _, path := range []string{oldPath, newPath} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app, err := New(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Close() })
+	project, err := app.AddProject("linked", oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := freeTCPPort(t)
+	instance, err := app.CreateInstance(context.Background(), model.MCPInstanceCreateRequest{
+		Name:      "linked-instance",
+		ProjectID: project.ID,
+		MCPPort:   port,
+		CoreMode:  "go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := app.UpdateProjectPath(context.Background(), project.ID, newPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID == project.ID {
+		t.Fatal("expected path-based project ID to change")
+	}
+	linked, err := app.Instance(instance.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linked.ProjectID != updated.ID || linked.Workspace != filepath.Clean(newPath) {
+		t.Fatalf("linked instance was not migrated with project: %+v", linked)
+	}
+	if err := app.RemoveProject(updated.ID); err == nil {
+		t.Fatal("expected project removal to be blocked while an MCP instance is linked")
+	}
+}
+
 func TestAdditionalInstancesRejectDuplicatePorts(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"coding-tools-mcp.exe", "mcp-core.exe", "cloudflared.exe"} {
