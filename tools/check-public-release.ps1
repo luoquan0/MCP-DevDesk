@@ -2,6 +2,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$failed = $false
 Push-Location $Root
 try {
     $tracked = @(git ls-files)
@@ -23,15 +24,22 @@ try {
     )
     foreach ($pattern in $secretPatterns) {
         $matches = @(git grep -l -I -E -- $pattern -- ':!app/vendor/**' ':!app/internal/web/static/**' 2>$null)
-        if ($LASTEXITCODE -eq 0 -and $matches.Count -gt 0) {
+        $grepExitCode = $LASTEXITCODE
+        if ($grepExitCode -eq 0 -and $matches.Count -gt 0) {
             throw "Potential credential material matched $pattern in: $($matches -join ', ')"
         }
-        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) {
+        if ($grepExitCode -ne 0 -and $grepExitCode -ne 1) {
             throw "git grep failed while checking public-release secrets"
         }
     }
 
     Write-Host "Public release secret guard passed." -ForegroundColor Green
+} catch {
+    $failed = $true
+    throw
 } finally {
     Pop-Location
+    if (-not $failed) {
+        $global:LASTEXITCODE = 0
+    }
 }
