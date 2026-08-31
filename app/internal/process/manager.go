@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
@@ -19,10 +20,11 @@ import (
 )
 
 type managedProcess struct {
-	mu       sync.RWMutex
-	cmd      *exec.Cmd
-	stopping bool
-	status   model.ProcessStatus
+	mu        sync.RWMutex
+	cmd       *exec.Cmd
+	stopping  bool
+	status    model.ProcessStatus
+	serverURL string
 }
 
 type Manager struct {
@@ -64,10 +66,7 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 		return err
 	}
 
-	baseURL := "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort)
-	if cfg.Domain != "" {
-		baseURL = "https://" + cfg.Domain
-	}
+	baseURL := mcpServerURL(cfg)
 
 	instructionsFile, err := m.syncInstructionsFile(cfg)
 	if err != nil {
@@ -79,7 +78,13 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 
 	stdout := filepath.Join(m.dataDir, "logs", "mcp-stdout.log")
 	stderr := filepath.Join(m.dataDir, "logs", "mcp-stderr.log")
-	return m.start(&m.mcp, executable, args, m.rootDir, env, stdout, stderr, cfg.HideChildProcessWindows)
+	if err := m.start(&m.mcp, executable, args, m.rootDir, env, stdout, stderr, cfg.HideChildProcessWindows); err != nil {
+		return err
+	}
+	m.mcp.mu.Lock()
+	m.mcp.serverURL = baseURL
+	m.mcp.mu.Unlock()
+	return nil
 }
 
 // SyncInstructions writes the optional MCP DevDesk global instructions for cfg
@@ -129,6 +134,22 @@ func selectedMCPExecutable(cfg model.Config) string {
 		return cfg.GoCoreExecutable
 	}
 	return cfg.CoreExecutable
+}
+
+func mcpServerURL(cfg model.Config) string {
+	if domain := strings.TrimSpace(cfg.Domain); domain != "" {
+		return "https://" + strings.ToLower(domain)
+	}
+	return "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort)
+}
+
+func shouldRestartMCPForTunnel(running bool, currentServerURL string, cfg model.Config) bool {
+	if !running {
+		return false
+	}
+	current := strings.TrimRight(strings.TrimSpace(currentServerURL), "/")
+	desired := strings.TrimRight(mcpServerURL(cfg), "/")
+	return !strings.EqualFold(current, desired)
 }
 
 func mcpArguments(cfg model.Config, dataDir, baseURL, instructionsFile string) []string {
@@ -196,6 +217,10 @@ func (m *Manager) StartTunnel(cfg model.Config) error {
 		return fmt.Errorf("tunnel credentials unavailable at %s: %w", credentials, err)
 	}
 
+	if err := m.ensureMCPServerURLForTunnel(cfg); err != nil {
+		return err
+	}
+
 	localURL := "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort)
 	args := []string{
 		"tunnel", "run",
@@ -208,6 +233,56 @@ func (m *Manager) StartTunnel(cfg model.Config) error {
 	stdout := filepath.Join(m.dataDir, "logs", "tunnel-stdout.log")
 	stderr := filepath.Join(m.dataDir, "logs", "tunnel-stderr.log")
 	return m.start(&m.tunnel, cfg.CloudflaredExecutable, args, m.rootDir, appendProxy(os.Environ(), cfg), stdout, stderr, cfg.HideChildProcessWindows)
+}
+
+func (m *Manager) ensureMCPServerURLForTunnel(cfg model.Config) error {
+	m.mcp.mu.RLock()
+	running := m.mcp.status.Running
+	currentServerURL := m.mcp.serverURL
+	m.mcp.mu.RUnlock()
+	if !shouldRestartMCPForTunnel(running, currentServerURL, cfg) {
+		return nil
+	}
+
+	if err := m.stop(&m.mcp); err != nil {
+		return fmt.Errorf("restart MCP for Cloudflare public URL: stop old MCP: %w", err)
+	}
+	if err := waitForManagedProcessExit(&m.mcp, 8*time.Second); err != nil {
+		return fmt.Errorf("restart MCP for Cloudflare public URL: %w", err)
+	}
+	if err := m.StartMCP(cfg); err != nil {
+		return fmt.Errorf("restart MCP for Cloudflare public URL: start MCP: %w", err)
+	}
+	if err := waitForTCP(cfg.MCPHost, cfg.MCPPort, 15*time.Second); err != nil {
+		_ = m.stop(&m.mcp)
+		return fmt.Errorf("restart MCP for Cloudflare public URL: %w", err)
+	}
+	return nil
+}
+
+func waitForManagedProcessExit(target *managedProcess, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !statusOf(target).Running {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.New("timeout waiting for MCP process to stop")
+}
+
+func waitForTCP(host string, port int, timeout time.Duration) error {
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout("tcp", address, 250*time.Millisecond)
+		if err == nil {
+			_ = connection.Close()
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for %s", address)
 }
 
 func (m *Manager) StartCloudflareLogin(cfg model.Config) error {
