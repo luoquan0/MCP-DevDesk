@@ -1,6 +1,17 @@
 name: Release MCP DevDesk
 
 on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - "patch"
+          - "minor"
+          - "major"
   push:
     tags:
       - "v*"
@@ -12,7 +23,7 @@ permissions:
 
 jobs:
   release-windows-amd64:
-    if: startsWith(github.ref, 'refs/tags/v') || contains(github.event.head_commit.message, '[release]')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.head_commit.message, '[release]')
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -21,19 +32,99 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Resolve release tag
+      - name: Prepare release version
         shell: pwsh
+        env:
+          RELEASE_BUMP: ${{ inputs.bump }}
         run: |
-          if ($env:GITHUB_REF -like "refs/tags/v*") {
-            $releaseTag = $env:GITHUB_REF_NAME
-          } else {
-            $versionLine = Select-String -LiteralPath "app\internal\buildinfo\version.go" -Pattern 'const Version = "([^"]+)"'
-            if (-not $versionLine) {
+          $versionPath = "app\internal\buildinfo\version.go"
+          $versionGitPath = "app/internal/buildinfo/version.go"
+          $readmePath = "README.md"
+
+          function Read-Version([string]$text) {
+            $match = [regex]::Match($text, 'const Version = "([^"]+)"')
+            if (-not $match.Success) {
               throw "Could not resolve version from app/internal/buildinfo/version.go"
             }
-            $releaseTag = "v" + $versionLine.Matches[0].Groups[1].Value
+            return $match.Groups[1].Value
+          }
+
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $releaseTag = $env:GITHUB_REF_NAME
+            $releaseVersion = $releaseTag.TrimStart("v")
+            $sourceVersion = Read-Version (Get-Content -LiteralPath $versionPath -Raw)
+            if ($sourceVersion -ne $releaseVersion) {
+              throw "Tag $releaseTag does not match source version $sourceVersion"
+            }
+            $releaseSha = $env:GITHUB_SHA
+          } else {
+            $triggerVersionText = git show "$($env:GITHUB_SHA):$versionGitPath"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not read the version from trigger commit $env:GITHUB_SHA"
+            }
+            $triggerVersion = Read-Version ($triggerVersionText -join "`n")
+            $parts = @($triggerVersion.Split(".") | ForEach-Object { [int]$_ })
+            if ($parts.Count -ne 3) {
+              throw "Version $triggerVersion is not a three-part semantic version"
+            }
+
+            $bump = $env:RELEASE_BUMP
+            if ([string]::IsNullOrWhiteSpace($bump)) {
+              $bump = "patch"
+            }
+            switch ($bump) {
+              "major" { $parts[0]++; $parts[1] = 0; $parts[2] = 0 }
+              "minor" { $parts[1]++; $parts[2] = 0 }
+              "patch" { $parts[2]++ }
+              default { throw "Unsupported release bump: $bump" }
+            }
+
+            $releaseVersion = "$($parts[0]).$($parts[1]).$($parts[2])"
+            $releaseTag = "v$releaseVersion"
+
+            git fetch origin main --tags
+
+            $existingTag = git rev-parse -q --verify "refs/tags/$releaseTag^{commit}" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $existingTag) {
+              git checkout --detach $existingTag
+              $releaseSha = (git rev-parse HEAD).Trim()
+            } else {
+              $bumpSubject = "chore: bump version to $releaseTag [skip release]"
+              $existingBump = git log origin/main --format="%H" --fixed-strings --grep="$bumpSubject" -1
+              if ($existingBump) {
+                $existingBump = $existingBump.Trim()
+              }
+              if ($existingBump) {
+                git checkout --detach $existingBump
+                $releaseSha = (git rev-parse HEAD).Trim()
+              } else {
+                git checkout -B main origin/main
+                $mainVersion = Read-Version (Get-Content -LiteralPath $versionPath -Raw)
+                if ($mainVersion -ne $triggerVersion) {
+                  throw "main moved from version $triggerVersion to $mainVersion before release preparation; start a new release from current main"
+                }
+
+                $versionContent = Get-Content -LiteralPath $versionPath -Raw
+                $versionContent = $versionContent -replace 'const Version = "[^"]+"', "const Version = `"$releaseVersion`""
+                Set-Content -LiteralPath $versionPath -Value $versionContent -Encoding utf8 -NoNewline
+
+                if (Test-Path -LiteralPath $readmePath) {
+                  $readme = Get-Content -LiteralPath $readmePath -Raw -Encoding utf8
+                  $readme = $readme -replace '当前版本 `\d+\.\d+\.\d+` 已完成：', "当前版本 ``$releaseVersion`` 已完成："
+                  Set-Content -LiteralPath $readmePath -Value $readme -Encoding utf8 -NoNewline
+                }
+
+                git config user.name "github-actions[bot]"
+                git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                git add -- $versionPath $readmePath
+                git commit -m "$bumpSubject"
+                git push origin HEAD:main
+                $releaseSha = (git rev-parse HEAD).Trim()
+              }
+            }
           }
           "RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_SHA=$releaseSha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -84,7 +175,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
-          git tag -f "$env:RELEASE_TAG" "$env:GITHUB_SHA"
+          git tag -f "$env:RELEASE_TAG" "$env:RELEASE_SHA"
           git push origin "refs/tags/$env:RELEASE_TAG" --force
 
       - name: Publish GitHub Release
