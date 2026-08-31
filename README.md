@@ -10,7 +10,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-当前版本 `0.12.8` 已完成：
+当前版本 `0.12.9` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -103,11 +103,13 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 详细文档见：
 
+- [维护与修改规范](AGENTS.md)
 - [开发说明](docs/DEVELOPMENT.md)
 - [总体架构](docs/ARCHITECTURE.md)
 - [安全模型](docs/SECURITY.md)
 - [Cloudflare 流程](docs/CLOUDFLARE.md)
 - [Windows 桌面模式](docs/DESKTOP.md)
+- [发布与在线更新](docs/RELEASE.md)
 - [开发路线图](docs/ROADMAP.md)
 
 ## 本地运行
@@ -151,11 +153,13 @@ dist\devdeskctl-amd64.exe start
 dist\devdeskctl-amd64.exe stop
 ```
 
-管理界面只监听本机地址。Cloudflare Tunnel 仅暴露 MCP/OAuth 服务，不暴露管理后台。
+管理界面内部监听器默认只服务本机。可选网页控制使用独立端口和认证边界。Cloudflare Tunnel 仅用于明确配置的 MCP/OAuth 服务，不直接暴露内部桌面管理端口。
 
 ## Go MCP 核心
 
-`0.12.8` 在 `0.12.7` 的项目工作区、自定义外观、新 Logo 和玻璃材质基础上加入 GitHub Releases 在线更新：设置页“软件设置 → 软件更新”可配置公开仓库 `owner/repo`、稳定/预发布通道和启动检查；客户端读取 GitHub Release，下载 `MCP-DevDesk-Portable-amd64.zip` 与对应 `.sha256`，校验通过后交给独立 `devdesk-updater.exe`。更新器会等待主程序正常退出、停止 MCP/Tunnel/独立实例后替换二进制，`data/devdesk` 与项目目录不会被更新包覆盖；替换失败会恢复备份并重新启动旧版本。仓库新增 `.github/workflows/release.yml`，以后推送 `v*` Tag 可在 Windows runner 上自动测试、构建 EXE/Portable/updater、生成 SHA256 并创建 GitHub Release；GitHub Actions 构建时会把 `${{ github.repository }}` 注入程序作为默认更新源，正式发布包无需用户手填仓库。当前本地仓库尚未配置 Git remote，因此第一次发布仍需要先创建/关联 GitHub 仓库并推送代码与 Tag。
+`0.12.8` 引入 GitHub Releases 在线更新：设置页“软件设置 → 软件更新”可配置仓库 `owner/repo`、稳定/预发布通道和启动检查；客户端读取 GitHub Release，下载 `MCP-DevDesk-Portable-amd64.zip` 与对应 `.sha256`，校验通过后交给独立 `devdesk-updater.exe`。更新器会等待主程序正常退出、停止 MCP/Tunnel/独立实例后替换二进制，`data/devdesk` 与项目目录不会被更新包覆盖；替换失败会恢复备份并重新启动旧版本。
+
+`0.12.9` 修复了退出阶段 SSE 长连接阻塞 HTTP 优雅关闭、导致托盘退出后仍需要等待约 8 秒的问题。仓库的 GitHub Actions 也已升级为自动版本递增和 Release 流程：只有明确发版时才计算下一个版本、完整测试、构建 EXE/Portable/updater、生成 SHA256 并发布 GitHub Release。详细规则见 [发布与在线更新](docs/RELEASE.md)。
 
 ```powershell
 cd app
@@ -186,4 +190,3 @@ Go 核心的 OAuth 模式还支持：
 - 刷新令牌加密持久化和重启续签
 
 命令工具不会隐式继承 OAuth Token、密码和其他常见敏感环境变量。安全模式完全拒绝命令和写入；信任模式允许工作区开发操作，但删除、覆盖和补丁删除仍要求明确确认。
-
