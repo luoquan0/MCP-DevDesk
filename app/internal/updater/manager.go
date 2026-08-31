@@ -30,10 +30,23 @@ const (
 
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
+type DownloadProgress struct {
+	Active          bool      `json:"active"`
+	Stage           string    `json:"stage"`
+	BytesDownloaded int64     `json:"bytesDownloaded"`
+	TotalBytes      int64     `json:"totalBytes"`
+	Percent         int       `json:"percent"`
+	Attempt         int       `json:"attempt"`
+	MaxAttempts     int       `json:"maxAttempts"`
+	Message         string    `json:"message"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
 type Settings struct {
-	Repository     string `json:"repository"`
-	Channel        string `json:"channel"`
-	CheckOnStartup bool   `json:"checkOnStartup"`
+	Repository     string            `json:"repository"`
+	Channel        string            `json:"channel"`
+	CheckOnStartup bool              `json:"checkOnStartup"`
+	Progress       *DownloadProgress `json:"progress,omitempty"`
 }
 
 type SettingsUpdate struct {
@@ -82,7 +95,7 @@ type downloadHTTPError struct {
 }
 
 func (e *downloadHTTPError) Error() string {
-	return fmt.Sprintf("update package download returned HTTP %d", e.status)
+	return fmt.Sprintf("update download returned HTTP %d", e.status)
 }
 
 type Manager struct {
@@ -93,6 +106,8 @@ type Manager struct {
 	version      string
 	apiBaseURL   string
 	client       *http.Client
+	progressMu   sync.RWMutex
+	progress     DownloadProgress
 }
 
 func NewManager(dataDir, currentVersion string, defaultRepository ...string) (*Manager, error) {
@@ -116,11 +131,18 @@ func NewManager(dataDir, currentVersion string, defaultRepository ...string) (*M
 			Channel:        "stable",
 			CheckOnStartup: true,
 		},
+		progress: DownloadProgress{
+			Stage:       "idle",
+			MaxAttempts: downloadRetryAttempts,
+		},
 	}
 	if raw, err := os.ReadFile(m.settingsPath); err == nil {
 		if err := json.Unmarshal(raw, &m.current); err != nil {
 			return nil, fmt.Errorf("parse update settings: %w", err)
 		}
+		// Progress is runtime-only. Ignore anything written by an experimental
+		// or older build so update-settings.json remains configuration only.
+		m.current.Progress = nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read update settings: %w", err)
 	}
@@ -139,14 +161,65 @@ func NewManager(dataDir, currentVersion string, defaultRepository ...string) (*M
 
 func (m *Manager) Settings() Settings {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.current
+	settings := m.current
+	m.mu.RUnlock()
+	progress := m.Progress()
+	settings.Progress = &progress
+	return settings
+}
+
+func (m *Manager) Progress() DownloadProgress {
+	m.progressMu.RLock()
+	defer m.progressMu.RUnlock()
+	return m.progress
+}
+
+func (m *Manager) setProgress(progress DownloadProgress) {
+	if progress.MaxAttempts <= 0 {
+		progress.MaxAttempts = downloadRetryAttempts
+	}
+	progress.Percent = downloadPercent(progress.BytesDownloaded, progress.TotalBytes, progress.Stage)
+	progress.UpdatedAt = time.Now().UTC()
+	m.progressMu.Lock()
+	m.progress = progress
+	m.progressMu.Unlock()
+}
+
+func (m *Manager) updateProgress(update func(*DownloadProgress)) {
+	m.progressMu.Lock()
+	progress := m.progress
+	update(&progress)
+	if progress.MaxAttempts <= 0 {
+		progress.MaxAttempts = downloadRetryAttempts
+	}
+	progress.Percent = downloadPercent(progress.BytesDownloaded, progress.TotalBytes, progress.Stage)
+	progress.UpdatedAt = time.Now().UTC()
+	m.progress = progress
+	m.progressMu.Unlock()
+}
+
+func downloadPercent(downloaded, total int64, stage string) int {
+	if stage == "ready" {
+		return 100
+	}
+	if total <= 0 || downloaded <= 0 {
+		return 0
+	}
+	percent := int(downloaded * 100 / total)
+	if percent < 0 {
+		return 0
+	}
+	if percent > 100 {
+		return 100
+	}
+	return percent
 }
 
 func (m *Manager) UpdateSettings(update SettingsUpdate) (Settings, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	next := m.current
+	next.Progress = nil
 	if update.Repository != nil {
 		next.Repository = strings.TrimSpace(*update.Repository)
 	}
@@ -229,13 +302,29 @@ func (m *Manager) Check(ctx context.Context) (Release, error) {
 	}, nil
 }
 
-func (m *Manager) Download(ctx context.Context, release Release) (PreparedUpdate, error) {
+func (m *Manager) Download(ctx context.Context, release Release) (prepared PreparedUpdate, err error) {
 	if !release.UpdateAvailable {
 		return PreparedUpdate{}, errors.New("no newer update is available")
 	}
 	if release.AssetURL == "" || release.ChecksumAssetURL == "" {
 		return PreparedUpdate{}, errors.New("release download metadata is incomplete")
 	}
+
+	m.setProgress(DownloadProgress{
+		Active:      true,
+		Stage:       "checksum",
+		MaxAttempts: downloadRetryAttempts,
+		Message:     "正在获取更新包校验信息",
+	})
+	defer func() {
+		if err != nil {
+			m.updateProgress(func(progress *DownloadProgress) {
+				progress.Active = false
+				progress.Stage = "error"
+				progress.Message = err.Error()
+			})
+		}
+	}()
 
 	expected, err := m.downloadChecksum(ctx, release.ChecksumAssetURL, release.AssetName)
 	if err != nil {
@@ -244,6 +333,13 @@ func (m *Manager) Download(ctx context.Context, release Release) (PreparedUpdate
 	packageName := sanitizeFilename(release.TagName) + "-" + release.AssetName
 	packagePath := filepath.Join(m.updatesDir, packageName)
 	tmp := packagePath + ".tmp"
+	m.updateProgress(func(progress *DownloadProgress) {
+		progress.Stage = "download"
+		progress.Message = "正在下载更新包"
+		progress.Attempt = 0
+		progress.BytesDownloaded = 0
+		progress.TotalBytes = 0
+	})
 	if err := m.downloadFile(ctx, release.AssetURL, tmp); err != nil {
 		// Keep a bounded partial package so a later retry can resume instead of
 		// throwing away tens of megabytes after a short network interruption.
@@ -252,6 +348,10 @@ func (m *Manager) Download(ctx context.Context, release Release) (PreparedUpdate
 		}
 		return PreparedUpdate{}, err
 	}
+	m.updateProgress(func(progress *DownloadProgress) {
+		progress.Stage = "verifying"
+		progress.Message = "正在校验下载包完整性"
+	})
 	actual, err := fileSHA256(tmp)
 	if err != nil {
 		_ = os.Remove(tmp)
@@ -265,6 +365,14 @@ func (m *Manager) Download(ctx context.Context, release Release) (PreparedUpdate
 		_ = os.Remove(tmp)
 		return PreparedUpdate{}, err
 	}
+	m.updateProgress(func(progress *DownloadProgress) {
+		progress.Active = false
+		progress.Stage = "ready"
+		progress.Message = "更新包已下载并通过 SHA256 校验"
+		if progress.TotalBytes > 0 {
+			progress.BytesDownloaded = progress.TotalBytes
+		}
+	})
 	return PreparedUpdate{Release: release, PackagePath: packagePath}, nil
 }
 
@@ -320,6 +428,12 @@ func (m *Manager) downloadChecksum(ctx context.Context, downloadURL, assetName s
 	attempts := 0
 	for attempt := 1; attempt <= downloadRetryAttempts; attempt++ {
 		attempts = attempt
+		m.updateProgress(func(progress *DownloadProgress) {
+			progress.Active = true
+			progress.Stage = "checksum"
+			progress.Attempt = attempt
+			progress.Message = fmt.Sprintf("正在获取校验信息 · 第 %d/%d 次", attempt, downloadRetryAttempts)
+		})
 		value, err := m.downloadChecksumAttempt(ctx, downloadURL, assetName)
 		if err == nil {
 			return value, nil
@@ -328,6 +442,10 @@ func (m *Manager) downloadChecksum(ctx context.Context, downloadURL, assetName s
 		if !retryableDownloadError(err) || attempt == downloadRetryAttempts {
 			break
 		}
+		m.updateProgress(func(progress *DownloadProgress) {
+			progress.Stage = "retrying"
+			progress.Message = fmt.Sprintf("校验信息请求中断，准备第 %d/%d 次重试", attempt+1, downloadRetryAttempts)
+		})
 		if err := waitForRetry(ctx, attempt); err != nil {
 			return "", err
 		}
@@ -380,6 +498,12 @@ func (m *Manager) downloadFile(ctx context.Context, downloadURL, target string) 
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		m.updateProgress(func(progress *DownloadProgress) {
+			progress.Active = true
+			progress.Stage = "download"
+			progress.Attempt = attempt
+			progress.Message = fmt.Sprintf("正在下载更新包 · 第 %d/%d 次", attempt, downloadRetryAttempts)
+		})
 		if err := m.downloadFileAttempt(ctx, downloadURL, target); err == nil {
 			return nil
 		} else {
@@ -388,6 +512,10 @@ func (m *Manager) downloadFile(ctx context.Context, downloadURL, target string) 
 		if !retryableDownloadError(lastErr) || attempt == downloadRetryAttempts {
 			break
 		}
+		m.updateProgress(func(progress *DownloadProgress) {
+			progress.Stage = "retrying"
+			progress.Message = fmt.Sprintf("下载中断，准备第 %d/%d 次重试", attempt+1, downloadRetryAttempts)
+		})
 		if err := waitForRetry(ctx, attempt); err != nil {
 			return err
 		}
@@ -427,6 +555,10 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, downloadURL, target s
 		if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		m.updateProgress(func(progress *DownloadProgress) {
+			progress.BytesDownloaded = 0
+			progress.TotalBytes = 0
+		})
 		return &downloadHTTPError{status: resp.StatusCode}
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
@@ -436,9 +568,18 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, downloadURL, target s
 		offset = 0
 	}
 
+	totalBytes := downloadResponseTotal(resp, offset)
+	if totalBytes > maxReleaseAssetBytes {
+		return errors.New("update package is unexpectedly large")
+	}
 	if resp.ContentLength > 0 && offset+resp.ContentLength > maxReleaseAssetBytes {
 		return errors.New("update package is unexpectedly large")
 	}
+	m.updateProgress(func(progress *DownloadProgress) {
+		progress.BytesDownloaded = offset
+		progress.TotalBytes = totalBytes
+	})
+
 	flags := os.O_CREATE | os.O_WRONLY
 	if appendMode {
 		flags |= os.O_APPEND
@@ -449,7 +590,15 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, downloadURL, target s
 	if err != nil {
 		return err
 	}
-	written, copyErr := io.Copy(file, io.LimitReader(resp.Body, maxReleaseAssetBytes-offset+1))
+	reader := &progressReader{
+		reader: io.LimitReader(resp.Body, maxReleaseAssetBytes-offset+1),
+		onRead: func(count int64) {
+			m.updateProgress(func(progress *DownloadProgress) {
+				progress.BytesDownloaded += count
+			})
+		},
+	}
+	written, copyErr := io.Copy(file, reader)
 	syncErr := file.Sync()
 	closeErr := file.Close()
 	if copyErr != nil {
@@ -465,6 +614,48 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, downloadURL, target s
 		return errors.New("update package exceeds the maximum allowed size")
 	}
 	return nil
+}
+
+type progressReader struct {
+	reader io.Reader
+	onRead func(int64)
+}
+
+func (r *progressReader) Read(buffer []byte) (int, error) {
+	count, err := r.reader.Read(buffer)
+	if count > 0 && r.onRead != nil {
+		r.onRead(int64(count))
+	}
+	return count, err
+}
+
+func downloadResponseTotal(resp *http.Response, offset int64) int64 {
+	if resp.StatusCode == http.StatusPartialContent {
+		if total := contentRangeTotal(resp.Header.Get("Content-Range")); total > 0 {
+			return total
+		}
+	}
+	if resp.ContentLength > 0 {
+		return offset + resp.ContentLength
+	}
+	return 0
+}
+
+func contentRangeTotal(value string) int64 {
+	value = strings.TrimSpace(value)
+	slash := strings.LastIndex(value, "/")
+	if slash < 0 || slash+1 >= len(value) {
+		return 0
+	}
+	totalText := strings.TrimSpace(value[slash+1:])
+	if totalText == "*" {
+		return 0
+	}
+	total, err := strconv.ParseInt(totalText, 10, 64)
+	if err != nil || total <= 0 {
+		return 0
+	}
+	return total
 }
 
 func retryableDownloadError(err error) bool {
@@ -491,6 +682,7 @@ func waitForRetry(ctx context.Context, attempt int) error {
 func (m *Manager) normalizeLocked() {
 	m.current.Repository = strings.TrimSpace(m.current.Repository)
 	m.current.Channel = strings.ToLower(strings.TrimSpace(m.current.Channel))
+	m.current.Progress = nil
 	if m.current.Channel == "" {
 		m.current.Channel = "stable"
 	}
@@ -611,7 +803,9 @@ func truncate(value string, limit int) string {
 }
 
 func (m *Manager) saveLocked() error {
-	raw, err := json.MarshalIndent(m.current, "", "  ")
+	stored := m.current
+	stored.Progress = nil
+	raw, err := json.MarshalIndent(stored, "", "  ")
 	if err != nil {
 		return err
 	}
