@@ -82,7 +82,7 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.12.2") { return }
+                if ($parsed.ok -and $parsed.version -eq "0.12.3") { return }
             }
         } catch {}
         if ($started.HasExited) { break }
@@ -328,7 +328,7 @@ try {
     if ($batchCall.Status -ne 200) { throw "read_files call failed: $($batchCall.Status) $($batchCall.Body)" }
     $batchResult = ($batchCall.Body | ConvertFrom-Json).result
     if ($batchResult.isError -or $batchResult.structuredContent.succeeded -ne 2 -or
-        $batchResult.structuredContent.files[1].content -notlike '*0.12.2*') {
+        $batchResult.structuredContent.files[1].content -notlike '*0.12.3*') {
         throw "read_files returned an unexpected result: $($batchCall.Body)"
     }
 

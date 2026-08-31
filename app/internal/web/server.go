@@ -59,6 +59,8 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("GET /api/projects", s.handleListProjects)
 	mux.HandleFunc("GET /api/project-folders", s.handleListProjectFolders)
 	mux.HandleFunc("POST /api/project-folders", s.handleAddProjectFolder)
+	mux.HandleFunc("PATCH /api/project-folders", s.handleMoveProjectsToFolder)
+	mux.HandleFunc("DELETE /api/project-folders", s.handleDeleteProjectFolder)
 	mux.HandleFunc("GET /api/projects/prompt-settings", s.handleProjectPromptSettings)
 	mux.HandleFunc("PUT /api/projects/prompt-settings", s.handleUpdateProjectPromptSettings)
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
@@ -169,6 +171,38 @@ func (s *Server) handleAddProjectFolder(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"name": folder})
+}
+
+func (s *Server) handleMoveProjectsToFolder(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		ProjectIDs []string `json:"projectIds"`
+		Folder     string   `json:"folder"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	projects, err := s.app.UpdateProjectsFolder(request.ProjectIDs, request.Folder)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, projects)
+}
+
+func (s *Server) handleDeleteProjectFolder(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.app.RemoveProjectFolder(request.Name); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "name": request.Name})
 }
 
 func (s *Server) handleProjectPromptSettings(w http.ResponseWriter, _ *http.Request) {

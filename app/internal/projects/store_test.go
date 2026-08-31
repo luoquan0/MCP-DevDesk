@@ -159,6 +159,55 @@ func TestProjectFoldersPersistAndAssignWithoutMovingProject(t *testing.T) {
 	}
 }
 
+func TestProjectFoldersSupportBatchMoveAndSafeDelete(t *testing.T) {
+	dataDir := t.TempDir()
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	third := filepath.Join(t.TempDir(), "third")
+	for _, path := range []string{first, second, third} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := NewStore(dataDir, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondProject, err := store.Add("Second", second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdProject, err := store.Add("Third", third)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddFolder("批量项目"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.SetFolderMany([]string{secondProject.ID, thirdProject.ID}, "批量项目")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated) != 2 || updated[0].Folder != "批量项目" || updated[1].Folder != "批量项目" {
+		t.Fatalf("batch folder update mismatch: %#v", updated)
+	}
+	if err := store.RemoveFolder("批量项目"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Folders()) != 0 {
+		t.Fatalf("folder was not removed: %#v", store.Folders())
+	}
+	for _, id := range []string{secondProject.ID, thirdProject.ID} {
+		project, ok := store.Get(id)
+		if !ok {
+			t.Fatalf("project %s was deleted with its virtual folder", id)
+		}
+		if project.Folder != "" {
+			t.Fatalf("project %s remained assigned to deleted folder: %#v", id, project)
+		}
+	}
+}
+
 func TestStoreRollsBackFailedTouchAndRemove(t *testing.T) {
 	dataDir := t.TempDir()
 	first := filepath.Join(t.TempDir(), "first")

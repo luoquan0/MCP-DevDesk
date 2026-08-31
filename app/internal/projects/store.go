@@ -161,9 +161,23 @@ func (s *Store) AddFolder(name string) (string, error) {
 }
 
 func (s *Store) SetFolder(id, folder string) (Project, error) {
+	updated, err := s.SetFolderMany([]string{id}, folder)
+	if err != nil {
+		return Project{}, err
+	}
+	if len(updated) == 0 {
+		return Project{}, errors.New("project not found")
+	}
+	return updated[0], nil
+}
+
+func (s *Store) SetFolderMany(ids []string, folder string) ([]Project, error) {
 	folder = normalizeFolder(folder)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(ids) == 0 {
+		return nil, errors.New("project ids are required")
+	}
 	if folder != "" {
 		matched := ""
 		for _, existing := range s.folders {
@@ -173,23 +187,94 @@ func (s *Store) SetFolder(id, folder string) (Project, error) {
 			}
 		}
 		if matched == "" {
-			return Project{}, errors.New("project folder does not exist")
+			return nil, errors.New("project folder does not exist")
 		}
 		folder = matched
 	}
-	for i := range s.data {
-		if s.data[i].ID != id {
-			continue
+	requested := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			requested[id] = struct{}{}
 		}
-		previous := s.data[i]
-		s.data[i].Folder = folder
-		if err := s.saveLocked(); err != nil {
-			s.data[i] = previous
-			return Project{}, err
-		}
-		return s.data[i], nil
 	}
-	return Project{}, errors.New("project not found")
+	if len(requested) == 0 {
+		return nil, errors.New("project ids are required")
+	}
+	indices := make([]int, 0, len(requested))
+	for i := range s.data {
+		if _, ok := requested[s.data[i].ID]; ok {
+			indices = append(indices, i)
+			delete(requested, s.data[i].ID)
+		}
+	}
+	if len(requested) > 0 {
+		return nil, errors.New("one or more projects were not found")
+	}
+	previous := append([]Project(nil), s.data...)
+	updated := make([]Project, 0, len(indices))
+	for _, index := range indices {
+		s.data[index].Folder = folder
+		updated = append(updated, s.data[index])
+	}
+	if err := s.saveLocked(); err != nil {
+		s.data = previous
+		return nil, err
+	}
+	return updated, nil
+}
+
+func (s *Store) RemoveFolder(name string) error {
+	name = normalizeFolder(name)
+	if name == "" {
+		return errors.New("folder name is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	matched := ""
+	for _, existing := range s.folders {
+		if strings.EqualFold(existing, name) {
+			matched = existing
+			break
+		}
+	}
+	if matched == "" {
+		return errors.New("project folder does not exist")
+	}
+	previousFolders := append([]string(nil), s.folders...)
+	previousProjects := append([]Project(nil), s.data...)
+	nextFolders := make([]string, 0, len(s.folders)-1)
+	for _, existing := range s.folders {
+		if !strings.EqualFold(existing, matched) {
+			nextFolders = append(nextFolders, existing)
+		}
+	}
+	s.folders = nextFolders
+	projectsChanged := false
+	for i := range s.data {
+		if strings.EqualFold(s.data[i].Folder, matched) {
+			s.data[i].Folder = ""
+			projectsChanged = true
+		}
+	}
+	if projectsChanged {
+		if err := s.saveLocked(); err != nil {
+			s.folders = previousFolders
+			s.data = previousProjects
+			return err
+		}
+	}
+	if err := s.saveFoldersLocked(); err != nil {
+		s.folders = previousFolders
+		s.data = previousProjects
+		if projectsChanged {
+			if rollbackErr := s.saveLocked(); rollbackErr != nil {
+				return fmt.Errorf("delete project folder: %w; rollback projects: %v", err, rollbackErr)
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Add(name, path string) (Project, error) {

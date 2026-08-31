@@ -419,6 +419,29 @@ func TestProjectFolderAPIOrganizesProjects(t *testing.T) {
 	if listRecorder.Code != http.StatusOK || !strings.Contains(listRecorder.Body.String(), "客户项目/2026") {
 		t.Fatalf("list project folders failed: %d %s", listRecorder.Code, listRecorder.Body.String())
 	}
+
+	batchMove := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/api/project-folders", bytes.NewBufferString(`{"projectIds":["`+projects[0].ID+`"],"folder":""}`))
+	batchMove.RemoteAddr = "127.0.0.1:45678"
+	batchMove.Host = "127.0.0.1:17860"
+	batchMove.Header.Set("Content-Type", "application/json")
+	batchMoveRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(batchMoveRecorder, batchMove)
+	if batchMoveRecorder.Code != http.StatusOK || strings.Contains(batchMoveRecorder.Body.String(), `"folder":"客户项目/2026"`) {
+		t.Fatalf("batch move project folder failed: %d %s", batchMoveRecorder.Code, batchMoveRecorder.Body.String())
+	}
+
+	deleteFolder := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/project-folders", bytes.NewBufferString(`{"name":"客户项目/2026"}`))
+	deleteFolder.RemoteAddr = "127.0.0.1:45678"
+	deleteFolder.Host = "127.0.0.1:17860"
+	deleteFolder.Header.Set("Content-Type", "application/json")
+	deleteFolderRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(deleteFolderRecorder, deleteFolder)
+	if deleteFolderRecorder.Code != http.StatusOK {
+		t.Fatalf("delete project folder failed: %d %s", deleteFolderRecorder.Code, deleteFolderRecorder.Body.String())
+	}
+	if len(server.app.ProjectFolders()) != 0 {
+		t.Fatalf("deleted folder remained in application state: %#v", server.app.ProjectFolders())
+	}
 }
 
 func TestDesktopStatusAndStartupEndpoints(t *testing.T) {

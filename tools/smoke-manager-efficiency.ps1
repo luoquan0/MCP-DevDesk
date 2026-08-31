@@ -63,7 +63,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.2") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.3") {
                 $ready = $true
                 break
             }
@@ -94,7 +94,7 @@ try {
     if ($login.StatusCode -ne 200 -or -not $loginParsed.authenticated) { throw "Web control login failed" }
     $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/status" -WebSession $webSession
     $overviewParsed = $overview.Content | ConvertFrom-Json
-    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.2") { throw "Authenticated full web UI API failed" }
+    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.3") { throw "Authenticated full web UI API failed" }
 
     $phoneProject = Join-Path $TestRoot "phone-project"
     New-Item -ItemType Directory -Force -Path $phoneProject | Out-Null
@@ -106,8 +106,13 @@ try {
     $phoneProjectParsed = $phoneProjectAdd.Content | ConvertFrom-Json
     $folderAdd = Send-Json -Method "POST" -Uri "http://127.0.0.1:$webPort/api/project-folders" -Body @{ name = "Smoke Folder" } -WebSession $webSession
     if ($folderAdd.StatusCode -ne 201 -or $folderAdd.Content -notlike "*Smoke Folder*") { throw "Project folder create failed" }
-    $folderAssign = Send-Json -Method "PATCH" -Uri "http://127.0.0.1:$webPort/api/projects/$($phoneProjectParsed.id)" -Body @{ folder = "Smoke Folder" } -WebSession $webSession
+    $folderAssign = Send-Json -Method "PATCH" -Uri "http://127.0.0.1:$webPort/api/project-folders" -Body @{ projectIds = @($phoneProjectParsed.id); folder = "Smoke Folder" } -WebSession $webSession
     if ($folderAssign.StatusCode -ne 200 -or $folderAssign.Content -notlike "*Smoke Folder*") { throw "Project folder assignment failed" }
+    $folderDelete = Send-Json -Method "DELETE" -Uri "http://127.0.0.1:$webPort/api/project-folders" -Body @{ name = "Smoke Folder" } -WebSession $webSession
+    if ($folderDelete.StatusCode -ne 200) { throw "Project folder delete failed" }
+    $projectsAfterFolderDelete = (Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/projects" -WebSession $webSession).Content | ConvertFrom-Json
+    $phoneProjectAfterDelete = @($projectsAfterFolderDelete) | Where-Object { $_.id -eq $phoneProjectParsed.id } | Select-Object -First 1
+    if ($phoneProjectAfterDelete.folder) { throw "Deleting a virtual project folder did not return its projects to unfiled" }
 
     $webPage = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/"
     if ($webPage.StatusCode -ne 200 -or $webPage.Content -notlike "*MCP DevDesk*") {
@@ -166,7 +171,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.12.2" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.12.3" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

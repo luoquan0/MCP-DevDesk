@@ -118,6 +118,15 @@ export const useAppStore = defineStore("app", {
       await this.loadProjectFolders();
       return result.name;
     },
+    async deleteProjectFolder(name: string) {
+      const ui = useUiStore();
+      await this.runAction(`delete-project-folder-${name}`, () => api<{ deleted: boolean }>("/api/project-folders", {
+        method: "DELETE",
+        body: { name } as unknown as BodyInit,
+      }));
+      await Promise.all([this.loadProjectFolders(), this.loadProjects()]);
+      ui.toast("项目文件夹已删除", "其中的项目已移回未归类。", "success");
+    },
     async updateProjectFolder(id: string, folder: string) {
       const project = await this.runAction(`folder-${id}`, () => api<Project>(`/api/projects/${encodeURIComponent(id)}`, {
         method: "PATCH",
@@ -125,6 +134,16 @@ export const useAppStore = defineStore("app", {
       }));
       await this.loadProjects();
       return project;
+    },
+    async updateProjectsFolder(ids: string[], folder: string) {
+      const ui = useUiStore();
+      const projects = await this.runAction("move-projects-folder", () => api<Project[]>("/api/project-folders", {
+        method: "PATCH",
+        body: { projectIds: ids, folder } as unknown as BodyInit,
+      }));
+      await this.loadProjects();
+      ui.toast(ids.length > 1 ? "项目已批量归类" : "项目已归类", folder || "未归类", "success");
+      return projects;
     },
     async loadProjectPromptSettings() {
       const next = await api<ProjectPromptSettings>("/api/projects/prompt-settings");

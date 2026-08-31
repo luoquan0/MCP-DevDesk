@@ -98,6 +98,10 @@ withDefaults(defineProps<{
     <template v-else-if="name === 'x'">
       <path d="m6 6 12 12M18 6 6 18" />
     </template>
+    <template v-else-if="name === 'trash'">
+      <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" />
+      <path d="M10 11v5M14 11v5" />
+    </template>
     <template v-else-if="name === 'moon'">
       <path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z" />
     </template>

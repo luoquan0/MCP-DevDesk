@@ -108,8 +108,16 @@ func (a *App) AddProjectFolder(name string) (string, error) {
 	return a.projects.AddFolder(name)
 }
 
+func (a *App) RemoveProjectFolder(name string) error {
+	return a.projects.RemoveFolder(name)
+}
+
 func (a *App) UpdateProjectFolder(id, folder string) (projectstore.Project, error) {
 	return a.projects.SetFolder(id, folder)
+}
+
+func (a *App) UpdateProjectsFolder(ids []string, folder string) ([]projectstore.Project, error) {
+	return a.projects.SetFolderMany(ids, folder)
 }
 
 func (a *App) ProjectPromptSettings() projectstore.PromptSettings {

@@ -4252,6 +4252,13 @@ kbd {
 
 .workspace-project-row:hover { background: var(--surface-hover); }
 .workspace-project-row.is-active { background: color-mix(in srgb, var(--accent-soft) 54%, transparent); }
+.workspace-project-row.is-selected {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 36%, var(--surface-solid));
+}
+.workspace-project-row.is-active.is-selected {
+  background: color-mix(in srgb, var(--accent-soft) 68%, var(--surface-solid));
+}
 
 .workspace-project-name {
   display: grid;
@@ -4302,6 +4309,40 @@ kbd {
 }
 
 .workspace-folder-mobile-select { display: none; }
+
+.workspace-folder-context-backdrop {
+  position: fixed;
+  z-index: 900;
+  inset: 0;
+}
+
+.workspace-folder-context-menu {
+  position: fixed;
+  width: 170px;
+  padding: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 11px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-float);
+}
+
+.workspace-folder-context-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-folder-context-menu button:hover { background: var(--surface-hover); }
+.workspace-folder-context-menu button.is-danger { color: var(--danger); }
 
 .workspace-project-empty {
   display: grid;
@@ -4385,6 +4426,42 @@ kbd {
 }
 
 .workspace-runtime-dialog .path-picker-row input { width: 100%; }
+
+.workspace-tunnel-config {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+
+.workspace-tunnel-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-tunnel-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.workspace-tunnel-heading strong { font-size: 12px; }
+.workspace-tunnel-heading small,
+.workspace-tunnel-url {
+  color: var(--text-tertiary);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.workspace-tunnel-config .toggle-row {
+  min-height: 52px;
+  background: var(--surface-solid);
+}
 
 @media (max-width: 980px) {
   .workspace-explorer { grid-template-columns: 180px minmax(0, 1fr); }

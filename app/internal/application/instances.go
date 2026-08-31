@@ -522,7 +522,7 @@ func (a *App) ConfigureInstanceTunnel(ctx context.Context, id string, request mo
 	if _, err := runtime.config.Replace(cfg); err != nil {
 		return model.ConfigureTunnelResult{}, err
 	}
-	_, tunnelStatus, _ := runtime.process.Status()
+	mcpStatus, tunnelStatus, _ := runtime.process.Status()
 	if tunnelStatus.Running {
 		if err := runtime.process.StopTunnel(); err != nil {
 			return model.ConfigureTunnelResult{}, err
@@ -530,6 +530,10 @@ func (a *App) ConfigureInstanceTunnel(ctx context.Context, id string, request mo
 		if err := waitForManagedProcessStopped(runtime.process, false, 8*time.Second); err != nil {
 			return model.ConfigureTunnelResult{}, err
 		}
+		if err := runtime.process.StartTunnel(cfg); err != nil {
+			return model.ConfigureTunnelResult{}, err
+		}
+	} else if mcpStatus.Running || runtime.desiredRunning {
 		if err := runtime.process.StartTunnel(cfg); err != nil {
 			return model.ConfigureTunnelResult{}, err
 		}

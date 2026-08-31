@@ -31,8 +31,11 @@ const pathProject = ref<Project | null>(null);
 const pathDraft = ref("");
 const promptProject = ref<Project | null>(null);
 const promptDraft = ref("");
-const draggedProject = ref<Project | null>(null);
+const selectedProjectIds = ref<string[]>([]);
+const selectionAnchorId = ref("");
+const draggedProjectIds = ref<string[]>([]);
 const dragTargetFolder = ref("");
+const folderContextMenu = ref<{ folder: string; x: number; y: number } | null>(null);
 
 const runtimeForm = reactive({
   name: "",
@@ -45,6 +48,9 @@ const runtimeForm = reactive({
   autoStart: false,
   watchdog: true,
   loggingEnabled: true,
+  domain: "",
+  tunnelName: "",
+  reuseTunnel: false,
 });
 
 const serviceForm = reactive({
@@ -58,6 +64,7 @@ const serviceForm = reactive({
 const normalizedSearch = computed(() => search.value.trim().toLocaleLowerCase());
 const runningProjectInstances = computed(() => app.instances.filter((instance) => !instance.primary && instance.mcp.running).length);
 const promptBytes = computed(() => new TextEncoder().encode(promptDraft.value).length);
+const selectedProjectIdSet = computed(() => new Set(selectedProjectIds.value));
 
 const visibleFolders = computed(() => {
   const query = normalizedSearch.value;
@@ -149,27 +156,62 @@ async function moveProject(project: Project, folder: string) {
   }
 }
 
+async function moveProjects(ids: string[], folder: string) {
+  if (!ids.length) return;
+  try {
+    await app.updateProjectsFolder(ids, folder);
+  } catch (error) {
+    ui.toast("移动项目失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
 function handleMobileProjectFolderChange(project: Project, event: Event) {
   const target = event.target as HTMLSelectElement | null;
   if (target) void moveProject(project, target.value);
 }
 
+function selectProject(project: Project, event: MouseEvent) {
+  const ids = filteredProjects.value.map((item) => item.id);
+  if (event.shiftKey && selectionAnchorId.value) {
+    const anchorIndex = ids.indexOf(selectionAnchorId.value);
+    const currentIndex = ids.indexOf(project.id);
+    if (anchorIndex >= 0 && currentIndex >= 0) {
+      const start = Math.min(anchorIndex, currentIndex);
+      const end = Math.max(anchorIndex, currentIndex);
+      selectedProjectIds.value = ids.slice(start, end + 1);
+      return;
+    }
+  }
+  if (event.ctrlKey || event.metaKey) {
+    selectedProjectIds.value = selectedProjectIdSet.value.has(project.id)
+      ? selectedProjectIds.value.filter((id) => id !== project.id)
+      : [...selectedProjectIds.value, project.id];
+  } else {
+    selectedProjectIds.value = [project.id];
+  }
+  selectionAnchorId.value = project.id;
+}
+
 function beginProjectDrag(project: Project, event: DragEvent) {
-  draggedProject.value = project;
+  if (!selectedProjectIdSet.value.has(project.id)) {
+    selectedProjectIds.value = [project.id];
+    selectionAnchorId.value = project.id;
+  }
+  draggedProjectIds.value = [...selectedProjectIds.value];
   dragTargetFolder.value = "";
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", project.id);
+    event.dataTransfer.setData("text/plain", draggedProjectIds.value.join(","));
   }
 }
 
 function endProjectDrag() {
-  draggedProject.value = null;
+  draggedProjectIds.value = [];
   dragTargetFolder.value = "";
 }
 
 function allowFolderDrop(folder: string, event: DragEvent) {
-  if (!draggedProject.value) return;
+  if (!draggedProjectIds.value.length) return;
   event.preventDefault();
   dragTargetFolder.value = folder;
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
@@ -177,11 +219,42 @@ function allowFolderDrop(folder: string, event: DragEvent) {
 
 async function dropProjectIntoFolder(folder: string, event: DragEvent) {
   event.preventDefault();
-  const project = draggedProject.value;
+  const ids = [...draggedProjectIds.value];
   dragTargetFolder.value = "";
-  draggedProject.value = null;
-  if (!project || (project.folder || "") === folder) return;
-  await moveProject(project, folder);
+  draggedProjectIds.value = [];
+  if (!ids.length) return;
+  await moveProjects(ids, folder);
+}
+
+function openFolderContextMenu(folder: string, event: MouseEvent) {
+  event.preventDefault();
+  const menuWidth = 170;
+  const menuHeight = 54;
+  folderContextMenu.value = {
+    folder,
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+  };
+}
+
+async function deleteFolder(folder: string) {
+  folderContextMenu.value = null;
+  const count = app.projects.filter((project) => project.folder === folder).length;
+  const accepted = await ui.ask({
+    title: "删除项目文件夹",
+    message: count
+      ? `删除“${folder}”？其中 ${count} 个项目会移回“未归类”，不会删除任何磁盘文件。`
+      : `删除空文件夹“${folder}”？不会删除任何磁盘文件。`,
+    confirmLabel: "删除文件夹",
+    danger: true,
+  });
+  if (!accepted) return;
+  try {
+    await app.deleteProjectFolder(folder);
+    if (selectedFolder.value === folder) selectedFolder.value = "__unfiled__";
+  } catch (error) {
+    ui.toast("删除项目文件夹失败", error instanceof Error ? error.message : String(error), "danger");
+  }
 }
 
 async function switchProject(project: Project) {
@@ -256,6 +329,9 @@ function openRuntimeConfig(project: Project) {
   runtimeForm.autoStart = instance?.autoStart ?? false;
   runtimeForm.watchdog = instance?.watchdog ?? true;
   runtimeForm.loggingEnabled = instance?.loggingEnabled ?? true;
+  runtimeForm.domain = instance?.domain || "";
+  runtimeForm.tunnelName = instance?.tunnelName || "";
+  runtimeForm.reuseTunnel = Boolean(instance?.tunnelId);
 }
 
 async function browseRuntimeWorkspace() {
@@ -290,8 +366,9 @@ async function saveRuntimeConfig() {
       runtimeForm.workspace = targetProject.path;
       if (existing) existing = app.instances.find((instance) => instance.id === existing?.id) || existing;
     }
+    let savedInstance: MCPInstance;
     if (existing) {
-      await app.updateInstance(existing.id, {
+      savedInstance = await app.updateInstance(existing.id, {
         name: runtimeForm.name.trim(),
         projectId: targetProject.id,
         workspace: targetProject.path,
@@ -305,7 +382,7 @@ async function saveRuntimeConfig() {
         loggingEnabled: runtimeForm.loggingEnabled,
       });
     } else {
-      await app.createInstance({
+      savedInstance = await app.createInstance({
         name: runtimeForm.name.trim(),
         projectId: targetProject.id,
         workspace: targetProject.path,
@@ -318,6 +395,22 @@ async function saveRuntimeConfig() {
         watchdog: runtimeForm.watchdog,
         loggingEnabled: runtimeForm.loggingEnabled,
       });
+    }
+    const domain = runtimeForm.domain.trim().toLocaleLowerCase();
+    const tunnelName = runtimeForm.tunnelName.trim();
+    if (domain) {
+      const tunnelNeedsUpdate = !savedInstance.tunnelId
+        || domain !== (savedInstance.domain || "").toLocaleLowerCase()
+        || (tunnelName && tunnelName !== (savedInstance.tunnelName || ""));
+      if (tunnelNeedsUpdate) {
+        await app.configureInstanceTunnel(savedInstance.id, {
+          domain,
+          tunnelName,
+          reuse: runtimeForm.reuseTunnel,
+        });
+      }
+    } else if (savedInstance.domain) {
+      await app.updateInstance(savedInstance.id, { domain: "" });
     }
     runtimeProject.value = null;
   } catch (error) {
@@ -486,6 +579,7 @@ onMounted(async () => {
           type="button"
           :class="{ 'is-active': selectedFolder === folder, 'is-drop-target': dragTargetFolder === folder }"
           @click="selectedFolder = folder"
+          @contextmenu="openFolderContextMenu(folder, $event)"
           @dragover="allowFolderDrop(folder, $event)"
           @dragleave="dragTargetFolder = ''"
           @drop="dropProjectIntoFolder(folder, $event)"
@@ -498,8 +592,8 @@ onMounted(async () => {
         <div class="workspace-project-header">
           <span>名称</span><span>MCP</span><span>操作</span>
         </div>
-        <article v-for="project in filteredProjects" :key="project.id" class="workspace-project-row" :class="{ 'is-active': isActiveProject(project) }">
-          <div class="workspace-project-name" draggable="true" title="拖到左侧文件夹可归类" @dragstart="beginProjectDrag(project, $event)" @dragend="endProjectDrag">
+        <article v-for="project in filteredProjects" :key="project.id" class="workspace-project-row" :class="{ 'is-active': isActiveProject(project), 'is-selected': selectedProjectIdSet.has(project.id) }">
+          <div class="workspace-project-name" draggable="true" title="点击选择；Shift 连选；拖到左侧文件夹可批量归类" @click="selectProject(project, $event)" @dragstart="beginProjectDrag(project, $event)" @dragend="endProjectDrag">
             <span class="workspace-row-icon"><AppIcon name="folder" :size="17" /></span>
             <div><strong>{{ project.name }}</strong><small>{{ project.folder || '未归类' }}</small></div>
           </div>
@@ -522,6 +616,17 @@ onMounted(async () => {
         <div v-if="!filteredProjects.length" class="workspace-project-empty">没有匹配的项目。</div>
       </div>
     </section>
+
+    <Teleport to="body">
+      <div v-if="folderContextMenu" class="workspace-folder-context-backdrop" @pointerdown.self="folderContextMenu = null" @contextmenu.prevent="folderContextMenu = null">
+        <div class="workspace-folder-context-menu" :style="{ left: `${folderContextMenu.x}px`, top: `${folderContextMenu.y}px` }">
+          <button type="button" class="is-danger" @click="deleteFolder(folderContextMenu.folder)">
+            <AppIcon name="trash" :size="16" />
+            <span>删除文件夹</span>
+          </button>
+        </div>
+      </div>
+    </Teleport>
 
     <section class="workspace-service-section">
       <form class="workspace-service-settings" @submit.prevent="saveServiceSettings">
@@ -573,9 +678,21 @@ onMounted(async () => {
           <label class="field"><span>核心</span><select v-model="runtimeForm.coreMode"><option value="go">Go 核心</option><option value="legacy">Python 兼容核心</option></select></label>
           <label class="field"><span>权限</span><select v-model="runtimeForm.permissionMode"><option value="safe">安全</option><option value="trusted">受信任</option><option value="dangerous">高权限</option></select></label>
           <label class="field span-2"><span>工具配置</span><select v-model="runtimeForm.toolProfile"><option value="full">完整工具</option><option value="read-only">只读</option><option value="compat-readonly-all">兼容只读</option></select></label>
+          <div class="workspace-tunnel-config span-2">
+            <div class="workspace-tunnel-heading">
+              <div><strong>Cloudflare 穿透</strong><small>可选。填写域名后，保存配置时会为该项目创建或复用独立 Tunnel。</small></div>
+              <StatusPill v-if="instanceForProject(runtimeProject)?.remoteMcpUrl" tone="success">已配置</StatusPill>
+            </div>
+            <div class="field-grid">
+              <label class="field"><span>公网域名</span><input v-model="runtimeForm.domain" placeholder="例如 mcp-project.example.com" spellcheck="false" /></label>
+              <label class="field"><span>Tunnel 名称</span><input v-model="runtimeForm.tunnelName" placeholder="留空自动生成" spellcheck="false" /></label>
+            </div>
+            <ToggleSwitch v-model="runtimeForm.reuseTunnel" label="复用已有 Tunnel" />
+            <small v-if="instanceForProject(runtimeProject)?.remoteMcpUrl" class="workspace-tunnel-url">{{ instanceForProject(runtimeProject)?.remoteMcpUrl }}</small>
+          </div>
         </div>
         <div class="instance-toggle-grid"><ToggleSwitch v-model="runtimeForm.autoStart" label="自动启动" /><ToggleSwitch v-model="runtimeForm.watchdog" label="运行守护" /><ToggleSwitch v-model="runtimeForm.loggingEnabled" label="记录日志" /><ToggleSwitch v-model="runtimeForm.allowNetwork" label="允许网络" /></div>
-        <div class="form-footer"><small>保存后项目行会出现独立运行状态，可同时启动多个项目。</small><AppButton tone="primary" @click="saveRuntimeConfig">保存配置</AppButton></div>
+        <div class="form-footer"><small>填写 Cloudflare 域名时会同时配置穿透；项目已运行时 Tunnel 会立即启动。</small><AppButton tone="primary" @click="saveRuntimeConfig">保存配置</AppButton></div>
       </AppCard>
     </div>
 
