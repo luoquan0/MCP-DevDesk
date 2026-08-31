@@ -91,6 +91,9 @@ async function startAppForCurrentRoute() {
   if (!await webControlAccessReady()) return;
   appStarted = true;
   await appStore.bootstrap();
+  if (appStore.updateSettings?.checkOnStartup && appStore.updateSettings.repository) {
+    void appStore.checkForUpdate(true).catch(() => undefined);
+  }
   connectStateEvents();
   statusPollingTimer = window.setInterval(() => {
     if (document.visibilityState === "visible") void appStore.refreshStatus(true);

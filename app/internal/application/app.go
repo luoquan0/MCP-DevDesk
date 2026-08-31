@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -27,6 +28,7 @@ import (
 	"mcp-devdesk/internal/projecttools"
 	"mcp-devdesk/internal/secrets"
 	"mcp-devdesk/internal/tunnel"
+	appupdater "mcp-devdesk/internal/updater"
 )
 
 const Version = buildinfo.Version
@@ -41,6 +43,7 @@ type App struct {
 	projects   *projectstore.Store
 	instances  *instancestore.Store
 	tunnel     *tunnel.Client
+	updates    *appupdater.Manager
 
 	mu              sync.RWMutex
 	desiredRunning  bool
@@ -83,6 +86,10 @@ func New(rootDir, dataDir string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	updateManager, err := appupdater.NewManager(dataDir, buildinfo.Version, buildinfo.Repository)
+	if err != nil {
+		return nil, err
+	}
 	app := &App{
 		rootDir:    rootDir,
 		dataDir:    dataDir,
@@ -95,6 +102,7 @@ func New(rootDir, dataDir string) (*App, error) {
 		projects:        projectsStore,
 		instances:       instanceStore,
 		tunnel:          tunnel.NewClient(),
+		updates:         updateManager,
 		instanceRuntime: map[string]*managedInstance{},
 	}
 	if err := app.loadManagedInstances(); err != nil {
@@ -123,6 +131,98 @@ func (a *App) RemoveAppearanceBackground() (appearance.Settings, error) {
 
 func (a *App) AppearanceBackgroundPath() (string, bool) {
 	return a.appearance.BackgroundPath()
+}
+
+func (a *App) UpdateSettings() appupdater.Settings { return a.updates.Settings() }
+
+func (a *App) SaveUpdateSettings(update appupdater.SettingsUpdate) (appupdater.Settings, error) {
+	return a.updates.UpdateSettings(update)
+}
+
+func (a *App) CheckForUpdate(ctx context.Context) (appupdater.Release, error) {
+	return a.updates.Check(ctx)
+}
+
+func (a *App) PrepareUpdate(ctx context.Context) (appupdater.PreparedUpdate, error) {
+	release, err := a.updates.Check(ctx)
+	if err != nil {
+		return appupdater.PreparedUpdate{}, err
+	}
+	if !release.UpdateAvailable {
+		return appupdater.PreparedUpdate{}, errors.New("当前已经是最新版本")
+	}
+	return a.updates.Download(ctx, release)
+}
+
+func (a *App) LaunchPreparedUpdate(prepared appupdater.PreparedUpdate) error {
+	currentExe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	currentExe, err = filepath.Abs(currentExe)
+	if err != nil {
+		return err
+	}
+	updaterExecutable, err := a.findUpdaterExecutable(currentExe)
+	if err != nil {
+		return err
+	}
+	tempDir := filepath.Join(os.TempDir(), "MCP-DevDesk-Updater")
+	if err := os.MkdirAll(tempDir, 0o700); err != nil {
+		return err
+	}
+	tempUpdater := filepath.Join(tempDir, "devdesk-updater-"+runtime.GOARCH+".exe")
+	if err := copyExecutableFile(updaterExecutable, tempUpdater); err != nil {
+		return err
+	}
+	cfg := a.Config()
+	installedUpdater := filepath.Join(filepath.Dir(currentExe), "devdesk-updater.exe")
+	if strings.Contains(strings.ToLower(filepath.Base(currentExe)), "-amd64") {
+		installedUpdater = filepath.Join(filepath.Dir(currentExe), "devdesk-updater-amd64.exe")
+	} else if strings.Contains(strings.ToLower(filepath.Base(currentExe)), "-arm64") {
+		installedUpdater = filepath.Join(filepath.Dir(currentExe), "devdesk-updater-arm64.exe")
+	}
+	args := []string{
+		"--package", prepared.PackagePath,
+		"--root", a.rootDir,
+		"--current-exe", currentExe,
+		"--go-core", cfg.GoCoreExecutable,
+		"--legacy-core", cfg.CoreExecutable,
+		"--cloudflared", cfg.CloudflaredExecutable,
+		"--updater-target", installedUpdater,
+		"--wait-pid", strconv.Itoa(os.Getpid()),
+		"--log", filepath.Join(a.dataDir, "logs", "updater.log"),
+	}
+	command := exec.Command(tempUpdater, args...)
+	command.Dir = a.rootDir
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("launch updater: %w", err)
+	}
+	return command.Process.Release()
+}
+
+func (a *App) findUpdaterExecutable(currentExe string) (string, error) {
+	dir := filepath.Dir(currentExe)
+	candidates := []string{
+		filepath.Join(dir, "devdesk-updater.exe"),
+		filepath.Join(dir, "devdesk-updater-"+runtime.GOARCH+".exe"),
+		filepath.Join(a.rootDir, "devdesk-updater.exe"),
+		filepath.Join(a.rootDir, "dist", "devdesk-updater-"+runtime.GOARCH+".exe"),
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("devdesk-updater.exe 不存在，请先使用包含更新器的完整版本")
+}
+
+func copyExecutableFile(source, target string) error {
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(target, raw, 0o700)
 }
 
 func (a *App) Projects() []projectstore.Project { return a.projects.List() }

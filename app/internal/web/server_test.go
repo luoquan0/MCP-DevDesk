@@ -425,6 +425,28 @@ func TestAppearanceAPIUpdatesPaletteAndBackground(t *testing.T) {
 	}
 }
 
+func TestUpdateSettingsAPI(t *testing.T) {
+	server := newTestServer(t)
+	request := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/update/settings", bytes.NewBufferString(`{"repository":"example/mcp-devdesk","channel":"stable","checkOnStartup":true}`))
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"repository":"example/mcp-devdesk"`) {
+		t.Fatalf("update settings PUT failed: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	get := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/update/settings", nil)
+	get.RemoteAddr = "127.0.0.1:45678"
+	get.Host = "127.0.0.1:17860"
+	getRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(getRecorder, get)
+	if getRecorder.Code != http.StatusOK || !strings.Contains(getRecorder.Body.String(), `"channel":"stable"`) {
+		t.Fatalf("update settings GET failed: %d %s", getRecorder.Code, getRecorder.Body.String())
+	}
+}
+
 func TestProjectFolderAPIOrganizesProjects(t *testing.T) {
 	server := newTestServer(t)
 	projects := server.app.Projects()

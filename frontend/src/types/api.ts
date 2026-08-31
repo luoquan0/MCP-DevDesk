@@ -123,6 +123,29 @@ export interface AppearanceSettings {
   backgroundRevision: number;
 }
 
+export interface UpdateSettings {
+  repository: string;
+  channel: "stable" | "prerelease";
+  checkOnStartup: boolean;
+}
+
+export interface UpdateRelease {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  tagName: string;
+  name: string;
+  notes: string;
+  publishedAt?: string;
+  pageUrl?: string;
+  assetName: string;
+}
+
+export interface UpdateInstallResult {
+  started: boolean;
+  release: UpdateRelease;
+}
+
 export interface DesktopStatus {
   available: boolean;
   appMode?: boolean;

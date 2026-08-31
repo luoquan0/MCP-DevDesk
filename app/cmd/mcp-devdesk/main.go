@@ -95,6 +95,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize web server: %v", err)
 	}
+	exitRequested := make(chan struct{}, 1)
+	server.SetExitRequest(func() {
+		select {
+		case exitRequested <- struct{}{}:
+		default:
+		}
+	})
 	controlServer := web.NewControlServer(app)
 	server.SetControlServer(controlServer)
 	controlHandler, err := server.ControlHandler()
@@ -158,6 +165,8 @@ func main() {
 	select {
 	case sig := <-signals:
 		log.Printf("received signal %s", sig)
+	case <-exitRequested:
+		log.Printf("application exit requested for update")
 	case <-controller.Done():
 		log.Printf("desktop exit requested")
 	case err := <-serverErrors:

@@ -45,7 +45,11 @@ try {
     $env:GOOS = "windows"
     $env:GOARCH = $Arch
     $Output = Join-Path $DistDir "MCP-DevDesk-$Arch.exe"
-    go build -mod=vendor -trimpath -ldflags "-s -w -H=windowsgui" -o $Output ./cmd/mcp-devdesk
+    $ManagerLdFlags = "-s -w -H=windowsgui"
+    if (-not [string]::IsNullOrWhiteSpace($env:MCP_DEVDESK_GITHUB_REPOSITORY)) {
+        $ManagerLdFlags += " -X mcp-devdesk/internal/buildinfo.Repository=$($env:MCP_DEVDESK_GITHUB_REPOSITORY)"
+    }
+    go build -mod=vendor -trimpath -ldflags $ManagerLdFlags -o $Output ./cmd/mcp-devdesk
     if (Test-Path -LiteralPath $ExeIconScript) {
         & $ExeIconScript -ExePath $Output -IconPath (Join-Path $AppDir "internal\desktop\assets\mcp-devdesk.ico")
     }
@@ -57,9 +61,13 @@ try {
     go build -mod=vendor -trimpath -ldflags "-s -w" -o $CoreOutput ./cmd/mcp-core
     Copy-Item -LiteralPath $CoreOutput -Destination (Join-Path $DistDir "mcp-core.exe") -Force
 
+    $UpdaterOutput = Join-Path $DistDir "devdesk-updater-$Arch.exe"
+    go build -mod=vendor -trimpath -ldflags "-s -w -H=windowsgui" -o $UpdaterOutput ./cmd/devdesk-updater
+
     Write-Host "Build complete: $Output" -ForegroundColor Green
     Write-Host "CLI complete:   $CliOutput" -ForegroundColor Green
     Write-Host "Go MCP core:    $CoreOutput" -ForegroundColor Green
+    Write-Host "Updater:        $UpdaterOutput" -ForegroundColor Green
 } finally {
     Pop-Location
 }
@@ -81,8 +89,12 @@ if ($RunTests -and (Test-Path -LiteralPath $SmokeScript)) {
 if ($RunTests -and (Test-Path -LiteralPath $PackageScript)) {
     & $PackageScript -Arch $Arch -SkipBuild
     $PackagedCore = Join-Path $DistDir "MCP-DevDesk-Portable-$Arch\mcp-core.exe"
+    $PackagedUpdater = Join-Path $DistDir "MCP-DevDesk-Portable-$Arch\devdesk-updater.exe"
     if (Test-Path -LiteralPath $PackagedCore) {
         & $SmokeScript -ExePath $PackagedCore -Workspace $Root -Port 18767
+    }
+    if (-not (Test-Path -LiteralPath $PackagedUpdater)) {
+        throw "Portable package is missing devdesk-updater.exe"
     }
 }
 

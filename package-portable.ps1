@@ -20,6 +20,7 @@ New-Item -ItemType Directory -Force -Path $PackageRoot | Out-Null
 Copy-Item (Join-Path $Dist "MCP-DevDesk-$Arch.exe") (Join-Path $PackageRoot "MCP-DevDesk.exe")
 Copy-Item (Join-Path $Dist "devdeskctl-$Arch.exe") (Join-Path $PackageRoot "devdeskctl.exe")
 Copy-Item (Join-Path $Dist "mcp-core-$Arch.exe") (Join-Path $PackageRoot "mcp-core.exe")
+Copy-Item (Join-Path $Dist "devdesk-updater-$Arch.exe") (Join-Path $PackageRoot "devdesk-updater.exe")
 Copy-Item (Join-Path $Root "cloudflared.exe") $PackageRoot
 Copy-Item (Join-Path $Root "coding-tools-mcp.exe") $PackageRoot
 Copy-Item (Join-Path $Root "README.md") $PackageRoot

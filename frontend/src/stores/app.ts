@@ -25,6 +25,9 @@ import type {
   SecretUpdateRequest,
   ServiceStatus,
   TunnelInventory,
+  UpdateInstallResult,
+  UpdateRelease,
+  UpdateSettings,
   WebControlStatus,
 } from "@/types/api";
 
@@ -33,6 +36,8 @@ export const useAppStore = defineStore("app", {
     status: null as ServiceStatus | null,
     config: null as Config | null,
     appearance: null as AppearanceSettings | null,
+    updateSettings: null as UpdateSettings | null,
+    updateRelease: null as UpdateRelease | null,
     desktop: null as DesktopStatus | null,
     diagnostics: null as Diagnostics | null,
     projects: [] as Project[],
@@ -65,6 +70,7 @@ export const useAppStore = defineStore("app", {
           this.refreshStatus(true),
           this.loadConfig(),
           this.loadAppearance(),
+          this.loadUpdateSettings(),
           this.loadDesktop(),
           this.loadDiagnostics(),
           this.loadProjects(),
@@ -109,6 +115,38 @@ export const useAppStore = defineStore("app", {
       const next = await api<AppearanceSettings>("/api/appearance");
       if (!this.appearance || JSON.stringify(this.appearance) !== JSON.stringify(next)) this.appearance = next;
       return this.appearance;
+    },
+    async loadUpdateSettings() {
+      const next = await api<UpdateSettings>("/api/update/settings");
+      if (!this.updateSettings || JSON.stringify(this.updateSettings) !== JSON.stringify(next)) this.updateSettings = next;
+      return this.updateSettings;
+    },
+    async saveUpdateSettings(settings: UpdateSettings) {
+      this.updateSettings = await this.runAction("save-update-settings", () => api<UpdateSettings>("/api/update/settings", {
+        method: "PUT",
+        body: settings as unknown as BodyInit,
+      }));
+      useUiStore().toast("更新设置已保存", settings.repository ? `GitHub：${settings.repository}` : "尚未配置 GitHub 仓库。", "success");
+      return this.updateSettings;
+    },
+    async checkForUpdate(silent = false) {
+      try {
+        this.updateRelease = await api<UpdateRelease>("/api/update/check", { method: "POST" });
+        if (this.updateRelease.updateAvailable) {
+          useUiStore().toast("发现新版本", `${this.updateRelease.currentVersion} → ${this.updateRelease.latestVersion}`, "info");
+        } else if (!silent) {
+          useUiStore().toast("已经是最新版本", `当前版本 ${this.updateRelease.currentVersion}`, "success");
+        }
+        return this.updateRelease;
+      } catch (error) {
+        if (!silent) useUiStore().toast("检查更新失败", error instanceof Error ? error.message : String(error), "danger");
+        throw error;
+      }
+    },
+    async installUpdate() {
+      const result = await this.runAction("install-update", () => api<UpdateInstallResult>("/api/update/install", { method: "POST" }));
+      useUiStore().toast("更新器已启动", `正在安装 ${result.release.latestVersion}，DevDesk 将自动关闭并重新启动。`, "success");
+      return result;
     },
     async saveAppearance(update: Pick<AppearanceSettings, "theme" | "customColorsEnabled" | "primaryColor" | "secondaryColor" | "backgroundOpacity">) {
       this.appearance = await this.runAction("save-appearance", () => api<AppearanceSettings>("/api/appearance", {
@@ -204,6 +242,7 @@ export const useAppStore = defineStore("app", {
         this.refreshStatus(true),
         this.loadConfig(),
         this.loadAppearance(),
+        this.loadUpdateSettings(),
         this.loadDesktop(),
         this.loadProjects(),
         this.loadProjectFolders(),

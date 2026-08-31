@@ -10,7 +10,7 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-当前版本 `0.12.7` 已完成：
+当前版本 `0.12.8` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -155,7 +155,7 @@ dist\devdeskctl-amd64.exe stop
 
 ## Go MCP 核心
 
-`0.12.7` 提供可直接使用的独立 Go MCP 核心，并将项目、多实例和主服务整合为“项目与运行”工作区；应用品牌 Logo、网页 favicon 和 Windows EXE/窗口图标统一切换为仓库根目录 `new-logo.png`。界面材质参考 Apple Materials / Liquid Glass 与 Windows Fluent Acrylic/Mica，将主要内容卡片升级为浅色冰白玻璃与深色烟熏黑曜石玻璃：保留足够 tint 提升文字可读性，同时用半透明背景、背景模糊、细高光边缘和内阴影表现层次。项目左侧分类栏可收起/展开，“外观设计”继续支持系统/浅色/深色基础主题、自定义主/副配色、自定义背景图和背景图透明度，并通过 DevDesk 后端在桌面软件与局域网页端实时同步。四栏目设置、活动项目安全移除、顶部服务快捷控制、Shift 批量归类、虚拟文件夹右键安全删除、项目独立 Cloudflare Tunnel、紧凑无横向滚动布局和目录选择弹窗修复继续保留。同时兼容 OAuth 弹窗的 opaque/null Origin、授权回调 CSP、项目根目录 `AGENTS.md` 热更新、可开关全局提示词、聊天连接缓存兜底，以及带可选密码认证、与桌面软件 1:1 共用界面并实时双向同步的局域网网页端。新建实例建议使用 Go 核心；Python 核心继续作为兼容回退。已经添加到 ChatGPT 的实例不建议在同一域名下频繁切换核心，因为切换后可能需要重新授权：
+`0.12.8` 在 `0.12.7` 的项目工作区、自定义外观、新 Logo 和玻璃材质基础上加入 GitHub Releases 在线更新：设置页“软件设置 → 软件更新”可配置公开仓库 `owner/repo`、稳定/预发布通道和启动检查；客户端读取 GitHub Release，下载 `MCP-DevDesk-Portable-amd64.zip` 与对应 `.sha256`，校验通过后交给独立 `devdesk-updater.exe`。更新器会等待主程序正常退出、停止 MCP/Tunnel/独立实例后替换二进制，`data/devdesk` 与项目目录不会被更新包覆盖；替换失败会恢复备份并重新启动旧版本。仓库新增 `.github/workflows/release.yml`，以后推送 `v*` Tag 可在 Windows runner 上自动测试、构建 EXE/Portable/updater、生成 SHA256 并创建 GitHub Release；GitHub Actions 构建时会把 `${{ github.repository }}` 注入程序作为默认更新源，正式发布包无需用户手填仓库。当前本地仓库尚未配置 Git remote，因此第一次发布仍需要先创建/关联 GitHub 仓库并推送代码与 Tag。
 
 ```powershell
 cd app

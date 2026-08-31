@@ -63,7 +63,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.7") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.8") {
                 $ready = $true
                 break
             }
@@ -94,7 +94,16 @@ try {
     if ($login.StatusCode -ne 200 -or -not $loginParsed.authenticated) { throw "Web control login failed" }
     $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/status" -WebSession $webSession
     $overviewParsed = $overview.Content | ConvertFrom-Json
-    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.7") { throw "Authenticated full web UI API failed" }
+    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.8") { throw "Authenticated full web UI API failed" }
+
+    $updateSettings = Send-Json -Method "PUT" -Uri "http://127.0.0.1:$webPort/api/update/settings" -Body @{ repository = "example/mcp-devdesk"; channel = "stable"; checkOnStartup = $true } -WebSession $webSession
+    $updateSettingsParsed = $updateSettings.Content | ConvertFrom-Json
+    if ($updateSettings.StatusCode -ne 200 -or $updateSettingsParsed.repository -ne "example/mcp-devdesk" -or $updateSettingsParsed.channel -ne "stable" -or -not $updateSettingsParsed.checkOnStartup) {
+        throw "Update settings endpoint failed"
+    }
+    $updateSettingsRead = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/update/settings" -WebSession $webSession
+    $updateSettingsReadParsed = $updateSettingsRead.Content | ConvertFrom-Json
+    if ($updateSettingsRead.StatusCode -ne 200 -or $updateSettingsReadParsed.repository -ne "example/mcp-devdesk") { throw "Update settings persistence failed" }
 
     $appearance = Send-Json -Method "PUT" -Uri "http://127.0.0.1:$webPort/api/appearance" -Body @{ theme = "dark"; customColorsEnabled = $true; primaryColor = "#ff3366"; secondaryColor = "#22aa88"; backgroundOpacity = 47 } -WebSession $webSession
     $appearanceParsed = $appearance.Content | ConvertFrom-Json
@@ -199,7 +208,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.12.7" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.12.8" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

@@ -30,6 +30,10 @@ const webControlAuthEnabled = ref(false);
 const webControlPassword = ref("");
 const globalPromptEnabled = ref(false);
 const globalPromptDraft = ref("");
+const updateRepository = ref("");
+const updateChannel = ref<"stable" | "prerelease">("stable");
+const updateCheckOnStartup = ref(true);
+const updateChecking = ref(false);
 const appearanceFileInput = ref<HTMLInputElement | null>(null);
 const appearanceSaving = ref(false);
 const appearanceUploading = ref(false);
@@ -79,6 +83,13 @@ watch(() => app.appearance, (settings) => {
   appearanceForm.secondaryColor = settings.secondaryColor;
   appearanceForm.backgroundOpacity = settings.backgroundOpacity;
   ui.applyAppearance(settings);
+}, { immediate: true, deep: true });
+
+watch(() => app.updateSettings, (settings) => {
+  if (!settings) return;
+  updateRepository.value = settings.repository;
+  updateChannel.value = settings.channel;
+  updateCheckOnStartup.value = settings.checkOnStartup;
 }, { immediate: true, deep: true });
 
 watch([() => app.webControl, () => app.config?.webControlPort], ([status, configuredPort]) => {
@@ -176,6 +187,49 @@ async function removeAppearanceBackground() {
     await app.removeAppearanceBackground();
   } catch (error) {
     ui.toast("移除背景图失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
+async function saveUpdatePreferences() {
+  try {
+    await app.saveUpdateSettings({
+      repository: updateRepository.value.trim(),
+      channel: updateChannel.value,
+      checkOnStartup: updateCheckOnStartup.value,
+    });
+  } catch (error) {
+    ui.toast("保存更新设置失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
+async function checkForUpdate() {
+  if (!updateRepository.value.trim()) {
+    ui.toast("请先配置 GitHub 仓库", "格式例如：your-name/mcp-devdesk", "info");
+    return;
+  }
+  updateChecking.value = true;
+  try {
+    const current = app.updateSettings;
+    if (!current || current.repository !== updateRepository.value.trim() || current.channel !== updateChannel.value || current.checkOnStartup !== updateCheckOnStartup.value) {
+      await app.saveUpdateSettings({
+        repository: updateRepository.value.trim(),
+        channel: updateChannel.value,
+        checkOnStartup: updateCheckOnStartup.value,
+      });
+    }
+    await app.checkForUpdate(false);
+  } catch {
+    // checkForUpdate already reports a user-facing error.
+  } finally {
+    updateChecking.value = false;
+  }
+}
+
+async function installAvailableUpdate() {
+  try {
+    await app.installUpdate();
+  } catch (error) {
+    ui.toast("启动更新失败", error instanceof Error ? error.message : String(error), "danger");
   }
 }
 
@@ -656,6 +710,57 @@ onMounted(loadSecrets);
       </form>
     </AppCard>
 
+    <AppCard v-if="activeSettingsSection === 'software'" class="software-update-card">
+      <div class="card-heading">
+        <div>
+          <span class="eyebrow">GitHub Releases</span>
+          <h3>软件更新</h3>
+          <p>从公开 GitHub Releases 检查并安装新版本。下载包必须同时提供 SHA256 文件，否则 DevDesk 会拒绝更新。</p>
+        </div>
+        <StatusPill :tone="app.updateRelease?.updateAvailable ? 'info' : updateRepository.trim() ? 'neutral' : 'warning'">
+          {{ app.updateRelease?.updateAvailable ? `可更新 ${app.updateRelease.latestVersion}` : updateRepository.trim() ? `当前 ${app.status?.version || '--'}` : '未配置仓库' }}
+        </StatusPill>
+      </div>
+
+      <div class="software-update-grid">
+        <label class="field span-2">
+          <span>GitHub 仓库</span>
+          <input v-model.trim="updateRepository" type="text" spellcheck="false" placeholder="owner/repository，例如 your-name/mcp-devdesk" />
+          <small>GitHub Actions 正式构建会自动带入当前仓库；本地源码构建没有 remote 时可在这里手动填写。仅支持公开 GitHub Releases，不需要 Token。</small>
+        </label>
+        <label class="field">
+          <span>更新通道</span>
+          <select v-model="updateChannel">
+            <option value="stable">稳定版</option>
+            <option value="prerelease">测试版 / 预发布版</option>
+          </select>
+        </label>
+        <div class="software-update-toggle">
+          <ToggleSwitch v-model="updateCheckOnStartup" label="启动时检查更新" description="软件启动后只检查一次 GitHub，不会后台频繁请求。" />
+        </div>
+      </div>
+
+      <div class="software-update-facts top-divider">
+        <div><span>当前版本</span><strong>{{ app.status?.version || '--' }}</strong></div>
+        <div><span>GitHub 最新</span><strong>{{ app.updateRelease?.latestVersion || '尚未检查' }}</strong></div>
+        <div><span>安装包</span><code>{{ app.updateRelease?.assetName || `MCP-DevDesk-Portable-amd64.zip` }}</code></div>
+      </div>
+
+      <div v-if="app.updateRelease?.notes" class="software-update-notes top-divider">
+        <strong>{{ app.updateRelease.name || app.updateRelease.tagName }}</strong>
+        <p>{{ app.updateRelease.notes }}</p>
+      </div>
+
+      <div class="form-footer top-divider">
+        <small>立即更新会先下载 Release ZIP 并校验 SHA256，再启动独立 updater。程序文件会替换，data/devdesk、项目目录和 AGENTS.md 不会被更新包覆盖；失败时自动回滚旧二进制。</small>
+        <div class="form-footer-actions">
+          <AppButton tone="quiet" :loading="app.actionPending === 'save-update-settings'" @click="saveUpdatePreferences">保存更新设置</AppButton>
+          <AppButton tone="secondary" icon="refresh" :loading="updateChecking" :disabled="!updateRepository.trim()" @click="checkForUpdate">检查更新</AppButton>
+          <AppButton v-if="app.updateRelease?.updateAvailable" tone="primary" icon="play" :loading="app.actionPending === 'install-update'" @click="installAvailableUpdate">立即更新到 {{ app.updateRelease.latestVersion }}</AppButton>
+        </div>
+      </div>
+    </AppCard>
+
     <AppCard v-if="activeSettingsSection === 'software'" class="about-card">
       <div class="about-mark">
         <img class="brand-logo-image" src="/brand-logo.png" alt="MCP DevDesk" />
@@ -665,7 +770,7 @@ onMounted(loadSecrets);
         <p>Windows 本地 MCP、Cloudflare Tunnel 与开发工作区管理器。</p>
         <span>版本 {{ app.status?.version || '--' }}</span>
       </div>
-      <AppButton tone="secondary" icon="info" disabled>检查更新</AppButton>
+      <StatusPill :tone="app.updateRelease?.updateAvailable ? 'info' : 'neutral'">{{ app.updateRelease?.updateAvailable ? '有新版本' : 'GitHub Releases' }}</StatusPill>
     </AppCard>
   </div>
 </template>

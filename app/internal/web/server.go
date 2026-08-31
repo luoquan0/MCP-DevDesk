@@ -20,19 +20,21 @@ import (
 	"mcp-devdesk/internal/appearance"
 	"mcp-devdesk/internal/application"
 	"mcp-devdesk/internal/model"
+	appupdater "mcp-devdesk/internal/updater"
 )
 
 //go:embed static
 var staticFiles embed.FS
 
 type Server struct {
-	app     *application.App
-	desktop DesktopController
-	server  *http.Server
-	handler http.Handler
-	appMux  http.Handler
-	control *ControlServer
-	events  *stateEventHub
+	app         *application.App
+	desktop     DesktopController
+	server      *http.Server
+	handler     http.Handler
+	appMux      http.Handler
+	control     *ControlServer
+	events      *stateEventHub
+	exitRequest func()
 }
 
 type DesktopController interface {
@@ -63,6 +65,10 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("GET /api/appearance/background", s.handleGetAppearanceBackground)
 	mux.HandleFunc("PUT /api/appearance/background", s.handleSaveAppearanceBackground)
 	mux.HandleFunc("DELETE /api/appearance/background", s.handleRemoveAppearanceBackground)
+	mux.HandleFunc("GET /api/update/settings", s.handleUpdateSettings)
+	mux.HandleFunc("PUT /api/update/settings", s.handleSaveUpdateSettings)
+	mux.HandleFunc("POST /api/update/check", s.handleCheckForUpdate)
+	mux.HandleFunc("POST /api/update/install", s.handleInstallUpdate)
 	mux.HandleFunc("GET /api/projects", s.handleListProjects)
 	mux.HandleFunc("GET /api/project-folders", s.handleListProjectFolders)
 	mux.HandleFunc("POST /api/project-folders", s.handleAddProjectFolder)
@@ -148,6 +154,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
 }
 
+func (s *Server) SetExitRequest(callback func()) {
+	s.exitRequest = callback
+}
+
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.Status())
 }
@@ -217,6 +227,56 @@ func (s *Server) handleRemoveAppearanceBackground(w http.ResponseWriter, _ *http
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handleUpdateSettings(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.app.UpdateSettings())
+}
+
+func (s *Server) handleSaveUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var request appupdater.SettingsUpdate
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	settings, err := s.app.SaveUpdateSettings(request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handleCheckForUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	release, err := s.app.CheckForUpdate(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, release)
+}
+
+func (s *Server) handleInstallUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Minute)
+	defer cancel()
+	prepared, err := s.app.PrepareUpdate(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.app.LaunchPreparedUpdate(prepared); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"started": true,
+		"release": prepared.Release,
+	})
+	if s.exitRequest != nil {
+		time.AfterFunc(600*time.Millisecond, s.exitRequest)
+	}
 }
 
 func (s *Server) handleListProjects(w http.ResponseWriter, _ *http.Request) {
