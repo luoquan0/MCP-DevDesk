@@ -86,8 +86,13 @@ func (c *Client) Configure(ctx context.Context, cfg model.Config, request model.
 		return model.ConfigureTunnelResult{}, fmt.Errorf("Tunnel 凭据文件不存在: %s", credentials)
 	}
 
-	routeOutput, routeErr := c.run(commandCtx, cfg, "tunnel", "route", "dns", request.TunnelName, request.Domain)
-	if routeErr != nil && !routeAlreadyConfigured(routeOutput) {
+	// Always bind the hostname to the exact Tunnel UUID and ask cloudflared to
+	// replace an existing A/AAAA/CNAME record. Previously an "already exists"
+	// error was treated as success, which could leave the hostname pointing at
+	// an older, offline Tunnel and surface Cloudflare Error 1033 even while the
+	// newly configured Tunnel itself was healthy.
+	routeOutput, routeErr := c.run(commandCtx, cfg, dnsRouteArguments(tunnelID, request.Domain)...)
+	if routeErr != nil {
 		return model.ConfigureTunnelResult{}, fmt.Errorf("配置 DNS 路由失败: %w; %s", routeErr, compactOutput(routeOutput))
 	}
 
@@ -98,8 +103,12 @@ func (c *Client) Configure(ctx context.Context, cfg model.Config, request model.
 		CredentialsPath: credentials,
 		RemoteMCPURL:    "https://" + request.Domain + "/mcp",
 		AuthorizeURL:    "https://" + request.Domain + "/oauth/authorize",
-		Message:         "Tunnel 和 DNS 已配置完成",
+		Message:         "Tunnel 和 DNS 已配置完成，域名已指向当前 Tunnel",
 	}, nil
+}
+
+func dnsRouteArguments(tunnelID, domain string) []string {
+	return []string{"tunnel", "route", "dns", "--overwrite-dns", tunnelID, domain}
 }
 
 func (c *Client) findTunnel(ctx context.Context, cfg model.Config, name string) (string, bool, string, error) {
@@ -157,14 +166,6 @@ func proxyEnvironment(cfg model.Config) []string {
 		proxy = "http://" + cfg.ProxyUsername + ":" + cfg.ProxyPassword + "@" + trimmed
 	}
 	return append(env, "HTTP_PROXY="+proxy, "HTTPS_PROXY="+proxy)
-}
-
-func routeAlreadyConfigured(output string) bool {
-	lower := strings.ToLower(output)
-	return strings.Contains(lower, "already configured") ||
-		strings.Contains(lower, "already exists") ||
-		strings.Contains(lower, "added cname") ||
-		strings.Contains(lower, "will route")
 }
 
 func compactOutput(output string) string {
