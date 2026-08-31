@@ -1,15 +1,24 @@
 package tunnel
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
-func TestRouteAlreadyConfigured(t *testing.T) {
-	for _, input := range []string{
-		"DNS record already configured",
-		"Added CNAME mcp.example.com",
-		"mcp.example.com will route to your tunnel",
-	} {
-		if !routeAlreadyConfigured(input) {
-			t.Fatalf("expected success output: %s", input)
-		}
+func TestDNSRouteArgumentsOverwriteExistingRecord(t *testing.T) {
+	const tunnelID = "11111111-2222-3333-4444-555555555555"
+	const domain = "mcp2.example.com"
+
+	got := dnsRouteArguments(tunnelID, domain)
+	want := []string{
+		"tunnel",
+		"route",
+		"dns",
+		"--overwrite-dns",
+		tunnelID,
+		domain,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dns route arguments mismatch\n got: %#v\nwant: %#v", got, want)
 	}
 }
