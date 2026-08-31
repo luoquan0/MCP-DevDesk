@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -136,6 +137,117 @@ func TestDownloadRequiresMatchingSHA256(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "SHA256") {
 		t.Fatalf("expected SHA256 mismatch, got %v", err)
+	}
+}
+
+func TestPackageDownloadUsesCallerDeadlineInsteadOfGlobalClientTimeout(t *testing.T) {
+	manager, err := NewManager(t.TempDir(), "0.12.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manager.client.Timeout != 0 {
+		t.Fatalf("HTTP client timeout = %s, want no global timeout", manager.client.Timeout)
+	}
+	transport, ok := manager.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("HTTP transport type = %T", manager.client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != metadataRequestTimeout {
+		t.Fatalf("response header timeout = %s, want %s", transport.ResponseHeaderTimeout, metadataRequestTimeout)
+	}
+}
+
+func TestDownloadRetriesAndResumesPartialPackage(t *testing.T) {
+	payload := []byte(strings.Repeat("portable-update-payload-", 128))
+	digest := sha256.Sum256(payload)
+	hash := hex.EncodeToString(digest[:])
+	split := len(payload) / 2
+	packageRequests := 0
+	resumedRange := ""
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/package.zip.sha256":
+			fmt.Fprintf(w, "%s  MCP-DevDesk-Portable-amd64.zip\n", hash)
+		case "/package.zip":
+			packageRequests++
+			if packageRequests == 1 {
+				w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(payload[:split])
+				return
+			}
+			resumedRange = r.Header.Get("Range")
+			if resumedRange != fmt.Sprintf("bytes=%d-", split) {
+				http.Error(w, "unexpected range", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)-split))
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", split, len(payload)-1, len(payload)))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(payload[split:])
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	manager, err := NewManager(t.TempDir(), "0.12.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := manager.Download(context.Background(), Release{
+		UpdateAvailable:  true,
+		TagName:          "v0.12.12",
+		AssetName:        "MCP-DevDesk-Portable-amd64.zip",
+		AssetURL:         server.URL + "/package.zip",
+		ChecksumAssetURL: server.URL + "/package.zip.sha256",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packageRequests != 2 {
+		t.Fatalf("package requests = %d, want 2", packageRequests)
+	}
+	raw, err := os.ReadFile(prepared.PackagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != string(payload) {
+		t.Fatalf("resumed payload length = %d, want %d", len(raw), len(payload))
+	}
+}
+
+func TestPackageDownloadDoesNotRetryPermanentHTTPError(t *testing.T) {
+	payload := []byte("payload")
+	digest := sha256.Sum256(payload)
+	hash := hex.EncodeToString(digest[:])
+	packageRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			fmt.Fprintf(w, "%s  MCP-DevDesk-Portable-amd64.zip\n", hash)
+			return
+		}
+		packageRequests++
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	manager, err := NewManager(t.TempDir(), "0.12.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.Download(context.Background(), Release{
+		UpdateAvailable:  true,
+		TagName:          "v0.12.12",
+		AssetName:        "MCP-DevDesk-Portable-amd64.zip",
+		AssetURL:         server.URL + "/package.zip",
+		ChecksumAssetURL: server.URL + "/package.zip.sha256",
+	})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Fatalf("expected HTTP 404, got %v", err)
+	}
+	if packageRequests != 1 {
+		t.Fatalf("package requests = %d, want 1", packageRequests)
 	}
 }
 
