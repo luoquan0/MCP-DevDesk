@@ -34,12 +34,47 @@ func TestSettingsPersistAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reloaded.Settings(); got != settings {
-		t.Fatalf("reloaded settings = %+v, want %+v", got, settings)
+	got := reloaded.Settings()
+	if got.Repository != settings.Repository || got.Channel != settings.Channel || got.CheckOnStartup != settings.CheckOnStartup {
+		t.Fatalf("reloaded settings = %+v, want configuration %+v", got, settings)
+	}
+	if got.Progress == nil || got.Progress.Stage != "idle" {
+		t.Fatalf("runtime progress = %+v", got.Progress)
 	}
 	bad := "not-a-repository"
 	if _, err := manager.UpdateSettings(SettingsUpdate{Repository: &bad}); err == nil {
 		t.Fatal("expected invalid repository to be rejected")
+	}
+}
+
+func TestSettingsExposeRuntimeProgressWithoutPersistingIt(t *testing.T) {
+	dataDir := t.TempDir()
+	manager, err := NewManager(dataDir, "0.12.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := "example/mcp-devdesk"
+	if _, err := manager.UpdateSettings(SettingsUpdate{Repository: &repository}); err != nil {
+		t.Fatal(err)
+	}
+	manager.setProgress(DownloadProgress{
+		Active:          true,
+		Stage:           "download",
+		BytesDownloaded: 25,
+		TotalBytes:      100,
+		Attempt:         2,
+		Message:         "downloading",
+	})
+	settings := manager.Settings()
+	if settings.Progress == nil || settings.Progress.Percent != 25 || settings.Progress.Attempt != 2 {
+		t.Fatalf("settings progress = %+v", settings.Progress)
+	}
+	raw, err := os.ReadFile(manager.settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "progress") || strings.Contains(string(raw), "bytesDownloaded") {
+		t.Fatalf("runtime progress leaked into settings file: %s", raw)
 	}
 }
 
@@ -119,6 +154,10 @@ func TestDownloadRequiresMatchingSHA256(t *testing.T) {
 	if string(raw) != string(payload) {
 		t.Fatalf("downloaded payload = %q", raw)
 	}
+	progress := manager.Progress()
+	if progress.Active || progress.Stage != "ready" || progress.Percent != 100 {
+		t.Fatalf("successful download progress = %+v", progress)
+	}
 
 	badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ".sha256") {
@@ -137,6 +176,10 @@ func TestDownloadRequiresMatchingSHA256(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "SHA256") {
 		t.Fatalf("expected SHA256 mismatch, got %v", err)
+	}
+	progress = manager.Progress()
+	if progress.Active || progress.Stage != "error" || !strings.Contains(progress.Message, "SHA256") {
+		t.Fatalf("failed download progress = %+v", progress)
 	}
 }
 
@@ -216,6 +259,10 @@ func TestDownloadRetriesAndResumesPartialPackage(t *testing.T) {
 	if string(raw) != string(payload) {
 		t.Fatalf("resumed payload length = %d, want %d", len(raw), len(payload))
 	}
+	progress := manager.Progress()
+	if progress.Stage != "ready" || progress.Percent != 100 || progress.BytesDownloaded != int64(len(payload)) || progress.TotalBytes != int64(len(payload)) {
+		t.Fatalf("resumed progress = %+v", progress)
+	}
 }
 
 func TestDownloadRestartsWhenPartialRangeIsRejected(t *testing.T) {
@@ -284,6 +331,15 @@ func TestPackageDownloadDoesNotRetryPermanentHTTPError(t *testing.T) {
 	}
 	if packageRequests != 1 {
 		t.Fatalf("package requests = %d, want 1", packageRequests)
+	}
+}
+
+func TestContentRangeTotal(t *testing.T) {
+	if got := contentRangeTotal("bytes 2048-4095/8192"); got != 8192 {
+		t.Fatalf("content range total = %d, want 8192", got)
+	}
+	if got := contentRangeTotal("bytes */*"); got != 0 {
+		t.Fatalf("unknown content range total = %d", got)
 	}
 }
 
