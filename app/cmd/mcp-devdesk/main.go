@@ -186,6 +186,11 @@ func main() {
 		log.Printf("background startup tasks did not stop within 5 seconds")
 	}
 
+	// The desktop server and LAN control server share the same SSE event hub.
+	// Release those long-lived handlers before shutting either HTTP server down;
+	// otherwise an open WebView EventSource can hold graceful shutdown until the
+	// context deadline expires.
+	server.BeginShutdown()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	if err := controlServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {

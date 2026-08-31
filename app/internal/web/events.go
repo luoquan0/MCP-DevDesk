@@ -9,15 +9,26 @@ import (
 )
 
 type stateEventHub struct {
-	revision atomic.Uint64
-	mu       sync.Mutex
-	nextID   uint64
-	clients  map[uint64]chan uint64
+	revision     atomic.Uint64
+	mu           sync.Mutex
+	nextID       uint64
+	clients      map[uint64]chan uint64
+	shutdownOnce sync.Once
+	shutdown     chan struct{}
 }
 
 func newStateEventHub() *stateEventHub {
-	return &stateEventHub{clients: make(map[uint64]chan uint64)}
+	return &stateEventHub{
+		clients:  make(map[uint64]chan uint64),
+		shutdown: make(chan struct{}),
+	}
 }
+
+func (h *stateEventHub) stop() {
+	h.shutdownOnce.Do(func() { close(h.shutdown) })
+}
+
+func (h *stateEventHub) done() <-chan struct{} { return h.shutdown }
 
 func (h *stateEventHub) publish() uint64 {
 	revision := h.revision.Add(1)
@@ -71,6 +82,8 @@ func (s *Server) handleStateEvents(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		select {
+		case <-s.events.done():
+			return
 		case revision, open := <-updates:
 			if !open {
 				return
