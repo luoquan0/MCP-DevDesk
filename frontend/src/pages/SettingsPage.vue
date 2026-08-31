@@ -49,7 +49,7 @@ watch(() => app.projectPromptSettings, (settings) => {
   globalPromptDraft.value = settings?.globalPrompt || "";
 }, { immediate: true });
 
-watch(() => [app.webControl, app.config?.webControlPort] as const, ([status, configuredPort]) => {
+watch([() => app.webControl, () => app.config?.webControlPort], ([status, configuredPort]) => {
   webControlEnabled.value = Boolean(status?.enabled ?? app.config?.webControlEnabled);
   webControlPort.value = status?.port || configuredPort || 17861;
   webControlLanEnabled.value = Boolean(status?.lanEnabled ?? app.config?.webControlLanEnabled);

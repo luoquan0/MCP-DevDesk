@@ -30,6 +30,7 @@ type Server struct {
 	handler http.Handler
 	appMux  http.Handler
 	control *ControlServer
+	events  *stateEventHub
 }
 
 type DesktopController interface {
@@ -49,8 +50,9 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 		return nil, err
 	}
 
-	s := &Server{app: app, desktop: desktop}
+	s := &Server{app: app, desktop: desktop, events: newStateEventHub()}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/events", s.handleStateEvents)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleUpdateConfig)
@@ -104,8 +106,9 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.Handle("/", noCache(http.FileServer(http.FS(assets))))
 
-	s.appMux = mux
-	s.handler = s.securityHeaders(s.localOnly(mux))
+	sharedHandler := s.publishSuccessfulMutations(mux)
+	s.appMux = sharedHandler
+	s.handler = s.securityHeaders(s.localOnly(sharedHandler))
 	s.server = &http.Server{
 		Addr:              address,
 		Handler:           s.handler,

@@ -96,18 +96,40 @@ export const useAppStore = defineStore("app", {
       }
     },
     async loadConfig() {
-      this.config = await api<Config>("/api/config");
+      const next = await api<Config>("/api/config");
+      if (!this.config || JSON.stringify(this.config) !== JSON.stringify(next)) this.config = next;
+      return this.config;
     },
     async loadProjects() {
       this.projects = await api<Project[]>("/api/projects");
+      return this.projects;
     },
     async loadProjectPromptSettings() {
-      this.projectPromptSettings = await api<ProjectPromptSettings>("/api/projects/prompt-settings");
+      const next = await api<ProjectPromptSettings>("/api/projects/prompt-settings");
+      const current = this.projectPromptSettings;
+      if (!current || current.enabled !== next.enabled || current.globalPrompt !== next.globalPrompt || current.maxPromptBytes !== next.maxPromptBytes) {
+        this.projectPromptSettings = next;
+      }
       return this.projectPromptSettings;
     },
     async loadWebControl() {
-      this.webControl = await api<WebControlStatus>("/api/web-control");
+      const next = await api<WebControlStatus>("/api/web-control");
+      const current = this.webControl;
+      if (!current || JSON.stringify(current) !== JSON.stringify(next)) this.webControl = next;
       return this.webControl;
+    },
+    async syncSharedState() {
+      await Promise.all([
+        this.refreshStatus(true),
+        this.loadConfig(),
+        this.loadDesktop(),
+        this.loadProjects(),
+        this.loadProjectPromptSettings(),
+        this.loadWebControl(),
+        this.loadInstances(),
+      ]);
+      this.connectionError = "";
+      this.lastUpdatedAt = new Date();
     },
     async saveWebControl(enabled: boolean, port: number, lanEnabled: boolean, authEnabled: boolean, password = "") {
       const ui = useUiStore();

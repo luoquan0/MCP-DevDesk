@@ -104,6 +104,39 @@ func TestHealthEndpointAllowsLoopback(t *testing.T) {
 	}
 }
 
+func TestSuccessfulMutationPublishesStateEvent(t *testing.T) {
+	server := newTestServer(t)
+	before := server.events.revision.Load()
+	request := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/projects/prompt-settings", bytes.NewBufferString(`{"enabled":true,"globalPrompt":"sync test"}`))
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("mutation status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if after := server.events.revision.Load(); after <= before {
+		t.Fatalf("state event revision did not advance: before=%d after=%d", before, after)
+	}
+}
+
+func TestReadOnlyRequestDoesNotPublishStateEvent(t *testing.T) {
+	server := newTestServer(t)
+	before := server.events.revision.Load()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/projects", nil)
+	request.RemoteAddr = "127.0.0.1:45678"
+	request.Host = "127.0.0.1:17860"
+	recorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("read status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if after := server.events.revision.Load(); after != before {
+		t.Fatalf("read-only request unexpectedly advanced state revision: before=%d after=%d", before, after)
+	}
+}
+
 func TestManagementAPIRejectsRemoteAddress(t *testing.T) {
 	server := newTestServer(t)
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/status", nil)

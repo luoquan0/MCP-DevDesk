@@ -3687,6 +3687,16 @@ kbd {
 @media (max-width: 780px) {
   .app-shell {
     display: block;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-stage {
+    width: 100%;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .app-sidebar {
@@ -3743,7 +3753,26 @@ kbd {
   }
 
   .app-workspace {
-    padding: 22px 16px 36px;
+    height: 100%;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 22px 16px calc(44px + env(safe-area-inset-bottom));
+  }
+
+  .page-stack,
+  .app-card,
+  .field,
+  .field-grid,
+  .instance-list,
+  .instance-card,
+  .instance-inline-editor,
+  .settings-grid,
+  .web-control-settings-grid {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .page-header {
@@ -3753,6 +3782,13 @@ kbd {
 
   .page-header-actions {
     width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .page-header-actions > * {
+    flex: 1 1 140px;
   }
 
   .system-hero {
@@ -3787,6 +3823,21 @@ kbd {
   .instance-card-actions {
     grid-column: 1 / -1;
     justify-content: flex-start;
+  }
+
+  .instance-card-actions > *,
+  .instance-secondary-actions > *,
+  .instance-log-actions > * {
+    flex: 1 1 120px;
+  }
+
+  .instance-log-actions {
+    width: 100%;
+  }
+
+  .instance-log-actions select {
+    width: 100%;
+    min-width: 0;
   }
 
   .instance-toggle-grid {
@@ -3868,6 +3919,23 @@ kbd {
   .app-statusbar .statusbar-group:last-child {
     display: none;
   }
+
+  .app-statusbar {
+    min-width: 0;
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-left: max(12px, env(safe-area-inset-left));
+  }
+
+  .app-statusbar .statusbar-group:first-child {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .app-statusbar .statusbar-group:first-child::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @media (max-width: 520px) {
@@ -3892,6 +3960,101 @@ kbd {
 
   .field-grid .span-2 {
     grid-column: auto;
+  }
+
+  .path-picker-row {
+    grid-template-columns: 1fr;
+  }
+
+  .path-picker-row .app-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .card-heading,
+  .form-footer,
+  .remote-folder-header,
+  .remote-folder-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .card-heading > .app-button,
+  .form-footer-actions,
+  .form-footer-actions > *,
+  .remote-folder-actions,
+  .remote-folder-actions > *,
+  .remote-folder-footer > * {
+    width: 100%;
+  }
+
+  .form-footer-actions,
+  .remote-folder-actions {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .instance-card {
+    padding: 16px;
+  }
+
+  .instance-inline-editor {
+    margin: 2px -16px -16px;
+    padding: 16px;
+  }
+
+  .instance-card-head {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .instance-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .instance-card-actions,
+  .instance-secondary-actions,
+  .instance-log-actions {
+    width: 100%;
+  }
+
+  .instance-card-actions > *,
+  .instance-secondary-actions > *,
+  .instance-log-actions > * {
+    flex: 1 1 calc(50% - 4px);
+  }
+
+  .instance-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .instance-endpoints > div {
+    grid-template-columns: 1fr auto;
+    align-items: start;
+  }
+
+  .instance-endpoints span {
+    grid-column: 1 / -1;
+  }
+
+  .instance-endpoints code,
+  .instance-endpoints em {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .toggle-row {
+    gap: 12px;
+  }
+
+  .app-statusbar {
+    display: none;
+  }
+
+  .app-stage {
+    grid-template-rows: var(--topbar-height) minmax(0, 1fr);
   }
 
   .metric-card {

@@ -4,6 +4,7 @@ import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
 import PageHeader from "@/components/ui/PageHeader.vue";
+import RemoteFolderPicker from "@/components/ui/RemoteFolderPicker.vue";
 import StatusPill from "@/components/ui/StatusPill.vue";
 import ToggleSwitch from "@/components/ui/ToggleSwitch.vue";
 import { useAppStore } from "@/stores/app";
@@ -14,6 +15,10 @@ const app = useAppStore();
 const ui = useUiStore();
 const showCreate = ref(false);
 const browsing = ref(false);
+const remotePickerOpen = ref(false);
+const remotePickerTarget = ref<"create" | "edit">("create");
+const remotePickerInitialPath = ref("");
+const remotePickerTitle = ref("");
 const editingId = ref("");
 const tunnelEditingId = ref("");
 const logInstanceId = ref("");
@@ -85,6 +90,14 @@ function selectEditProject() {
 }
 
 async function browseWorkspace(target: "create" | "edit") {
+  if (app.webControlClient) {
+    const current = target === "create" ? createForm.workspace : editForm.workspace;
+    remotePickerTarget.value = target;
+    remotePickerInitialPath.value = current || app.config?.workspace || "";
+    remotePickerTitle.value = target === "create" ? "选择 MCP 实例绑定的电脑项目目录" : "选择实例的新项目目录";
+    remotePickerOpen.value = true;
+    return;
+  }
   browsing.value = true;
   try {
     const current = target === "create" ? createForm.workspace : editForm.workspace;
@@ -104,6 +117,18 @@ async function browseWorkspace(target: "create" | "edit") {
   } finally {
     browsing.value = false;
   }
+}
+
+function applyRemoteWorkspace(path: string) {
+  if (remotePickerTarget.value === "create") {
+    createForm.workspace = path;
+    createForm.projectId = "";
+    if (!createForm.name.trim()) createForm.name = path.split(/[\\/]/).filter(Boolean).at(-1) || "新实例";
+  } else {
+    editForm.workspace = path;
+    editForm.projectId = "";
+  }
+  remotePickerOpen.value = false;
 }
 
 async function createInstance() {
@@ -451,5 +476,13 @@ onMounted(async () => {
       <code class="instance-log-path">{{ logPath }}</code>
       <pre class="instance-log-output">{{ logLines.length ? logLines.join('\n') : '当前没有日志记录。' }}</pre>
     </AppCard>
+
+    <RemoteFolderPicker
+      :open="remotePickerOpen"
+      :initial-path="remotePickerInitialPath"
+      :title="remotePickerTitle"
+      @close="remotePickerOpen = false"
+      @select="applyRemoteWorkspace"
+    />
   </div>
 </template>
