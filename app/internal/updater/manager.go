@@ -22,7 +22,11 @@ import (
 	"time"
 )
 
-const maxReleaseAssetBytes int64 = 512 << 20
+const (
+	maxReleaseAssetBytes   int64 = 512 << 20
+	metadataRequestTimeout       = 45 * time.Second
+	downloadRetryAttempts        = 3
+)
 
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
@@ -73,6 +77,14 @@ type githubAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
+type downloadHTTPError struct {
+	status int
+}
+
+func (e *downloadHTTPError) Error() string {
+	return fmt.Sprintf("update package download returned HTTP %d", e.status)
+}
+
 type Manager struct {
 	mu           sync.RWMutex
 	settingsPath string
@@ -88,14 +100,18 @@ func NewManager(dataDir, currentVersion string, defaultRepository ...string) (*M
 	if err := os.MkdirAll(updatesDir, 0o700); err != nil {
 		return nil, err
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = metadataRequestTimeout
+	transport.TLSHandshakeTimeout = 15 * time.Second
 	m := &Manager{
 		settingsPath: filepath.Join(dataDir, "update-settings.json"),
 		updatesDir:   updatesDir,
 		version:      strings.TrimPrefix(strings.TrimSpace(currentVersion), "v"),
 		apiBaseURL:   "https://api.github.com",
-		client: &http.Client{
-			Timeout: 45 * time.Second,
-		},
+		// Do not set http.Client.Timeout here. Release metadata/checksum requests
+		// get their own short deadlines, while the package body is allowed to
+		// stream until the install request context expires.
+		client: &http.Client{Transport: transport},
 		current: Settings{
 			Channel:        "stable",
 			CheckOnStartup: true,
@@ -229,7 +245,11 @@ func (m *Manager) Download(ctx context.Context, release Release) (PreparedUpdate
 	packagePath := filepath.Join(m.updatesDir, packageName)
 	tmp := packagePath + ".tmp"
 	if err := m.downloadFile(ctx, release.AssetURL, tmp); err != nil {
-		_ = os.Remove(tmp)
+		// Keep a bounded partial package so a later retry can resume instead of
+		// throwing away tens of megabytes after a short network interruption.
+		if info, statErr := os.Stat(tmp); statErr == nil && info.Size() > maxReleaseAssetBytes {
+			_ = os.Remove(tmp)
+		}
 		return PreparedUpdate{}, err
 	}
 	actual, err := fileSHA256(tmp)
@@ -255,7 +275,9 @@ func (m *Manager) fetchReleases(ctx context.Context, settings Settings) ([]githu
 	} else {
 		endpoint = fmt.Sprintf("%s/repos/%s/releases?per_page=30", strings.TrimRight(m.apiBaseURL, "/"), settings.Repository)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	requestCtx, cancel := context.WithTimeout(ctx, metadataRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +316,29 @@ func (m *Manager) fetchReleases(ctx context.Context, settings Settings) ([]githu
 }
 
 func (m *Manager) downloadChecksum(ctx context.Context, downloadURL, assetName string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	var lastErr error
+	attempts := 0
+	for attempt := 1; attempt <= downloadRetryAttempts; attempt++ {
+		attempts = attempt
+		value, err := m.downloadChecksumAttempt(ctx, downloadURL, assetName)
+		if err == nil {
+			return value, nil
+		}
+		lastErr = err
+		if !retryableDownloadError(err) || attempt == downloadRetryAttempts {
+			break
+		}
+		if err := waitForRetry(ctx, attempt); err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("download checksum failed after %d attempt(s): %w", attempts, lastErr)
+}
+
+func (m *Manager) downloadChecksumAttempt(ctx context.Context, downloadURL, assetName string) (string, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, metadataRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -305,7 +349,7 @@ func (m *Manager) downloadChecksum(ctx context.Context, downloadURL, assetName s
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("checksum download returned HTTP %d", resp.StatusCode)
+		return "", &downloadHTTPError{status: resp.StatusCode}
 	}
 	scanner := bufio.NewScanner(io.LimitReader(resp.Body, 16<<10))
 	for scanner.Scan() {
@@ -329,35 +373,119 @@ func (m *Manager) downloadChecksum(ctx context.Context, downloadURL, assetName s
 }
 
 func (m *Manager) downloadFile(ctx context.Context, downloadURL, target string) error {
+	var lastErr error
+	attempts := 0
+	for attempt := 1; attempt <= downloadRetryAttempts; attempt++ {
+		attempts = attempt
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := m.downloadFileAttempt(ctx, downloadURL, target); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if !retryableDownloadError(lastErr) || attempt == downloadRetryAttempts {
+			break
+		}
+		if err := waitForRetry(ctx, attempt); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("download update package failed after %d attempt(s): %w", attempts, lastErr)
+}
+
+func (m *Manager) downloadFileAttempt(ctx context.Context, downloadURL, target string) error {
+	offset := int64(0)
+	if info, err := os.Stat(target); err == nil {
+		offset = info.Size()
+		if offset > maxReleaseAssetBytes {
+			return errors.New("partial update package exceeds the maximum allowed size")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "MCP-DevDesk/"+m.version)
+	if offset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("download update package: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("update package download returned HTTP %d", resp.StatusCode)
+
+	appendMode := offset > 0 && resp.StatusCode == http.StatusPartialContent
+	if offset > 0 && resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		// The local partial file may be stale or already complete. Restart from
+		// zero on the next retry so checksum verification can decide the result.
+		if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return &downloadHTTPError{status: resp.StatusCode}
 	}
-	if resp.ContentLength > maxReleaseAssetBytes {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return &downloadHTTPError{status: resp.StatusCode}
+	}
+	if !appendMode {
+		offset = 0
+	}
+
+	if resp.ContentLength > 0 && offset+resp.ContentLength > maxReleaseAssetBytes {
 		return errors.New("update package is unexpectedly large")
 	}
-	file, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	flags := os.O_CREATE | os.O_WRONLY
+	if appendMode {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+	file, err := os.OpenFile(target, flags, 0o600)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	written, err := io.Copy(file, io.LimitReader(resp.Body, maxReleaseAssetBytes+1))
-	if err != nil {
-		return err
+	written, copyErr := io.Copy(file, io.LimitReader(resp.Body, maxReleaseAssetBytes-offset+1))
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if copyErr != nil {
+		return copyErr
 	}
-	if written > maxReleaseAssetBytes {
+	if syncErr != nil {
+		return syncErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if offset+written > maxReleaseAssetBytes {
 		return errors.New("update package exceeds the maximum allowed size")
 	}
-	return file.Sync()
+	return nil
+}
+
+func retryableDownloadError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var statusErr *downloadHTTPError
+	if errors.As(err, &statusErr) {
+		return statusErr.status == http.StatusRequestTimeout || statusErr.status == http.StatusTooManyRequests || statusErr.status >= 500
+	}
+	return true
+}
+
+func waitForRetry(ctx context.Context, attempt int) error {
+	delay := time.Duration(attempt) * time.Second
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(delay):
+		return nil
+	}
 }
 
 func (m *Manager) normalizeLocked() {
