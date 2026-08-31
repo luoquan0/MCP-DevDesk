@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"mcp-devdesk/internal/appearance"
 	"mcp-devdesk/internal/buildinfo"
 	"mcp-devdesk/internal/config"
 	instancestore "mcp-devdesk/internal/instances"
@@ -31,14 +32,15 @@ import (
 const Version = buildinfo.Version
 
 type App struct {
-	rootDir   string
-	dataDir   string
-	config    *config.Store
-	secrets   *secrets.Store
-	process   *processmanager.Manager
-	projects  *projectstore.Store
-	instances *instancestore.Store
-	tunnel    *tunnel.Client
+	rootDir    string
+	dataDir    string
+	config     *config.Store
+	appearance *appearance.Store
+	secrets    *secrets.Store
+	process    *processmanager.Manager
+	projects   *projectstore.Store
+	instances  *instancestore.Store
+	tunnel     *tunnel.Client
 
 	mu              sync.RWMutex
 	desiredRunning  bool
@@ -65,6 +67,10 @@ func New(rootDir, dataDir string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	appearanceStore, err := appearance.NewStore(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	secretStore := secrets.NewStore(dataDir)
 	for _, path := range applicationLogPaths(dataDir) {
 		_ = devlogging.TrimFile(path)
@@ -78,10 +84,11 @@ func New(rootDir, dataDir string) (*App, error) {
 		return nil, err
 	}
 	app := &App{
-		rootDir: rootDir,
-		dataDir: dataDir,
-		config:  configStore,
-		secrets: secretStore,
+		rootDir:    rootDir,
+		dataDir:    dataDir,
+		config:     configStore,
+		appearance: appearanceStore,
+		secrets:    secretStore,
 		process: processmanager.NewManager(rootDir, dataDir, secretStore, func() bool {
 			return configStore.Get().LoggingEnabled
 		}, projectsStore.EffectivePrompt),
@@ -99,6 +106,24 @@ func New(rootDir, dataDir string) (*App, error) {
 
 func (a *App) RootDir() string { return a.rootDir }
 func (a *App) DataDir() string { return a.dataDir }
+
+func (a *App) Appearance() appearance.Settings { return a.appearance.Get() }
+
+func (a *App) UpdateAppearance(update appearance.Update) (appearance.Settings, error) {
+	return a.appearance.Update(update)
+}
+
+func (a *App) SaveAppearanceBackground(data []byte) (appearance.Settings, error) {
+	return a.appearance.SaveBackground(data)
+}
+
+func (a *App) RemoveAppearanceBackground() (appearance.Settings, error) {
+	return a.appearance.RemoveBackground()
+}
+
+func (a *App) AppearanceBackgroundPath() (string, bool) {
+	return a.appearance.BackgroundPath()
+}
 
 func (a *App) Projects() []projectstore.Project { return a.projects.List() }
 

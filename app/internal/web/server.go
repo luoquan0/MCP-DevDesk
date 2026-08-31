@@ -11,11 +11,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"mcp-devdesk/internal/appearance"
 	"mcp-devdesk/internal/application"
 	"mcp-devdesk/internal/model"
 )
@@ -56,6 +58,11 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleUpdateConfig)
+	mux.HandleFunc("GET /api/appearance", s.handleGetAppearance)
+	mux.HandleFunc("PUT /api/appearance", s.handleUpdateAppearance)
+	mux.HandleFunc("GET /api/appearance/background", s.handleGetAppearanceBackground)
+	mux.HandleFunc("PUT /api/appearance/background", s.handleSaveAppearanceBackground)
+	mux.HandleFunc("DELETE /api/appearance/background", s.handleRemoveAppearanceBackground)
 	mux.HandleFunc("GET /api/projects", s.handleListProjects)
 	mux.HandleFunc("GET /api/project-folders", s.handleListProjectFolders)
 	mux.HandleFunc("POST /api/project-folders", s.handleAddProjectFolder)
@@ -147,6 +154,69 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.Config())
+}
+
+func (s *Server) handleGetAppearance(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.app.Appearance())
+}
+
+func (s *Server) handleUpdateAppearance(w http.ResponseWriter, r *http.Request) {
+	var request appearance.Update
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	settings, err := s.app.UpdateAppearance(request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handleGetAppearanceBackground(w http.ResponseWriter, r *http.Request) {
+	path, ok := s.app.AppearanceBackgroundPath()
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(data))
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (s *Server) handleSaveAppearanceBackground(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, appearance.MaxBackgroundBytes+1)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	settings, err := s.app.SaveAppearanceBackground(data)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handleRemoveAppearanceBackground(w http.ResponseWriter, _ *http.Request) {
+	settings, err := s.app.RemoveAppearanceBackground()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
 }
 
 func (s *Server) handleListProjects(w http.ResponseWriter, _ *http.Request) {

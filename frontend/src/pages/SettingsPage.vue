@@ -30,8 +30,21 @@ const webControlAuthEnabled = ref(false);
 const webControlPassword = ref("");
 const globalPromptEnabled = ref(false);
 const globalPromptDraft = ref("");
+const appearanceFileInput = ref<HTMLInputElement | null>(null);
+const appearanceSaving = ref(false);
+const appearanceUploading = ref(false);
+const appearanceForm = reactive({
+  theme: "system" as ThemeMode,
+  customColorsEnabled: false,
+  primaryColor: "#007aff",
+  secondaryColor: "#5856d6",
+  backgroundOpacity: 30,
+});
 const globalPromptBytes = computed(() => new TextEncoder().encode(globalPromptDraft.value).length);
 const globalPromptActive = computed(() => globalPromptEnabled.value && Boolean(globalPromptDraft.value.trim()));
+const appearanceBackgroundUrl = computed(() => app.appearance?.hasBackgroundImage
+  ? `/api/appearance/background?rev=${encodeURIComponent(String(app.appearance.backgroundRevision))}`
+  : "");
 const globalPromptTemplate = `# 全局 Agent 规则
 
 ## 通用执行原则
@@ -58,6 +71,16 @@ watch(() => app.projectPromptSettings, (settings) => {
   globalPromptDraft.value = settings?.globalPrompt || "";
 }, { immediate: true });
 
+watch(() => app.appearance, (settings) => {
+  if (!settings) return;
+  appearanceForm.theme = settings.theme;
+  appearanceForm.customColorsEnabled = settings.customColorsEnabled;
+  appearanceForm.primaryColor = settings.primaryColor;
+  appearanceForm.secondaryColor = settings.secondaryColor;
+  appearanceForm.backgroundOpacity = settings.backgroundOpacity;
+  ui.applyAppearance(settings);
+}, { immediate: true, deep: true });
+
 watch([() => app.webControl, () => app.config?.webControlPort], ([status, configuredPort]) => {
   webControlEnabled.value = Boolean(status?.enabled ?? app.config?.webControlEnabled);
   webControlPort.value = status?.port || configuredPort || 17861;
@@ -70,6 +93,91 @@ const themes: Array<{ id: ThemeMode; label: string; description: string; icon: s
   { id: "light", label: "浅色", description: "明亮、克制的 Apple 风格", icon: "sun" },
   { id: "dark", label: "深色", description: "适合夜间和长时间运行", icon: "moon" },
 ];
+
+const hexColorPattern = /^#[0-9a-fA-F]{6}$/;
+
+function appearancePreview() {
+  const current = app.appearance;
+  if (!current) return;
+  if (appearanceForm.customColorsEnabled && (!hexColorPattern.test(appearanceForm.primaryColor) || !hexColorPattern.test(appearanceForm.secondaryColor))) return;
+  ui.applyAppearance({
+    ...current,
+    theme: appearanceForm.theme,
+    primaryColor: appearanceForm.primaryColor,
+    secondaryColor: appearanceForm.secondaryColor,
+    backgroundOpacity: appearanceForm.backgroundOpacity,
+  });
+}
+
+async function saveAppearance(showToast = true) {
+  if (appearanceForm.customColorsEnabled && (!hexColorPattern.test(appearanceForm.primaryColor) || !hexColorPattern.test(appearanceForm.secondaryColor))) {
+    ui.toast("颜色格式无效", "主配色和副配色必须是 #RRGGBB 格式。", "danger");
+    return;
+  }
+  if (!hexColorPattern.test(appearanceForm.primaryColor)) appearanceForm.primaryColor = "#007aff";
+  if (!hexColorPattern.test(appearanceForm.secondaryColor)) appearanceForm.secondaryColor = "#5856d6";
+  appearanceSaving.value = true;
+  try {
+    await app.saveAppearance({ ...appearanceForm });
+    if (showToast) ui.toast("外观设置已保存", "桌面软件和网页端会同步使用这套外观。", "success");
+  } catch (error) {
+    ui.toast("保存外观失败", error instanceof Error ? error.message : String(error), "danger");
+  } finally {
+    appearanceSaving.value = false;
+  }
+}
+
+async function selectAppearanceTheme(theme: ThemeMode) {
+  appearanceForm.theme = theme;
+  appearancePreview();
+  await saveAppearance(false);
+}
+
+async function saveAppearanceColors() {
+  appearancePreview();
+  await saveAppearance(false);
+}
+
+async function resetAppearanceColors() {
+  appearanceForm.customColorsEnabled = false;
+  appearanceForm.primaryColor = "#007aff";
+  appearanceForm.secondaryColor = "#5856d6";
+  appearancePreview();
+  await saveAppearance();
+}
+
+async function toggleCustomColors(enabled: boolean) {
+  appearanceForm.customColorsEnabled = enabled;
+  appearancePreview();
+  await saveAppearance(false);
+}
+
+function chooseAppearanceBackground() {
+  appearanceFileInput.value?.click();
+}
+
+async function handleAppearanceBackground(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  appearanceUploading.value = true;
+  try {
+    await app.uploadAppearanceBackground(file);
+  } catch (error) {
+    ui.toast("上传背景图失败", error instanceof Error ? error.message : String(error), "danger");
+  } finally {
+    appearanceUploading.value = false;
+    input.value = "";
+  }
+}
+
+async function removeAppearanceBackground() {
+  try {
+    await app.removeAppearanceBackground();
+  } catch (error) {
+    ui.toast("移除背景图失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
 
 async function setStartup(enabled: boolean) {
   try {
@@ -229,25 +337,88 @@ onMounted(loadSecrets);
       </button>
     </nav>
 
-    <AppCard v-if="activeSettingsSection === 'appearance'">
-      <div class="card-heading">
-        <div><span class="eyebrow">Appearance</span><h3>外观</h3></div>
-      </div>
-      <div class="theme-grid">
-        <button v-for="theme in themes" :key="theme.id" type="button" class="theme-option" :class="{ 'is-selected': ui.theme === theme.id }" @click="ui.setTheme(theme.id)">
-          <div class="theme-preview" :class="`theme-${theme.id}`">
-            <span class="theme-preview-sidebar" />
-            <span class="theme-preview-card one" />
-            <span class="theme-preview-card two" />
+    <section v-if="activeSettingsSection === 'appearance'" class="appearance-settings-stack">
+      <AppCard>
+        <div class="card-heading">
+          <div><span class="eyebrow">Appearance</span><h3>基础外观</h3><p>保留跟随系统、浅色和深色三种基础模式。</p></div>
+        </div>
+        <div class="theme-grid">
+          <button v-for="theme in themes" :key="theme.id" type="button" class="theme-option" :class="{ 'is-selected': appearanceForm.theme === theme.id }" @click="selectAppearanceTheme(theme.id)">
+            <div class="theme-preview" :class="`theme-${theme.id}`">
+              <span class="theme-preview-sidebar" />
+              <span class="theme-preview-card one" />
+              <span class="theme-preview-card two" />
+            </div>
+            <div class="theme-option-copy">
+              <span class="theme-option-icon"><AppIcon :name="theme.icon" :size="16" /></span>
+              <div><strong>{{ theme.label }}</strong><small>{{ theme.description }}</small></div>
+              <span class="radio-mark"><i /></span>
+            </div>
+          </button>
+        </div>
+      </AppCard>
+
+      <section class="appearance-custom-grid">
+        <AppCard>
+          <div class="card-heading appearance-card-heading">
+            <div><span class="eyebrow">Custom palette</span><h3>自定义配色</h3><p>主配色用于按钮、选中状态和强调色；副配色用于辅助强调和紫色系元素。</p></div>
+            <AppButton tone="secondary" compact :loading="appearanceSaving" @click="resetAppearanceColors">使用主题默认</AppButton>
           </div>
-          <div class="theme-option-copy">
-            <span class="theme-option-icon"><AppIcon :name="theme.icon" :size="16" /></span>
-            <div><strong>{{ theme.label }}</strong><small>{{ theme.description }}</small></div>
-            <span class="radio-mark"><i /></span>
+          <ToggleSwitch
+            :model-value="appearanceForm.customColorsEnabled"
+            label="启用自定义配色"
+            description="关闭时保留当前颜色值，但界面使用浅色/深色主题自身的默认配色。"
+            @update:model-value="toggleCustomColors"
+          />
+          <div class="appearance-color-list" :class="{ 'is-disabled': !appearanceForm.customColorsEnabled }">
+            <label class="appearance-color-field">
+              <span><strong>主配色</strong><small>主要按钮、焦点和当前选中状态</small></span>
+              <div class="appearance-color-control">
+                <input v-model="appearanceForm.primaryColor" type="color" :disabled="!appearanceForm.customColorsEnabled" @input="appearancePreview" @change="saveAppearanceColors" />
+                <input v-model.trim="appearanceForm.primaryColor" type="text" maxlength="7" spellcheck="false" :disabled="!appearanceForm.customColorsEnabled" @input="appearancePreview" @change="saveAppearanceColors" />
+              </div>
+            </label>
+            <label class="appearance-color-field">
+              <span><strong>副配色</strong><small>辅助标签、图标和第二强调色</small></span>
+              <div class="appearance-color-control">
+                <input v-model="appearanceForm.secondaryColor" type="color" :disabled="!appearanceForm.customColorsEnabled" @input="appearancePreview" @change="saveAppearanceColors" />
+                <input v-model.trim="appearanceForm.secondaryColor" type="text" maxlength="7" spellcheck="false" :disabled="!appearanceForm.customColorsEnabled" @input="appearancePreview" @change="saveAppearanceColors" />
+              </div>
+            </label>
           </div>
-        </button>
-      </div>
-    </AppCard>
+          <div class="appearance-palette-preview" :class="{ 'is-disabled': !appearanceForm.customColorsEnabled }">
+            <span :style="{ background: appearanceForm.primaryColor }">主配色</span>
+            <span :style="{ background: appearanceForm.secondaryColor }">副配色</span>
+          </div>
+        </AppCard>
+
+        <AppCard>
+          <div class="card-heading appearance-card-heading">
+            <div><span class="eyebrow">Background image</span><h3>自定义背景</h3><p>上传 PNG、JPEG、GIF 或 WebP，最大 15 MB；图片会保存在 DevDesk 数据目录并同步给网页端。</p></div>
+            <StatusPill :tone="app.appearance?.hasBackgroundImage ? 'success' : 'neutral'">{{ app.appearance?.hasBackgroundImage ? '已启用' : '未设置' }}</StatusPill>
+          </div>
+          <input ref="appearanceFileInput" class="appearance-file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" @change="handleAppearanceBackground" />
+          <div class="appearance-background-preview" :class="{ 'has-image': Boolean(appearanceBackgroundUrl) }">
+            <img v-if="appearanceBackgroundUrl" :src="appearanceBackgroundUrl" alt="背景预览" :style="{ opacity: appearanceForm.backgroundOpacity / 100 }" />
+            <div v-else><AppIcon name="monitor" :size="28" /><strong>尚未上传背景图</strong><span>可以使用电脑或手机选择图片上传。</span></div>
+          </div>
+          <label class="appearance-opacity-field">
+            <span><strong>背景图透明度</strong><small>0% 完全隐藏 · 100% 完整显示</small></span>
+            <div>
+              <input v-model.number="appearanceForm.backgroundOpacity" type="range" min="0" max="100" step="1" @input="appearancePreview" @change="saveAppearance(false)" />
+              <output>{{ appearanceForm.backgroundOpacity }}%</output>
+            </div>
+          </label>
+          <div class="form-footer appearance-background-actions">
+            <small>自定义背景只改变界面底层背景，不会影响项目文件或 MCP 配置。</small>
+            <div class="form-footer-actions">
+              <AppButton v-if="app.appearance?.hasBackgroundImage" tone="quiet" @click="removeAppearanceBackground">移除背景</AppButton>
+              <AppButton tone="primary" icon="folder" :loading="appearanceUploading" @click="chooseAppearanceBackground">{{ app.appearance?.hasBackgroundImage ? '更换图片' : '上传图片' }}</AppButton>
+            </div>
+          </div>
+        </AppCard>
+      </section>
+    </section>
 
     <section v-if="activeSettingsSection === 'software'" class="settings-grid equal">
       <AppCard>

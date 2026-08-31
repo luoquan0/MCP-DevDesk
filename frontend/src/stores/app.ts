@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { api } from "@/services/api";
 import { useUiStore } from "@/stores/ui";
 import type {
+  AppearanceSettings,
   Config,
   ConfigureTunnelRequest,
   ConfigureTunnelResult,
@@ -31,6 +32,7 @@ export const useAppStore = defineStore("app", {
   state: () => ({
     status: null as ServiceStatus | null,
     config: null as Config | null,
+    appearance: null as AppearanceSettings | null,
     desktop: null as DesktopStatus | null,
     diagnostics: null as Diagnostics | null,
     projects: [] as Project[],
@@ -62,6 +64,7 @@ export const useAppStore = defineStore("app", {
         await Promise.all([
           this.refreshStatus(true),
           this.loadConfig(),
+          this.loadAppearance(),
           this.loadDesktop(),
           this.loadDiagnostics(),
           this.loadProjects(),
@@ -101,6 +104,43 @@ export const useAppStore = defineStore("app", {
       const next = await api<Config>("/api/config");
       if (!this.config || JSON.stringify(this.config) !== JSON.stringify(next)) this.config = next;
       return this.config;
+    },
+    async loadAppearance() {
+      const next = await api<AppearanceSettings>("/api/appearance");
+      if (!this.appearance || JSON.stringify(this.appearance) !== JSON.stringify(next)) this.appearance = next;
+      return this.appearance;
+    },
+    async saveAppearance(update: Pick<AppearanceSettings, "theme" | "customColorsEnabled" | "primaryColor" | "secondaryColor" | "backgroundOpacity">) {
+      this.appearance = await this.runAction("save-appearance", () => api<AppearanceSettings>("/api/appearance", {
+        method: "PUT",
+        body: update as unknown as BodyInit,
+      }));
+      useUiStore().applyAppearance(this.appearance);
+      return this.appearance;
+    },
+    async uploadAppearanceBackground(file: File) {
+      const response = await fetch("/api/appearance/background", {
+        method: "PUT",
+        body: file,
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+      });
+      const payload = await response.json().catch(() => null) as AppearanceSettings | { message?: string } | null;
+      if (!response.ok) {
+        if (response.status === 401) window.dispatchEvent(new CustomEvent("mcp-devdesk:web-auth-required"));
+        throw new Error(payload && "message" in payload && payload.message ? payload.message : response.statusText);
+      }
+      this.appearance = payload as AppearanceSettings;
+      useUiStore().applyAppearance(this.appearance);
+      useUiStore().toast("背景图已更新", file.name, "success");
+      return this.appearance;
+    },
+    async removeAppearanceBackground() {
+      this.appearance = await this.runAction("remove-appearance-background", () => api<AppearanceSettings>("/api/appearance/background", {
+        method: "DELETE",
+      }));
+      useUiStore().applyAppearance(this.appearance);
+      useUiStore().toast("背景图已移除", "已恢复纯色背景。", "success");
+      return this.appearance;
     },
     async loadProjects() {
       this.projects = await api<Project[]>("/api/projects");
@@ -163,6 +203,7 @@ export const useAppStore = defineStore("app", {
       await Promise.all([
         this.refreshStatus(true),
         this.loadConfig(),
+        this.loadAppearance(),
         this.loadDesktop(),
         this.loadProjects(),
         this.loadProjectFolders(),

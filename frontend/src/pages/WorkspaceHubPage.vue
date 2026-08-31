@@ -16,6 +16,7 @@ const ui = useUiStore();
 
 const search = ref("");
 const selectedFolder = ref("__all__");
+const folderPaneCollapsed = ref(localStorage.getItem("mcp-devdesk-project-folders-collapsed") === "1");
 const showAddProject = ref(false);
 const showAddFolder = ref(false);
 const newFolderName = ref("");
@@ -65,6 +66,11 @@ const normalizedSearch = computed(() => search.value.trim().toLocaleLowerCase())
 const runningProjectInstances = computed(() => app.instances.filter((instance) => !instance.primary && instance.mcp.running).length);
 const promptBytes = computed(() => new TextEncoder().encode(promptDraft.value).length);
 const selectedProjectIdSet = computed(() => new Set(selectedProjectIds.value));
+
+function toggleFolderPane() {
+  folderPaneCollapsed.value = !folderPaneCollapsed.value;
+  localStorage.setItem("mcp-devdesk-project-folders-collapsed", folderPaneCollapsed.value ? "1" : "0");
+}
 
 const visibleFolders = computed(() => {
   const query = normalizedSearch.value;
@@ -564,8 +570,12 @@ onMounted(async () => {
       </div>
     </AppCard>
 
-    <section class="workspace-explorer">
+    <section class="workspace-explorer" :class="{ 'is-folder-pane-collapsed': folderPaneCollapsed }">
       <aside class="workspace-folder-pane">
+        <button class="workspace-folder-collapse" type="button" :title="folderPaneCollapsed ? '展开项目文件夹' : '收起项目文件夹'" @click="toggleFolderPane">
+          <AppIcon name="chevron-right" :size="15" />
+          <span>{{ folderPaneCollapsed ? '展开分类' : '收起分类' }}</span>
+        </button>
         <div class="workspace-search"><AppIcon name="search" :size="16" /><input v-model="search" placeholder="搜索项目或文件夹" /></div>
         <button type="button" :class="{ 'is-active': selectedFolder === '__all__' }" @click="selectedFolder = '__all__'"><AppIcon name="projects" :size="16" /><span>全部项目</span><em>{{ app.projects.length }}</em></button>
         <button

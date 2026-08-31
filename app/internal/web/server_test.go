@@ -383,6 +383,48 @@ func TestGenericConfigRejectsWebControlFields(t *testing.T) {
 	}
 }
 
+func TestAppearanceAPIUpdatesPaletteAndBackground(t *testing.T) {
+	server := newTestServer(t)
+	appearanceUpdate := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/appearance", bytes.NewBufferString(`{"theme":"dark","customColorsEnabled":true,"primaryColor":"#ff3366","secondaryColor":"#22aa88","backgroundOpacity":62}`))
+	appearanceUpdate.RemoteAddr = "127.0.0.1:45678"
+	appearanceUpdate.Host = "127.0.0.1:17860"
+	appearanceUpdate.Header.Set("Content-Type", "application/json")
+	appearanceRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(appearanceRecorder, appearanceUpdate)
+	if appearanceRecorder.Code != http.StatusOK || !strings.Contains(appearanceRecorder.Body.String(), `"customColorsEnabled":true`) || !strings.Contains(appearanceRecorder.Body.String(), `"primaryColor":"#ff3366"`) {
+		t.Fatalf("appearance update failed: %d %s", appearanceRecorder.Code, appearanceRecorder.Body.String())
+	}
+
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52}
+	backgroundPut := httptest.NewRequest(http.MethodPut, "http://127.0.0.1/api/appearance/background", bytes.NewReader(png))
+	backgroundPut.RemoteAddr = "127.0.0.1:45678"
+	backgroundPut.Host = "127.0.0.1:17860"
+	backgroundPut.Header.Set("Content-Type", "image/png")
+	backgroundPutRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(backgroundPutRecorder, backgroundPut)
+	if backgroundPutRecorder.Code != http.StatusOK || !strings.Contains(backgroundPutRecorder.Body.String(), `"hasBackgroundImage":true`) {
+		t.Fatalf("appearance background upload failed: %d %s", backgroundPutRecorder.Code, backgroundPutRecorder.Body.String())
+	}
+
+	backgroundGet := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/appearance/background", nil)
+	backgroundGet.RemoteAddr = "127.0.0.1:45678"
+	backgroundGet.Host = "127.0.0.1:17860"
+	backgroundGetRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(backgroundGetRecorder, backgroundGet)
+	if backgroundGetRecorder.Code != http.StatusOK || backgroundGetRecorder.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("appearance background read failed: %d %s", backgroundGetRecorder.Code, backgroundGetRecorder.Header().Get("Content-Type"))
+	}
+
+	backgroundDelete := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/appearance/background", nil)
+	backgroundDelete.RemoteAddr = "127.0.0.1:45678"
+	backgroundDelete.Host = "127.0.0.1:17860"
+	backgroundDeleteRecorder := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(backgroundDeleteRecorder, backgroundDelete)
+	if backgroundDeleteRecorder.Code != http.StatusOK || !strings.Contains(backgroundDeleteRecorder.Body.String(), `"hasBackgroundImage":false`) {
+		t.Fatalf("appearance background delete failed: %d %s", backgroundDeleteRecorder.Code, backgroundDeleteRecorder.Body.String())
+	}
+}
+
 func TestProjectFolderAPIOrganizesProjects(t *testing.T) {
 	server := newTestServer(t)
 	projects := server.app.Projects()

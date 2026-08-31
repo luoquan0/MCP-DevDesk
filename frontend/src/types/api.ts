@@ -113,6 +113,16 @@ export interface Config {
   loggingEnabled: boolean;
 }
 
+export interface AppearanceSettings {
+  theme: "system" | "light" | "dark";
+  customColorsEnabled: boolean;
+  primaryColor: string;
+  secondaryColor: string;
+  backgroundOpacity: number;
+  hasBackgroundImage: boolean;
+  backgroundRevision: number;
+}
+
 export interface DesktopStatus {
   available: boolean;
   appMode?: boolean;

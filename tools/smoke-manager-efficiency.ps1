@@ -63,7 +63,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.5") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.6") {
                 $ready = $true
                 break
             }
@@ -94,7 +94,22 @@ try {
     if ($login.StatusCode -ne 200 -or -not $loginParsed.authenticated) { throw "Web control login failed" }
     $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/status" -WebSession $webSession
     $overviewParsed = $overview.Content | ConvertFrom-Json
-    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.5") { throw "Authenticated full web UI API failed" }
+    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.6") { throw "Authenticated full web UI API failed" }
+
+    $appearance = Send-Json -Method "PUT" -Uri "http://127.0.0.1:$webPort/api/appearance" -Body @{ theme = "dark"; customColorsEnabled = $true; primaryColor = "#ff3366"; secondaryColor = "#22aa88"; backgroundOpacity = 47 } -WebSession $webSession
+    $appearanceParsed = $appearance.Content | ConvertFrom-Json
+    if ($appearance.StatusCode -ne 200 -or $appearanceParsed.theme -ne "dark" -or -not $appearanceParsed.customColorsEnabled -or $appearanceParsed.primaryColor -ne "#ff3366" -or $appearanceParsed.backgroundOpacity -ne 47) {
+        throw "Appearance settings endpoint failed"
+    }
+    $pngBytes = [byte[]](0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52)
+    $backgroundUpload = Invoke-WebRequest -Method PUT -Uri "http://127.0.0.1:$webPort/api/appearance/background" -Body $pngBytes -ContentType "image/png" -UseBasicParsing -WebSession $webSession -TimeoutSec 15
+    $backgroundParsed = $backgroundUpload.Content | ConvertFrom-Json
+    if ($backgroundUpload.StatusCode -ne 200 -or -not $backgroundParsed.hasBackgroundImage) { throw "Appearance background upload failed" }
+    $backgroundRead = Invoke-WebRequest -Method GET -Uri "http://127.0.0.1:$webPort/api/appearance/background" -UseBasicParsing -WebSession $webSession -TimeoutSec 15
+    if ($backgroundRead.StatusCode -ne 200 -or $backgroundRead.Headers["Content-Type"] -notlike "image/png*") { throw "Appearance background read failed" }
+    $backgroundDelete = Send-Json -Method "DELETE" -Uri "http://127.0.0.1:$webPort/api/appearance/background" -WebSession $webSession
+    $backgroundDeleteParsed = $backgroundDelete.Content | ConvertFrom-Json
+    if ($backgroundDelete.StatusCode -ne 200 -or $backgroundDeleteParsed.hasBackgroundImage) { throw "Appearance background delete failed" }
 
     $phoneProject = Join-Path $TestRoot "phone-project"
     New-Item -ItemType Directory -Force -Path $phoneProject | Out-Null
@@ -184,7 +199,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.12.5" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.12.6" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

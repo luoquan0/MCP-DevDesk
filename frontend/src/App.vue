@@ -107,6 +107,9 @@ onMounted(async () => {
 });
 
 watch(() => route.fullPath, () => void startAppForCurrentRoute());
+watch(() => appStore.appearance, (appearance) => {
+  if (appearance) uiStore.applyAppearance(appearance);
+}, { deep: true });
 
 onBeforeUnmount(() => {
   if (statusPollingTimer) window.clearInterval(statusPollingTimer);
