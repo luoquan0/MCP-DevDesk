@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -57,7 +58,17 @@ func (s *Server) handleControlLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if !s.control.Login(w, request.Password) {
+	authenticated, retryAfter := s.control.Login(w, r, request.Password)
+	if !authenticated {
+		if retryAfter > 0 {
+			seconds := int(retryAfter.Seconds())
+			if seconds < 1 {
+				seconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			writeError(w, http.StatusTooManyRequests, errors.New("登录失败次数过多，请稍后再试"))
+			return
+		}
 		writeError(w, http.StatusUnauthorized, errors.New("密码错误"))
 		return
 	}
@@ -106,6 +117,10 @@ func (s *Server) controlRequireAuth(next http.Handler) http.Handler {
 		status := s.control.AuthStatus(r)
 		if status.Required && !status.Authenticated {
 			writeError(w, http.StatusUnauthorized, errors.New("请先登录网页控制台"))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/secrets") {
+			writeError(w, http.StatusForbidden, errors.New("敏感凭据只能在本机桌面应用中查看或修改"))
 			return
 		}
 		next.ServeHTTP(w, r)

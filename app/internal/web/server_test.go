@@ -325,6 +325,16 @@ func TestWebControlPasswordProtectsLANAPI(t *testing.T) {
 		t.Fatalf("authorized request status = %d, body = %s", authorizedRecorder.Code, authorizedRecorder.Body.String())
 	}
 
+	secretReveal := httptest.NewRequest(http.MethodGet, "http://192.168.1.5/api/secrets?reveal=true", nil)
+	secretReveal.RemoteAddr = "192.168.1.20:45678"
+	secretReveal.Host = "192.168.1.5:17861"
+	secretReveal.AddCookie(cookies[0])
+	secretRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(secretRecorder, secretReveal)
+	if secretRecorder.Code != http.StatusForbidden {
+		t.Fatalf("LAN secret reveal status = %d, want %d", secretRecorder.Code, http.StatusForbidden)
+	}
+
 	publicRemote := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/control/auth/status", nil)
 	publicRemote.RemoteAddr = "203.0.113.10:45678"
 	publicRemote.Host = "127.0.0.1:17861"
@@ -332,6 +342,47 @@ func TestWebControlPasswordProtectsLANAPI(t *testing.T) {
 	handler.ServeHTTP(publicRecorder, publicRemote)
 	if publicRecorder.Code != http.StatusForbidden {
 		t.Fatalf("public remote status = %d, want %d", publicRecorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestWebControlLoginRateLimitBlocksRepeatedFailures(t *testing.T) {
+	server := newTestServer(t)
+	control, handler := attachTestControlServer(t, server)
+	if err := server.app.SetWebControlPassword("mobile-pass-123"); err != nil {
+		t.Fatal(err)
+	}
+	authEnabled := true
+	if _, err := server.app.UpdateConfig(model.ConfigUpdate{WebControlAuthEnabled: &authEnabled}); err != nil {
+		t.Fatal(err)
+	}
+	control.InvalidateSessions()
+
+	for attempt := 1; attempt <= webControlLoginMaxFails; attempt++ {
+		request := httptest.NewRequest(http.MethodPost, "http://192.168.1.5/api/control/auth/login", bytes.NewBufferString(`{"password":"wrong"}`))
+		request.RemoteAddr = "192.168.1.30:45678"
+		request.Host = "192.168.1.5:17861"
+		request.Header.Set("Origin", "http://192.168.1.5:17861")
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		want := http.StatusUnauthorized
+		if attempt == webControlLoginMaxFails {
+			want = http.StatusTooManyRequests
+		}
+		if recorder.Code != want {
+			t.Fatalf("attempt %d status = %d, want %d; body=%s", attempt, recorder.Code, want, recorder.Body.String())
+		}
+	}
+
+	correct := httptest.NewRequest(http.MethodPost, "http://192.168.1.5/api/control/auth/login", bytes.NewBufferString(`{"password":"mobile-pass-123"}`))
+	correct.RemoteAddr = "192.168.1.30:45678"
+	correct.Host = "192.168.1.5:17861"
+	correct.Header.Set("Origin", "http://192.168.1.5:17861")
+	correct.Header.Set("Content-Type", "application/json")
+	correctRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(correctRecorder, correct)
+	if correctRecorder.Code != http.StatusTooManyRequests || correctRecorder.Header().Get("Retry-After") == "" {
+		t.Fatalf("blocked correct login status = %d retry-after=%q", correctRecorder.Code, correctRecorder.Header().Get("Retry-After"))
 	}
 }
 

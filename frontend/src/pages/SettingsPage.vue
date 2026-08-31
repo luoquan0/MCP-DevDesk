@@ -367,7 +367,9 @@ function exportDiagnostics() {
   ui.toast("正在导出诊断报告", "报告包含运行状态、资源指标和已脱敏的管理器日志，不包含 OAuth 密钥或代理密码。", "info");
 }
 
-onMounted(loadSecrets);
+onMounted(() => {
+  if (!app.webControlClient) void loadSecrets();
+});
 </script>
 
 <template>
@@ -638,7 +640,18 @@ onMounted(loadSecrets);
       </div>
     </AppCard>
 
-    <AppCard v-if="activeSettingsSection === 'passwords'" class="credentials-card">
+    <AppCard v-if="activeSettingsSection === 'passwords' && app.webControlClient" class="credentials-card">
+      <div class="card-heading">
+        <div>
+          <span class="eyebrow">Local-only credentials</span>
+          <h3>OAuth 与 Token 密钥仅限桌面端</h3>
+          <p>局域网页不会读取、生成或修改所有者密码、客户端密钥和 Token 签名密钥。请在电脑上的 MCP DevDesk 桌面窗口中管理这些敏感凭据。</p>
+        </div>
+        <StatusPill tone="warning">本机专用</StatusPill>
+      </div>
+    </AppCard>
+
+    <AppCard v-if="activeSettingsSection === 'passwords' && !app.webControlClient" class="credentials-card">
       <div class="card-heading credentials-heading">
         <div>
           <span class="eyebrow">OAuth credentials</span>

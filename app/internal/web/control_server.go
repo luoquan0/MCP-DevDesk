@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +20,16 @@ import (
 const (
 	webControlSessionCookie = "mcp_devdesk_web_session"
 	webControlSessionTTL    = 12 * time.Hour
+	webControlLoginWindow   = 5 * time.Minute
+	webControlLoginBlock    = 10 * time.Minute
+	webControlLoginMaxFails = 6
 )
+
+type webControlLoginAttempt struct {
+	WindowStarted time.Time
+	Failures      int
+	BlockedUntil  time.Time
+}
 
 type WebControlStatus struct {
 	Enabled            bool     `json:"enabled"`
@@ -42,20 +52,22 @@ type WebControlAuthStatus struct {
 // bind to loopback only or to all IPv4 interfaces for LAN use. The internal
 // 17860 management server remains loopback-only and is never reused directly.
 type ControlServer struct {
-	mu         sync.RWMutex
-	app        *application.App
-	handler    http.Handler
-	server     *http.Server
-	port       int
-	lanEnabled bool
-	lastError  string
-	sessions   map[string]time.Time
+	mu            sync.RWMutex
+	app           *application.App
+	handler       http.Handler
+	server        *http.Server
+	port          int
+	lanEnabled    bool
+	lastError     string
+	sessions      map[string]time.Time
+	loginAttempts map[string]webControlLoginAttempt
 }
 
 func NewControlServer(app *application.App) *ControlServer {
 	return &ControlServer{
-		app:      app,
-		sessions: make(map[string]time.Time),
+		app:           app,
+		sessions:      make(map[string]time.Time),
+		loginAttempts: make(map[string]webControlLoginAttempt),
 	}
 }
 
@@ -74,6 +86,7 @@ func (c *ControlServer) Apply(enabled bool, port int, lanEnabled bool) error {
 		c.lanEnabled = lanEnabled
 		c.lastError = ""
 		c.sessions = make(map[string]time.Time)
+		c.loginAttempts = make(map[string]webControlLoginAttempt)
 		c.mu.Unlock()
 		shutdownHTTPServerAsync(old)
 		return nil
@@ -123,6 +136,7 @@ func (c *ControlServer) Apply(enabled bool, port int, lanEnabled bool) error {
 	c.lanEnabled = lanEnabled
 	c.lastError = ""
 	c.sessions = make(map[string]time.Time)
+	c.loginAttempts = make(map[string]webControlLoginAttempt)
 	c.mu.Unlock()
 
 	c.serve(next, listener)
@@ -214,21 +228,27 @@ func (c *ControlServer) AuthStatus(r *http.Request) WebControlAuthStatus {
 	}
 }
 
-func (c *ControlServer) Login(w http.ResponseWriter, password string) bool {
+func (c *ControlServer) Login(w http.ResponseWriter, r *http.Request, password string) (bool, time.Duration) {
 	if !c.app.Config().WebControlAuthEnabled {
-		return true
+		return true, 0
+	}
+	key := webControlLoginKey(r.RemoteAddr)
+	now := time.Now()
+	if retryAfter := c.loginRetryAfter(key, now); retryAfter > 0 {
+		return false, retryAfter
 	}
 	if !c.app.VerifyWebControlPassword(password) {
-		return false
+		return false, c.recordLoginFailure(key, now)
 	}
+	c.clearLoginFailures(key)
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
-		return false
+		return false, 0
 	}
 	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
-	expires := time.Now().Add(webControlSessionTTL)
+	expires := now.Add(webControlSessionTTL)
 	c.mu.Lock()
-	c.pruneSessionsLocked(time.Now())
+	c.pruneSessionsLocked(now)
 	c.sessions[token] = expires
 	c.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
@@ -240,7 +260,55 @@ func (c *ControlServer) Login(w http.ResponseWriter, password string) bool {
 		Expires:  expires,
 		MaxAge:   int(webControlSessionTTL.Seconds()),
 	})
-	return true
+	return true, 0
+}
+
+func webControlLoginKey(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return strings.TrimSpace(remoteAddr)
+	}
+	return strings.Trim(host, "[]")
+}
+
+func (c *ControlServer) loginRetryAfter(key string, now time.Time) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	attempt, ok := c.loginAttempts[key]
+	if !ok {
+		return 0
+	}
+	if attempt.BlockedUntil.After(now) {
+		return attempt.BlockedUntil.Sub(now)
+	}
+	if now.Sub(attempt.WindowStarted) >= webControlLoginWindow {
+		delete(c.loginAttempts, key)
+	}
+	return 0
+}
+
+func (c *ControlServer) recordLoginFailure(key string, now time.Time) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	attempt := c.loginAttempts[key]
+	if attempt.WindowStarted.IsZero() || now.Sub(attempt.WindowStarted) >= webControlLoginWindow {
+		attempt = webControlLoginAttempt{WindowStarted: now}
+	}
+	attempt.Failures++
+	if attempt.Failures >= webControlLoginMaxFails {
+		attempt.BlockedUntil = now.Add(webControlLoginBlock)
+	}
+	c.loginAttempts[key] = attempt
+	if attempt.BlockedUntil.After(now) {
+		return attempt.BlockedUntil.Sub(now)
+	}
+	return 0
+}
+
+func (c *ControlServer) clearLoginFailures(key string) {
+	c.mu.Lock()
+	delete(c.loginAttempts, key)
+	c.mu.Unlock()
 }
 
 func (c *ControlServer) Logout(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +331,7 @@ func (c *ControlServer) Logout(w http.ResponseWriter, r *http.Request) {
 func (c *ControlServer) InvalidateSessions() {
 	c.mu.Lock()
 	c.sessions = make(map[string]time.Time)
+	c.loginAttempts = make(map[string]webControlLoginAttempt)
 	c.mu.Unlock()
 }
 
@@ -331,6 +400,7 @@ func (c *ControlServer) Shutdown(ctx context.Context) error {
 	server := c.server
 	c.server = nil
 	c.sessions = make(map[string]time.Time)
+	c.loginAttempts = make(map[string]webControlLoginAttempt)
 	c.mu.Unlock()
 	if server == nil {
 		return nil

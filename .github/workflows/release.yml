@@ -34,6 +34,10 @@ jobs:
           Set-Location frontend
           npm ci
 
+      - name: Guard public release secrets
+        shell: pwsh
+        run: .\tools\check-public-release.ps1
+
       - name: Build and test
         shell: pwsh
         env:
