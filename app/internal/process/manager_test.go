@@ -89,6 +89,30 @@ func TestGoCoreLaunchConfiguration(t *testing.T) {
 	}
 }
 
+func TestMCPServerURLUsesConfiguredPublicDomain(t *testing.T) {
+	cfg := model.Config{MCPHost: "127.0.0.1", MCPPort: 8771, Domain: "School.Example.COM"}
+	if got := mcpServerURL(cfg); got != "https://school.example.com" {
+		t.Fatalf("public MCP server URL = %q", got)
+	}
+	cfg.Domain = ""
+	if got := mcpServerURL(cfg); got != "http://127.0.0.1:8771" {
+		t.Fatalf("local MCP server URL = %q", got)
+	}
+}
+
+func TestTunnelStartRequestsMCPRestartWhenPublicURLChanged(t *testing.T) {
+	cfg := model.Config{MCPHost: "127.0.0.1", MCPPort: 8771, Domain: "school.example.com"}
+	if !shouldRestartMCPForTunnel(true, "http://127.0.0.1:8771", cfg) {
+		t.Fatal("running MCP with local issuer must restart before public tunnel starts")
+	}
+	if shouldRestartMCPForTunnel(true, "https://school.example.com/", cfg) {
+		t.Fatal("matching public issuer must not restart MCP")
+	}
+	if shouldRestartMCPForTunnel(false, "", cfg) {
+		t.Fatal("stopped MCP must not be restarted by the URL comparison helper")
+	}
+}
+
 func TestSyncInstructionsUpdatesAndRemovesManagedFile(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "data")
 	workspace := filepath.Join(t.TempDir(), "workspace")
