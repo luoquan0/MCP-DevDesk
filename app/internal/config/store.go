@@ -97,14 +97,18 @@ func (s *Store) defaults() model.Config {
 	}
 }
 
-func defaultGoCoreExecutable(rootDir string) string {
-	candidates := []string{
+func goCoreExecutableCandidates(rootDir string) []string {
+	return []string{
 		filepath.Join(rootDir, "mcp-core.exe"),
 		filepath.Join(rootDir, "dist", "mcp-core.exe"),
 		filepath.Join(rootDir, "dist", "mcp-core-amd64.exe"),
 	}
+}
+
+func defaultGoCoreExecutable(rootDir string) string {
+	candidates := goCoreExecutableCandidates(rootDir)
 	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		if fileExists(candidate) {
 			return candidate
 		}
 	}
@@ -165,9 +169,9 @@ func (s *Store) normalize(cfg *model.Config) {
 	for i := range cfg.AllowedRoots {
 		cfg.AllowedRoots[i] = cleanPath(cfg.AllowedRoots[i])
 	}
-	cfg.CoreExecutable = cleanPath(cfg.CoreExecutable)
-	cfg.GoCoreExecutable = cleanPath(cfg.GoCoreExecutable)
-	cfg.CloudflaredExecutable = cleanPath(cfg.CloudflaredExecutable)
+	cfg.CoreExecutable = s.resolveBundledExecutable(cfg.CoreExecutable, filepath.Join(s.rootDir, "coding-tools-mcp.exe"))
+	cfg.GoCoreExecutable = s.resolveBundledExecutable(cfg.GoCoreExecutable, goCoreExecutableCandidates(s.rootDir)...)
+	cfg.CloudflaredExecutable = s.resolveBundledExecutable(cfg.CloudflaredExecutable, filepath.Join(s.rootDir, "cloudflared.exe"))
 	cfg.Domain = strings.ToLower(strings.TrimSpace(cfg.Domain))
 	cfg.TunnelName = strings.TrimSpace(cfg.TunnelName)
 	cfg.ProxyAddress = strings.TrimSpace(cfg.ProxyAddress)
@@ -178,6 +182,72 @@ func (s *Store) normalize(cfg *model.Config) {
 	if cfg.PermissionMode == "trusted" || cfg.PermissionMode == "dangerous" {
 		cfg.AllowNetwork = true
 	}
+}
+
+func (s *Store) resolveBundledExecutable(value string, candidates ...string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		for _, candidate := range candidates {
+			if candidate != "" {
+				return filepath.Clean(candidate)
+			}
+		}
+		return ""
+	}
+	if !filepath.IsAbs(value) {
+		return filepath.Clean(filepath.Join(s.rootDir, value))
+	}
+
+	cleaned := filepath.Clean(value)
+	if fileExists(cleaned) {
+		return cleaned
+	}
+
+	// Portable builds used to persist absolute paths. If the installation was
+	// moved, a missing old path whose filename belongs to this bundled tool is
+	// automatically rebound to the copy next to the current MCP DevDesk root.
+	knownBundledName := false
+	for _, candidate := range candidates {
+		if candidate != "" && strings.EqualFold(filepath.Base(cleaned), filepath.Base(candidate)) {
+			knownBundledName = true
+			break
+		}
+	}
+	if knownBundledName {
+		for _, candidate := range candidates {
+			if fileExists(candidate) {
+				return filepath.Clean(candidate)
+			}
+		}
+	}
+	return cleaned
+}
+
+func (s *Store) portableExecutablePath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(value)
+	relative, err := filepath.Rel(s.rootDir, cleaned)
+	if err != nil || relative == "" || relative == "." || filepath.IsAbs(relative) {
+		return cleaned
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return cleaned
+	}
+	return filepath.Clean(relative)
+}
+
+func (s *Store) makeExecutablePathsPortable(cfg *model.Config) {
+	cfg.CoreExecutable = s.portableExecutablePath(cfg.CoreExecutable)
+	cfg.GoCoreExecutable = s.portableExecutablePath(cfg.GoCoreExecutable)
+	cfg.CloudflaredExecutable = s.portableExecutablePath(cfg.CloudflaredExecutable)
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func cleanPath(value string) string {
@@ -297,6 +367,7 @@ func (s *Store) Replace(cfg model.Config) (model.Config, error) {
 
 func (s *Store) saveLocked() error {
 	persisted := cloneConfig(s.current)
+	s.makeExecutablePathsPortable(&persisted)
 	if err := encodeProxyPassword(&persisted); err != nil {
 		return fmt.Errorf("encrypt proxy password: %w", err)
 	}
