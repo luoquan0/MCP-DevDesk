@@ -270,13 +270,49 @@ func (a *App) UpdateProjectPath(ctx context.Context, id, path string) (projectst
 	return updated, nil
 }
 
-func (a *App) RemoveProject(id string) error {
-	for _, record := range a.instances.List() {
-		if record.ProjectID == id {
-			return fmt.Errorf("project is used by MCP instance %q; remove or reconfigure that instance first", record.Name)
+func (a *App) RemoveProject(ctx context.Context, id string) error {
+	target, ok := a.projects.Get(id)
+	if !ok {
+		return errors.New("project not found")
+	}
+
+	active := samePath(target.Path, a.config.Get().Workspace)
+	if active {
+		var next *projectstore.Project
+		for _, project := range a.projects.List() {
+			if project.ID == id {
+				continue
+			}
+			candidate := project
+			next = &candidate
+			break
+		}
+		if next == nil {
+			return errors.New("cannot remove the only project; add another project first")
+		}
+		if err := a.SwitchWorkspace(ctx, next.Path); err != nil {
+			return fmt.Errorf("switch to next project before removal: %w", err)
 		}
 	}
-	return a.projects.Remove(id, a.config.Get().Workspace)
+
+	for _, record := range a.instances.List() {
+		if record.ProjectID != id {
+			continue
+		}
+		if err := a.DeleteInstance(record.ID); err != nil {
+			if active {
+				rollbackCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+				_ = a.SwitchWorkspace(rollbackCtx, target.Path)
+				cancel()
+			}
+			return fmt.Errorf("remove linked MCP instance %q: %w", record.Name, err)
+		}
+	}
+
+	if err := a.projects.Remove(id, a.config.Get().Workspace); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (a *App) ProjectDetails(id string) (projecttools.Details, error) {

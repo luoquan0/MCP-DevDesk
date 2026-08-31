@@ -116,8 +116,57 @@ func TestProjectPathChangeKeepsLinkedInstanceAttached(t *testing.T) {
 	if linked.ProjectID != updated.ID || linked.Workspace != filepath.Clean(newPath) {
 		t.Fatalf("linked instance was not migrated with project: %+v", linked)
 	}
-	if err := app.RemoveProject(updated.ID); err == nil {
-		t.Fatal("expected project removal to be blocked while an MCP instance is linked")
+	if err := app.RemoveProject(context.Background(), updated.ID); err != nil {
+		t.Fatalf("remove project with linked instance: %v", err)
+	}
+	if _, err := app.Instance(instance.ID); err == nil {
+		t.Fatal("linked MCP instance remained after project removal")
+	}
+}
+
+func TestRemoveActiveProjectSwitchesToNextProject(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"coding-tools-mcp.exe", "mcp-core.exe", "cloudflared.exe"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("placeholder"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nextPath := filepath.Join(root, "next-project")
+	if err := os.MkdirAll(nextPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Close() })
+	port := freeTCPPort(t)
+	if _, err := app.UpdateConfig(model.ConfigUpdate{MCPPort: &port}); err != nil {
+		t.Fatalf("set isolated MCP port: %v", err)
+	}
+
+	var activeProjectID string
+	for _, project := range app.Projects() {
+		if samePath(project.Path, root) {
+			activeProjectID = project.ID
+			break
+		}
+	}
+	if activeProjectID == "" {
+		t.Fatal("active root project not found")
+	}
+	nextProject, err := app.AddProject("Next", nextPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RemoveProject(context.Background(), activeProjectID); err != nil {
+		t.Fatalf("remove active project: %v", err)
+	}
+	if !samePath(app.Config().Workspace, nextProject.Path) {
+		t.Fatalf("workspace = %q, want %q", app.Config().Workspace, nextProject.Path)
+	}
+	if _, ok := app.projects.Get(activeProjectID); ok {
+		t.Fatal("active project remained after removal")
 	}
 }
 

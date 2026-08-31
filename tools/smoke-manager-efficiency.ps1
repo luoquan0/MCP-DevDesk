@@ -63,7 +63,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.4") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.5") {
                 $ready = $true
                 break
             }
@@ -94,7 +94,7 @@ try {
     if ($login.StatusCode -ne 200 -or -not $loginParsed.authenticated) { throw "Web control login failed" }
     $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/status" -WebSession $webSession
     $overviewParsed = $overview.Content | ConvertFrom-Json
-    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.4") { throw "Authenticated full web UI API failed" }
+    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.5") { throw "Authenticated full web UI API failed" }
 
     $phoneProject = Join-Path $TestRoot "phone-project"
     New-Item -ItemType Directory -Force -Path $phoneProject | Out-Null
@@ -113,6 +113,19 @@ try {
     $projectsAfterFolderDelete = (Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/projects" -WebSession $webSession).Content | ConvertFrom-Json
     $phoneProjectAfterDelete = @($projectsAfterFolderDelete) | Where-Object { $_.id -eq $phoneProjectParsed.id } | Select-Object -First 1
     if ($phoneProjectAfterDelete.folder) { throw "Deleting a virtual project folder did not return its projects to unfiled" }
+
+    $switchListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $switchListener.Start()
+    $switchPort = ([System.Net.IPEndPoint]$switchListener.LocalEndpoint).Port
+    $switchListener.Stop()
+    $switchPortUpdate = Send-Json -Method "PUT" -Uri "http://127.0.0.1:$webPort/api/config" -Body @{ mcpPort = $switchPort } -WebSession $webSession
+    if ($switchPortUpdate.StatusCode -ne 200) { throw "Failed to isolate MCP port before active project removal" }
+    $activatePhoneProject = Send-Json -Method "POST" -Uri "http://127.0.0.1:$webPort/api/projects/$($phoneProjectParsed.id)/activate" -WebSession $webSession
+    if ($activatePhoneProject.StatusCode -ne 200) { throw "Activating secondary project before removal failed" }
+    $removeActiveProject = Send-Json -Method "DELETE" -Uri "http://127.0.0.1:$webPort/api/projects/$($phoneProjectParsed.id)" -WebSession $webSession
+    if ($removeActiveProject.StatusCode -ne 204) { throw "Removing active project failed" }
+    $configAfterActiveRemoval = (Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/config" -WebSession $webSession).Content | ConvertFrom-Json
+    if ($configAfterActiveRemoval.workspace -ne $TestRoot) { throw "Removing active project did not switch to the next remaining project" }
 
     $webPage = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/"
     if ($webPage.StatusCode -ne 200 -or $webPage.Content -notlike "*MCP DevDesk*") {
@@ -171,7 +184,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.12.4" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.12.5" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 

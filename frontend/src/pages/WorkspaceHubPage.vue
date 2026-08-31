@@ -433,9 +433,13 @@ async function runProject(project: Project, action: "start" | "stop" | "restart"
 }
 
 async function removeProject(project: Project) {
+  const active = isActiveProject(project);
+  const linkedInstance = instanceForProject(project);
   const accepted = await ui.ask({
     title: "移除项目",
-    message: `从项目库移除“${project.name}”？不会删除磁盘中的文件。`,
+    message: active
+      ? `移除当前项目“${project.name}”？程序会先自动切换到下一个项目${linkedInstance ? "，并停止和移除它的独立 MCP 配置" : ""}。不会删除磁盘中的文件。`
+      : `从项目库移除“${project.name}”？${linkedInstance ? "对应的独立 MCP 配置会同时停止并移除；" : ""}不会删除磁盘中的文件。`,
     confirmLabel: "移除",
     danger: true,
   });
@@ -606,7 +610,7 @@ onMounted(async () => {
             <AppButton v-else tone="secondary" compact icon="restart" @click="runProject(project, 'restart')">重启</AppButton>
             <AppButton v-if="instanceForProject(project)?.mcp.running" tone="quiet" compact icon="stop" @click="runProject(project, 'stop')">停止</AppButton>
             <AppButton v-if="!isActiveProject(project)" tone="quiet" compact icon="restart" @click="switchProject(project)">切换</AppButton>
-            <AppButton v-if="!isActiveProject(project)" tone="quiet" compact @click="removeProject(project)">移除</AppButton>
+            <AppButton tone="quiet" compact @click="removeProject(project)">移除</AppButton>
           </div>
           <select class="workspace-folder-mobile-select" :value="project.folder || ''" aria-label="项目归类" @change="handleMobileProjectFolderChange(project, $event)">
             <option value="">未归类</option>

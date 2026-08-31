@@ -309,8 +309,8 @@ export const useAppStore = defineStore("app", {
     async removeProject(id: string) {
       const ui = useUiStore();
       await this.runAction(`remove-${id}`, () => api(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }));
-      await this.loadProjects();
-      ui.toast("项目已移除", "项目文件没有被删除。", "success");
+      await Promise.all([this.loadProjects(), this.loadInstances(), this.loadConfig(), this.refreshStatus(true)]);
+      ui.toast("项目已移除", "项目文件没有被删除；若移除的是当前项目，已自动切换到下一个项目。", "success");
     },
     async loadProjectDetails(id: string) {
       this.projectDetails[id] = await api<ProjectDetails>(`/api/projects/${encodeURIComponent(id)}/details`);

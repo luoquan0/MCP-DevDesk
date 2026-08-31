@@ -326,7 +326,9 @@ func (s *Server) handleChangeWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRemoveProject(w http.ResponseWriter, r *http.Request) {
-	if err := s.app.RemoveProject(r.PathValue("id")); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	if err := s.app.RemoveProject(ctx, r.PathValue("id")); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}

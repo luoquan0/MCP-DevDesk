@@ -12,6 +12,14 @@ import { useUiStore, type ThemeMode } from "@/stores/ui";
 
 const app = useAppStore();
 const ui = useUiStore();
+type SettingsSection = "appearance" | "passwords" | "software" | "security";
+const activeSettingsSection = ref<SettingsSection>("appearance");
+const settingsSections: Array<{ id: SettingsSection; label: string; description: string; icon: string }> = [
+  { id: "appearance", label: "外观设计", description: "主题与界面显示", icon: "monitor" },
+  { id: "passwords", label: "密码设置", description: "网页登录与 OAuth 凭据", icon: "key" },
+  { id: "software", label: "软件设置", description: "桌面、网页、日志与全局提示词", icon: "settings" },
+  { id: "security", label: "安全设置", description: "权限、文件范围与联网能力", icon: "shield" },
+];
 const secretsLoading = ref(false);
 const secretsEncrypted = ref(false);
 const restartAfterSave = ref(true);
@@ -205,10 +213,23 @@ onMounted(loadSecrets);
     <PageHeader
       eyebrow="Application preferences"
       title="设置"
-      description="调整界面外观、Windows 集成、权限安全和本地数据位置。"
+      description="按栏目管理界面、密码、软件和安全设置。"
     />
 
-    <AppCard>
+    <nav class="settings-section-tabs" aria-label="设置栏目">
+      <button
+        v-for="section in settingsSections"
+        :key="section.id"
+        type="button"
+        :class="{ 'is-active': activeSettingsSection === section.id }"
+        @click="activeSettingsSection = section.id"
+      >
+        <span class="settings-section-tab-icon"><AppIcon :name="section.icon" :size="18" /></span>
+        <span><strong>{{ section.label }}</strong><small>{{ section.description }}</small></span>
+      </button>
+    </nav>
+
+    <AppCard v-if="activeSettingsSection === 'appearance'">
       <div class="card-heading">
         <div><span class="eyebrow">Appearance</span><h3>外观</h3></div>
       </div>
@@ -228,7 +249,7 @@ onMounted(loadSecrets);
       </div>
     </AppCard>
 
-    <section class="settings-grid equal">
+    <section v-if="activeSettingsSection === 'software'" class="settings-grid equal">
       <AppCard>
         <div class="card-heading">
           <div><span class="eyebrow">Windows integration</span><h3>桌面集成</h3></div>
@@ -275,9 +296,9 @@ onMounted(loadSecrets);
       </AppCard>
     </section>
 
-    <SecuritySettingsSection />
+    <SecuritySettingsSection v-if="activeSettingsSection === 'security'" />
 
-    <AppCard class="web-control-settings-card">
+    <AppCard v-if="activeSettingsSection === 'software'" class="web-control-settings-card">
       <div class="card-heading">
         <div>
           <span class="eyebrow">Browser control</span>
@@ -312,11 +333,7 @@ onMounted(loadSecrets);
             <input v-model.number="webControlPort" type="number" min="1024" max="65535" step="1" inputmode="numeric" />
             <small>不能与内部管理端口 {{ app.config?.adminPort || 17860 }} 或 MCP 端口 {{ app.config?.mcpPort || '--' }} 重复。</small>
           </label>
-          <label class="field">
-            <span>网页登录密码</span>
-            <input v-model="webControlPassword" type="password" autocomplete="new-password" :placeholder="app.webControl?.passwordConfigured ? '已设置；留空保持原密码' : '至少 8 个字符'" />
-            <small>{{ app.webControl?.passwordConfigured ? '已有密码；填写新值会立即替换并注销旧网页会话。' : '启用密码认证前必须先设置密码。' }}</small>
-          </label>
+          <div class="settings-cross-link-note"><AppIcon name="key" :size="15" /><span>网页登录密码已归入“密码设置”栏目。</span></div>
         </div>
       </div>
       <div v-if="webControlLanEnabled && !webControlAuthEnabled" class="inline-alert warning">
@@ -339,7 +356,7 @@ onMounted(loadSecrets);
       </div>
     </AppCard>
 
-    <AppCard class="global-prompt-card">
+    <AppCard v-if="activeSettingsSection === 'software'" class="global-prompt-card">
       <div class="card-heading">
         <div>
           <span class="eyebrow">Global AI instructions</span>
@@ -376,7 +393,27 @@ onMounted(loadSecrets);
       </div>
     </AppCard>
 
-    <AppCard class="credentials-card">
+    <AppCard v-if="activeSettingsSection === 'passwords'" class="web-password-card">
+      <div class="card-heading">
+        <div>
+          <span class="eyebrow">Web login password</span>
+          <h3>网页登录密码</h3>
+          <p>用于手机或其他局域网设备登录 MCP DevDesk 网页端。</p>
+        </div>
+        <StatusPill :tone="app.webControl?.passwordConfigured ? 'success' : 'neutral'">{{ app.webControl?.passwordConfigured ? '已设置' : '未设置' }}</StatusPill>
+      </div>
+      <label class="field settings-password-field">
+        <span>新密码</span>
+        <input v-model="webControlPassword" type="password" autocomplete="new-password" :placeholder="app.webControl?.passwordConfigured ? '留空保持原密码' : '至少 8 个字符'" />
+        <small>{{ app.webControl?.passwordConfigured ? '填写新值会替换当前密码，并注销已有网页会话。' : '开启网页密码认证前需要先设置至少 8 位密码。' }}</small>
+      </label>
+      <div class="form-footer">
+        <small>网页控制的启用、端口和局域网开关仍在“软件设置”栏目。</small>
+        <AppButton tone="primary" :loading="app.actionPending === 'save-web-control'" :disabled="!webControlPassword.trim() && !app.webControl?.passwordConfigured" @click="saveWebControl">保存网页登录密码</AppButton>
+      </div>
+    </AppCard>
+
+    <AppCard v-if="activeSettingsSection === 'passwords'" class="credentials-card">
       <div class="card-heading credentials-heading">
         <div>
           <span class="eyebrow">OAuth credentials</span>
@@ -448,7 +485,7 @@ onMounted(loadSecrets);
       </form>
     </AppCard>
 
-    <AppCard class="about-card">
+    <AppCard v-if="activeSettingsSection === 'software'" class="about-card">
       <div class="about-mark">
         <img class="brand-logo-image" src="/brand-logo.png" alt="MCP DevDesk" />
       </div>
