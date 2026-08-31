@@ -4215,7 +4215,7 @@ kbd {
 .workspace-project-header,
 .workspace-project-row {
   display: grid;
-  grid-template-columns: minmax(190px, .8fr) minmax(260px, 1.3fr) 138px minmax(360px, auto);
+  grid-template-columns: minmax(190px, .9fr) 138px minmax(430px, 1.6fr);
   align-items: center;
 }
 
@@ -4267,16 +4267,6 @@ kbd {
 .workspace-project-name strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-project-name small { overflow: hidden; color: var(--text-tertiary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 
-.workspace-project-path {
-  min-width: 0;
-  overflow: hidden;
-  padding: 0 12px;
-  color: var(--text-secondary);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .workspace-runtime-state { padding: 0 10px; }
 
 .workspace-project-actions {
@@ -4284,6 +4274,7 @@ kbd {
   min-width: 0;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 5px;
   padding: 7px 10px;
 }
@@ -4299,18 +4290,6 @@ kbd {
   border-radius: 8px;
   color: var(--text-secondary);
   background: var(--surface-solid);
-  font-size: 9px;
-}
-
-.workspace-project-detail {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  padding: 9px 12px 11px 50px;
-  border-top: 1px dashed var(--hairline);
-  color: var(--text-secondary);
-  background: var(--surface-muted);
   font-size: 9px;
 }
 
@@ -4386,10 +4365,8 @@ kbd {
     gap: 0;
     padding: 4px 0;
   }
-  .workspace-project-path { grid-column: 1; padding-left: 50px; }
   .workspace-runtime-state { grid-column: 2; grid-row: 1; }
   .workspace-project-actions { grid-column: 1 / -1; justify-content: flex-start; padding-left: 50px; flex-wrap: wrap; }
-  .workspace-project-detail { padding-left: 50px; }
   .workspace-runtime-facts { grid-template-columns: 1fr; }
 }
 
@@ -4407,12 +4384,10 @@ kbd {
   .workspace-folder-divider { grid-column: 1 / -1; }
   .workspace-project-pane { overflow: visible; }
   .workspace-project-row { display: block; padding: 8px 0; }
-  .workspace-project-path { display: block; padding: 3px 12px 7px 50px; white-space: normal; overflow-wrap: anywhere; }
   .workspace-runtime-state { padding: 4px 12px 4px 50px; }
   .workspace-project-actions { padding: 6px 12px 4px 50px; }
   .workspace-project-actions > * { flex: 1 1 auto; }
   .workspace-folder-select { min-width: 120px; }
-  .workspace-project-detail { padding: 9px 12px 10px 50px; }
   .workspace-service-settings { grid-template-columns: 1fr; }
   .workspace-runtime-backdrop { place-items: end center; padding: 0; }
   .workspace-runtime-dialog { width: 100%; max-height: 90dvh; border-radius: 20px 20px 0 0; }

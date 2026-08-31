@@ -23,7 +23,7 @@ const addProjectName = ref("");
 const addProjectPath = ref("");
 const addProjectFolder = ref("");
 const remotePickerOpen = ref(false);
-const remotePickerTarget = ref<"add" | "project-path">("add");
+const remotePickerTarget = ref<"add" | "project-path" | "runtime">("add");
 const remotePickerInitialPath = ref("");
 const remotePickerTitle = ref("");
 const runtimeProject = ref<Project | null>(null);
@@ -160,14 +160,6 @@ async function switchProject(project: Project) {
   }
 }
 
-async function inspectProject(project: Project) {
-  try {
-    await app.inspectProject(project.id);
-  } catch (error) {
-    ui.toast("读取项目详情失败", error instanceof Error ? error.message : String(error), "danger");
-  }
-}
-
 function openPathEdit(project: Project) {
   pathProject.value = project;
   pathDraft.value = project.path;
@@ -234,16 +226,43 @@ function openRuntimeConfig(project: Project) {
   runtimeForm.loggingEnabled = instance?.loggingEnabled ?? true;
 }
 
+async function browseRuntimeWorkspace() {
+  const project = runtimeProject.value;
+  if (!project) return;
+  if (app.webControlClient) {
+    remotePickerTarget.value = "runtime";
+    remotePickerInitialPath.value = runtimeForm.workspace || project.path;
+    remotePickerTitle.value = `选择“${project.name}”的项目目录`;
+    remotePickerOpen.value = true;
+    return;
+  }
+  try {
+    const result = await app.pickFolder(runtimeForm.workspace || project.path, `选择“${project.name}”的项目目录`);
+    if (!result.canceled && result.path) runtimeForm.workspace = result.path;
+  } catch (error) {
+    ui.toast("无法打开文件夹选择器", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
 async function saveRuntimeConfig() {
   const project = runtimeProject.value;
   if (!project) return;
-  const existing = instanceForProject(project);
+  let targetProject = project;
+  let existing = instanceForProject(project);
   try {
+    const desiredWorkspace = runtimeForm.workspace.trim();
+    if (!desiredWorkspace) throw new Error("请选择项目目录。");
+    if (normalizePath(desiredWorkspace) !== normalizePath(project.path)) {
+      targetProject = await app.updateProjectPath(project.id, desiredWorkspace);
+      runtimeProject.value = targetProject;
+      runtimeForm.workspace = targetProject.path;
+      if (existing) existing = app.instances.find((instance) => instance.id === existing?.id) || existing;
+    }
     if (existing) {
       await app.updateInstance(existing.id, {
         name: runtimeForm.name.trim(),
-        projectId: project.id,
-        workspace: project.path,
+        projectId: targetProject.id,
+        workspace: targetProject.path,
         mcpPort: runtimeForm.mcpPort,
         coreMode: runtimeForm.coreMode,
         permissionMode: runtimeForm.permissionMode,
@@ -256,8 +275,8 @@ async function saveRuntimeConfig() {
     } else {
       await app.createInstance({
         name: runtimeForm.name.trim(),
-        projectId: project.id,
-        workspace: project.path,
+        projectId: targetProject.id,
+        workspace: targetProject.path,
         mcpPort: runtimeForm.mcpPort > 0 ? runtimeForm.mcpPort : undefined,
         coreMode: runtimeForm.coreMode,
         permissionMode: runtimeForm.permissionMode,
@@ -305,7 +324,8 @@ async function removeProject(project: Project) {
 
 function applyRemoteFolder(path: string) {
   if (remotePickerTarget.value === "add") addProjectPath.value = path;
-  else pathDraft.value = path;
+  else if (remotePickerTarget.value === "project-path") pathDraft.value = path;
+  else runtimeForm.workspace = path;
   remotePickerOpen.value = false;
 }
 
@@ -399,6 +419,22 @@ onMounted(async () => {
       <div class="form-footer"><small>只保存项目引用，不移动磁盘文件。</small><AppButton tone="primary" :disabled="!addProjectPath.trim()" :loading="app.actionPending === 'add-project'" @click="addProject">添加项目</AppButton></div>
     </AppCard>
 
+    <AppCard class="workspace-runtime-summary">
+      <div class="card-heading">
+        <div><span class="eyebrow">Runtime</span><h3>运行控制</h3><p>主工作区与各项目独立实例可以同时运行。</p></div>
+        <StatusPill :tone="app.status?.mcp.running ? 'success' : 'neutral'">{{ app.status?.mcp.running ? '主服务运行中' : '主服务已停止' }}</StatusPill>
+      </div>
+      <div class="workspace-runtime-facts">
+        <div><span>当前工作目录</span><code>{{ app.config?.workspace || '--' }}</code></div>
+        <div><span>本地 MCP</span><code>{{ app.status?.localMcpUrl || '--' }}</code></div>
+        <div><span>独立项目实例</span><strong>{{ runningProjectInstances }} 个运行中</strong></div>
+      </div>
+      <div class="workspace-runtime-actions">
+        <AppButton v-if="!app.status?.mcp.running" tone="primary" icon="play" @click="runPrimary('start')">启动主服务</AppButton>
+        <template v-else><AppButton tone="secondary" icon="restart" @click="runPrimary('restart')">重启主服务</AppButton><AppButton tone="danger" icon="stop" @click="runPrimary('stop')">停止主服务</AppButton></template>
+      </div>
+    </AppCard>
+
     <section class="workspace-explorer">
       <aside class="workspace-folder-pane">
         <div class="workspace-search"><AppIcon name="search" :size="16" /><input v-model="search" placeholder="搜索项目或文件夹" /></div>
@@ -412,19 +448,17 @@ onMounted(async () => {
 
       <div class="workspace-project-pane">
         <div class="workspace-project-header">
-          <span>名称</span><span>项目路径</span><span>MCP</span><span>操作</span>
+          <span>名称</span><span>MCP</span><span>操作</span>
         </div>
         <article v-for="project in filteredProjects" :key="project.id" class="workspace-project-row" :class="{ 'is-active': isActiveProject(project) }">
           <div class="workspace-project-name">
             <span class="workspace-row-icon"><AppIcon name="folder" :size="17" /></span>
             <div><strong>{{ project.name }}</strong><small>{{ project.folder || '未归类' }}</small></div>
           </div>
-          <code class="workspace-project-path">{{ project.path }}</code>
           <div class="workspace-runtime-state"><StatusPill :tone="runtimeStatus(project).tone">{{ runtimeStatus(project).label }}</StatusPill></div>
           <div class="workspace-project-actions">
             <AppButton tone="quiet" compact icon="folder" @click="openPathEdit(project)">修改路径</AppButton>
             <AppButton tone="quiet" compact icon="settings" @click="openProjectPrompt(project)">AGENTS.md</AppButton>
-            <AppButton tone="quiet" compact icon="info" @click="inspectProject(project)">详情</AppButton>
             <AppButton tone="secondary" compact icon="settings" @click="openRuntimeConfig(project)">配置</AppButton>
             <AppButton v-if="!instanceForProject(project)?.mcp.running" tone="primary" compact icon="play" @click="runProject(project, 'start')">启动</AppButton>
             <AppButton v-else tone="secondary" compact icon="restart" @click="runProject(project, 'restart')">重启</AppButton>
@@ -435,34 +469,12 @@ onMounted(async () => {
             </select>
             <AppButton v-if="!isActiveProject(project)" tone="quiet" compact @click="removeProject(project)">移除</AppButton>
           </div>
-          <div v-if="app.projectDetails[project.id]" class="workspace-project-detail">
-            <span>Git：{{ app.projectDetails[project.id].git ? app.projectDetails[project.id].branch || 'Detached' : '非 Git 仓库' }}</span>
-            <span>变更：{{ app.projectDetails[project.id].changedFiles }}</span>
-            <span>AGENTS.md：{{ app.projectDetails[project.id].hasAgents ? '已配置' : '未配置' }}</span>
-            <span>Skills：{{ app.projectDetails[project.id].skills.length }}</span>
-          </div>
         </article>
         <div v-if="!filteredProjects.length" class="workspace-project-empty">没有匹配的项目。</div>
       </div>
     </section>
 
     <section class="workspace-service-section">
-      <AppCard class="workspace-runtime-summary">
-        <div class="card-heading">
-          <div><span class="eyebrow">Runtime</span><h3>运行控制</h3><p>主工作区与各项目独立实例可以同时运行。</p></div>
-          <StatusPill :tone="app.status?.mcp.running ? 'success' : 'neutral'">{{ app.status?.mcp.running ? '主服务运行中' : '主服务已停止' }}</StatusPill>
-        </div>
-        <div class="workspace-runtime-facts">
-          <div><span>当前工作目录</span><code>{{ app.config?.workspace || '--' }}</code></div>
-          <div><span>本地 MCP</span><code>{{ app.status?.localMcpUrl || '--' }}</code></div>
-          <div><span>独立项目实例</span><strong>{{ runningProjectInstances }} 个运行中</strong></div>
-        </div>
-        <div class="workspace-runtime-actions">
-          <AppButton v-if="!app.status?.mcp.running" tone="primary" icon="play" @click="runPrimary('start')">启动主服务</AppButton>
-          <template v-else><AppButton tone="secondary" icon="restart" @click="runPrimary('restart')">重启主服务</AppButton><AppButton tone="danger" icon="stop" @click="runPrimary('stop')">停止主服务</AppButton></template>
-        </div>
-      </AppCard>
-
       <form class="workspace-service-settings" @submit.prevent="saveServiceSettings">
         <AppCard>
           <div class="card-heading"><div><span class="eyebrow">Basic settings</span><h3>基础设置</h3></div></div>
@@ -508,7 +520,7 @@ onMounted(async () => {
         <div class="field-grid">
           <label class="field"><span>实例名称</span><input v-model="runtimeForm.name" /></label>
           <label class="field"><span>MCP 端口</span><input v-model.number="runtimeForm.mcpPort" type="number" min="0" max="65535" /><small>新配置填写 0 自动分配。</small></label>
-          <label class="field span-2"><span>项目目录</span><input v-model="runtimeForm.workspace" readonly /></label>
+          <label class="field span-2"><span>项目目录</span><div class="path-picker-row"><input v-model="runtimeForm.workspace" spellcheck="false" /><AppButton tone="secondary" icon="folder" @click="browseRuntimeWorkspace">浏览</AppButton></div><small>这里修改目录会同步更新项目本身的路径引用。</small></label>
           <label class="field"><span>核心</span><select v-model="runtimeForm.coreMode"><option value="go">Go 核心</option><option value="legacy">Python 兼容核心</option></select></label>
           <label class="field"><span>权限</span><select v-model="runtimeForm.permissionMode"><option value="safe">安全</option><option value="trusted">受信任</option><option value="dangerous">高权限</option></select></label>
           <label class="field span-2"><span>工具配置</span><select v-model="runtimeForm.toolProfile"><option value="full">完整工具</option><option value="read-only">只读</option><option value="compat-readonly-all">兼容只读</option></select></label>

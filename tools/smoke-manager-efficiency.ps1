@@ -63,7 +63,7 @@ try {
         try {
             $health = Send-Json -Method "GET" -Uri "$BaseUrl/api/health"
             $parsed = $health.Content | ConvertFrom-Json
-            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.0") {
+            if ($health.StatusCode -eq 200 -and $parsed.ok -and $parsed.version -eq "0.12.1") {
                 $ready = $true
                 break
             }
@@ -94,7 +94,7 @@ try {
     if ($login.StatusCode -ne 200 -or -not $loginParsed.authenticated) { throw "Web control login failed" }
     $overview = Send-Json -Method "GET" -Uri "http://127.0.0.1:$webPort/api/status" -WebSession $webSession
     $overviewParsed = $overview.Content | ConvertFrom-Json
-    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.0") { throw "Authenticated full web UI API failed" }
+    if ($overview.StatusCode -ne 200 -or $overviewParsed.version -ne "0.12.1") { throw "Authenticated full web UI API failed" }
 
     $phoneProject = Join-Path $TestRoot "phone-project"
     New-Item -ItemType Directory -Force -Path $phoneProject | Out-Null
@@ -166,7 +166,7 @@ try {
         throw "Diagnostics export headers are invalid"
     }
     $report = $diagnostics.Content | ConvertFrom-Json
-    if ($report.diagnostics.version -ne "0.12.0" -or -not $report.instances) {
+    if ($report.diagnostics.version -ne "0.12.1" -or -not $report.instances) {
         throw "Diagnostics export content is invalid"
     }
 
