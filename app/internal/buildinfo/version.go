@@ -1,4 +1,4 @@
 package buildinfo
 
 // Version is shared by the desktop manager and the Go MCP core.
-const Version = "0.12.1"
+const Version = "0.12.2"

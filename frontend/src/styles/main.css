@@ -2025,7 +2025,7 @@ kbd {
 
 .remote-folder-backdrop {
   position: fixed;
-  z-index: 80;
+  z-index: 140;
   inset: 0;
   display: grid;
   place-items: center;
@@ -2036,7 +2036,7 @@ kbd {
 
 .remote-folder-dialog {
   width: min(720px, 100%);
-  max-height: min(760px, calc(100vh - 40px));
+  max-height: min(760px, calc(100dvh - 40px));
   display: grid;
   grid-template-rows: auto auto auto minmax(180px, 1fr) auto;
   gap: 14px;
@@ -4132,7 +4132,8 @@ kbd {
 
 .workspace-explorer {
   display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
+  grid-template-columns: 200px minmax(0, 1fr);
+  min-width: 0;
   min-height: 520px;
   overflow: hidden;
   border: 1px solid var(--hairline);
@@ -4192,6 +4193,12 @@ kbd {
 
 .workspace-folder-pane > button:hover { background: var(--surface-hover); color: var(--text); }
 .workspace-folder-pane > button.is-active { color: var(--accent); background: var(--accent-soft); font-weight: 620; }
+.workspace-folder-pane > button.is-drop-target {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 82%, var(--surface-solid));
+  outline: 1px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: -1px;
+}
 .workspace-folder-pane > button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-folder-pane > button em { color: var(--text-tertiary); font-size: 9px; font-style: normal; }
 
@@ -4209,14 +4216,16 @@ kbd {
 
 .workspace-project-pane {
   min-width: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .workspace-project-header,
 .workspace-project-row {
   display: grid;
-  grid-template-columns: minmax(190px, .9fr) 138px minmax(430px, 1.6fr);
+  grid-template-columns: minmax(150px, .72fr) 104px minmax(0, 1.8fr);
   align-items: center;
+  min-width: 0;
 }
 
 .workspace-project-header {
@@ -4251,7 +4260,11 @@ kbd {
   align-items: center;
   gap: 8px;
   padding: 7px 12px;
+  cursor: grab;
+  user-select: none;
 }
+
+.workspace-project-name:active { cursor: grabbing; }
 
 .workspace-row-icon {
   display: grid;
@@ -4267,7 +4280,8 @@ kbd {
 .workspace-project-name strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-project-name small { overflow: hidden; color: var(--text-tertiary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 
-.workspace-runtime-state { padding: 0 10px; }
+.workspace-runtime-state { min-width: 0; padding: 0 6px; }
+.workspace-runtime-state .status-pill { max-width: 100%; white-space: nowrap; }
 
 .workspace-project-actions {
   display: flex;
@@ -4275,23 +4289,19 @@ kbd {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 5px;
-  padding: 7px 10px;
+  gap: 4px;
+  padding: 6px 8px;
 }
 
 .workspace-project-actions .app-button { white-space: nowrap; }
-
-.workspace-folder-select {
-  width: 96px;
-  min-width: 76px;
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  color: var(--text-secondary);
-  background: var(--surface-solid);
-  font-size: 9px;
+.workspace-project-actions .app-button.is-compact {
+  min-height: 30px;
+  padding-inline: 8px;
+  gap: 5px;
+  font-size: 10px;
 }
+
+.workspace-folder-mobile-select { display: none; }
 
 .workspace-project-empty {
   display: grid;
@@ -4341,7 +4351,7 @@ kbd {
 
 .workspace-runtime-backdrop {
   position: fixed;
-  z-index: 85;
+  z-index: 100;
   inset: 0;
   display: grid;
   place-items: center;
@@ -4352,13 +4362,32 @@ kbd {
 }
 
 .workspace-runtime-dialog {
+  box-sizing: border-box;
   width: min(760px, 100%);
+  max-width: calc(100vw - 40px);
   max-height: calc(100dvh - 40px);
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
+.workspace-small-dialog { width: min(680px, 100%); }
+
+.workspace-runtime-dialog .field-grid,
+.workspace-runtime-dialog .field,
+.workspace-runtime-dialog .path-picker-row,
+.workspace-runtime-dialog .path-picker-row input {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workspace-runtime-dialog .path-picker-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.workspace-runtime-dialog .path-picker-row input { width: 100%; }
+
 @media (max-width: 980px) {
-  .workspace-explorer { grid-template-columns: 190px minmax(0, 1fr); }
+  .workspace-explorer { grid-template-columns: 180px minmax(0, 1fr); }
   .workspace-project-header { display: none; }
   .workspace-project-row {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -4387,10 +4416,24 @@ kbd {
   .workspace-runtime-state { padding: 4px 12px 4px 50px; }
   .workspace-project-actions { padding: 6px 12px 4px 50px; }
   .workspace-project-actions > * { flex: 1 1 auto; }
-  .workspace-folder-select { min-width: 120px; }
+  .workspace-folder-mobile-select {
+    display: block;
+    width: calc(100% - 62px);
+    min-width: 0;
+    height: 36px;
+    margin: 4px 12px 2px 50px;
+    padding: 0 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 9px;
+    color: var(--text-secondary);
+    background: var(--surface-solid);
+    font-size: 10px;
+  }
   .workspace-service-settings { grid-template-columns: 1fr; }
   .workspace-runtime-backdrop { place-items: end center; padding: 0; }
-  .workspace-runtime-dialog { width: 100%; max-height: 90dvh; border-radius: 20px 20px 0 0; }
+  .workspace-runtime-dialog { width: 100%; max-width: 100%; max-height: 90dvh; border-radius: 20px 20px 0 0; }
+  .workspace-runtime-dialog .path-picker-row { grid-template-columns: 1fr; }
+  .workspace-runtime-dialog .path-picker-row .app-button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

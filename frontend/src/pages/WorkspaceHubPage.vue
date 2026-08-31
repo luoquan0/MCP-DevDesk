@@ -31,6 +31,8 @@ const pathProject = ref<Project | null>(null);
 const pathDraft = ref("");
 const promptProject = ref<Project | null>(null);
 const promptDraft = ref("");
+const draggedProject = ref<Project | null>(null);
+const dragTargetFolder = ref("");
 
 const runtimeForm = reactive({
   name: "",
@@ -147,9 +149,39 @@ async function moveProject(project: Project, folder: string) {
   }
 }
 
-function handleProjectFolderChange(project: Project, event: Event) {
+function handleMobileProjectFolderChange(project: Project, event: Event) {
   const target = event.target as HTMLSelectElement | null;
   if (target) void moveProject(project, target.value);
+}
+
+function beginProjectDrag(project: Project, event: DragEvent) {
+  draggedProject.value = project;
+  dragTargetFolder.value = "";
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", project.id);
+  }
+}
+
+function endProjectDrag() {
+  draggedProject.value = null;
+  dragTargetFolder.value = "";
+}
+
+function allowFolderDrop(folder: string, event: DragEvent) {
+  if (!draggedProject.value) return;
+  event.preventDefault();
+  dragTargetFolder.value = folder;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+}
+
+async function dropProjectIntoFolder(folder: string, event: DragEvent) {
+  event.preventDefault();
+  const project = draggedProject.value;
+  dragTargetFolder.value = "";
+  draggedProject.value = null;
+  if (!project || (project.folder || "") === folder) return;
+  await moveProject(project, folder);
 }
 
 async function switchProject(project: Project) {
@@ -439,9 +471,25 @@ onMounted(async () => {
       <aside class="workspace-folder-pane">
         <div class="workspace-search"><AppIcon name="search" :size="16" /><input v-model="search" placeholder="搜索项目或文件夹" /></div>
         <button type="button" :class="{ 'is-active': selectedFolder === '__all__' }" @click="selectedFolder = '__all__'"><AppIcon name="projects" :size="16" /><span>全部项目</span><em>{{ app.projects.length }}</em></button>
-        <button type="button" :class="{ 'is-active': selectedFolder === '__unfiled__' }" @click="selectedFolder = '__unfiled__'"><AppIcon name="folder" :size="16" /><span>未归类</span><em>{{ app.projects.filter((item) => !item.folder).length }}</em></button>
+        <button
+          type="button"
+          :class="{ 'is-active': selectedFolder === '__unfiled__', 'is-drop-target': dragTargetFolder === '__unfiled__' }"
+          @click="selectedFolder = '__unfiled__'"
+          @dragover="allowFolderDrop('__unfiled__', $event)"
+          @dragleave="dragTargetFolder = ''"
+          @drop="dropProjectIntoFolder('', $event)"
+        ><AppIcon name="folder" :size="16" /><span>未归类</span><em>{{ app.projects.filter((item) => !item.folder).length }}</em></button>
         <div class="workspace-folder-divider"><span>文件夹</span></div>
-        <button v-for="folder in visibleFolders" :key="folder" type="button" :class="{ 'is-active': selectedFolder === folder }" @click="selectedFolder = folder">
+        <button
+          v-for="folder in visibleFolders"
+          :key="folder"
+          type="button"
+          :class="{ 'is-active': selectedFolder === folder, 'is-drop-target': dragTargetFolder === folder }"
+          @click="selectedFolder = folder"
+          @dragover="allowFolderDrop(folder, $event)"
+          @dragleave="dragTargetFolder = ''"
+          @drop="dropProjectIntoFolder(folder, $event)"
+        >
           <AppIcon name="folder" :size="16" /><span>{{ folder }}</span><em>{{ app.projects.filter((item) => item.folder === folder).length }}</em>
         </button>
       </aside>
@@ -451,24 +499,25 @@ onMounted(async () => {
           <span>名称</span><span>MCP</span><span>操作</span>
         </div>
         <article v-for="project in filteredProjects" :key="project.id" class="workspace-project-row" :class="{ 'is-active': isActiveProject(project) }">
-          <div class="workspace-project-name">
+          <div class="workspace-project-name" draggable="true" title="拖到左侧文件夹可归类" @dragstart="beginProjectDrag(project, $event)" @dragend="endProjectDrag">
             <span class="workspace-row-icon"><AppIcon name="folder" :size="17" /></span>
             <div><strong>{{ project.name }}</strong><small>{{ project.folder || '未归类' }}</small></div>
           </div>
           <div class="workspace-runtime-state"><StatusPill :tone="runtimeStatus(project).tone">{{ runtimeStatus(project).label }}</StatusPill></div>
           <div class="workspace-project-actions">
-            <AppButton tone="quiet" compact icon="folder" @click="openPathEdit(project)">修改路径</AppButton>
+            <AppButton tone="quiet" compact icon="folder" @click="openPathEdit(project)">路径</AppButton>
             <AppButton tone="quiet" compact icon="settings" @click="openProjectPrompt(project)">AGENTS.md</AppButton>
             <AppButton tone="secondary" compact icon="settings" @click="openRuntimeConfig(project)">配置</AppButton>
             <AppButton v-if="!instanceForProject(project)?.mcp.running" tone="primary" compact icon="play" @click="runProject(project, 'start')">启动</AppButton>
             <AppButton v-else tone="secondary" compact icon="restart" @click="runProject(project, 'restart')">重启</AppButton>
             <AppButton v-if="instanceForProject(project)?.mcp.running" tone="quiet" compact icon="stop" @click="runProject(project, 'stop')">停止</AppButton>
             <AppButton v-if="!isActiveProject(project)" tone="quiet" compact icon="restart" @click="switchProject(project)">切换</AppButton>
-            <select class="workspace-folder-select" :value="project.folder || ''" @change="handleProjectFolderChange(project, $event)">
-              <option value="">未归类</option><option v-for="folder in app.projectFolders" :key="folder" :value="folder">{{ folder }}</option>
-            </select>
             <AppButton v-if="!isActiveProject(project)" tone="quiet" compact @click="removeProject(project)">移除</AppButton>
           </div>
+          <select class="workspace-folder-mobile-select" :value="project.folder || ''" aria-label="项目归类" @change="handleMobileProjectFolderChange(project, $event)">
+            <option value="">未归类</option>
+            <option v-for="folder in app.projectFolders" :key="folder" :value="folder">{{ folder }}</option>
+          </select>
         </article>
         <div v-if="!filteredProjects.length" class="workspace-project-empty">没有匹配的项目。</div>
       </div>
