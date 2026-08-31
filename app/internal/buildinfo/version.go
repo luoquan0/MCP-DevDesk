@@ -3,6 +3,6 @@ package buildinfo
 // Version is shared by the desktop manager and the Go MCP core.
 const Version = "0.12.8"
 
-// Repository is injected for GitHub release builds with -ldflags -X.
-// Local source builds leave it empty and can configure the update source in Settings.
-var Repository = ""
+// Repository is the default GitHub Releases update source. GitHub Actions may
+// still override it at link time for forks or alternate release repositories.
+var Repository = "luoquan0/MCP-DevDesk"
