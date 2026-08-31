@@ -3,7 +3,6 @@ import { reactive, watch } from "vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
-import PageHeader from "@/components/ui/PageHeader.vue";
 import StatusPill from "@/components/ui/StatusPill.vue";
 import ToggleSwitch from "@/components/ui/ToggleSwitch.vue";
 import { useAppStore } from "@/stores/app";
@@ -33,7 +32,7 @@ const modes = [
   { id: "dangerous" as const, title: "危险模式", subtitle: "完全控制", icon: "warning", tone: "danger", description: "关闭应用层命令门控。远程会话可以执行当前 Windows 用户能够执行的操作。" },
 ];
 
-async function save() {
+async function savePermissions() {
   if (form.permissionMode === "dangerous" || form.fileScope === "computer") {
     const accepted = await ui.ask({
       title: "应用高风险权限",
@@ -58,16 +57,15 @@ async function save() {
 </script>
 
 <template>
-  <div class="page-stack security-page">
-    <PageHeader
-      eyebrow="Permission policy"
-      title="权限与安全"
-      description="控制远程 MCP 会话能够运行的命令、访问的路径和网络能力。"
-    >
-      <template #actions>
-        <AppButton tone="primary" icon="shield" :loading="app.actionPending === 'save-config'" @click="save">保存权限</AppButton>
-      </template>
-    </PageHeader>
+  <section class="settings-security-section">
+    <div class="settings-section-heading">
+      <div>
+        <span class="eyebrow">Permission & security</span>
+        <h2>权限与安全</h2>
+        <p>控制远程 MCP 会话能够运行的命令、访问的路径和网络能力。</p>
+      </div>
+      <AppButton tone="primary" icon="shield" :loading="app.actionPending === 'save-config'" @click="savePermissions">保存权限</AppButton>
+    </div>
 
     <div v-if="form.permissionMode === 'dangerous' || form.fileScope === 'computer'" class="inline-alert is-danger">
       <AppIcon name="warning" :size="20" />
@@ -96,22 +94,11 @@ async function save() {
 
     <section class="security-grid">
       <AppCard>
-        <div class="card-heading">
-          <div><span class="eyebrow">Filesystem</span><h3>文件访问范围</h3></div>
-        </div>
+        <div class="card-heading"><div><span class="eyebrow">Filesystem</span><h3>文件访问范围</h3></div></div>
         <div class="segmented-control vertical">
-          <label :class="{ 'is-selected': form.fileScope === 'workspace' }">
-            <input v-model="form.fileScope" type="radio" value="workspace" />
-            <span><strong>当前工作区</strong><small>仅允许当前项目目录。</small></span>
-          </label>
-          <label :class="{ 'is-selected': form.fileScope === 'roots' }">
-            <input v-model="form.fileScope" type="radio" value="roots" />
-            <span><strong>授权根目录</strong><small>为多项目阶段预留的多个允许目录。</small></span>
-          </label>
-          <label :class="{ 'is-selected': form.fileScope === 'computer' }">
-            <input v-model="form.fileScope" type="radio" value="computer" />
-            <span><strong>整台电脑</strong><small>Shell 可访问当前 Windows 用户拥有权限的位置。</small></span>
-          </label>
+          <label :class="{ 'is-selected': form.fileScope === 'workspace' }"><input v-model="form.fileScope" type="radio" value="workspace" /><span><strong>当前工作区</strong><small>仅允许当前项目目录。</small></span></label>
+          <label :class="{ 'is-selected': form.fileScope === 'roots' }"><input v-model="form.fileScope" type="radio" value="roots" /><span><strong>授权根目录</strong><small>允许多个指定目录。</small></span></label>
+          <label :class="{ 'is-selected': form.fileScope === 'computer' }"><input v-model="form.fileScope" type="radio" value="computer" /><span><strong>整台电脑</strong><small>Shell 可访问当前 Windows 用户拥有权限的位置。</small></span></label>
         </div>
         <label class="field security-roots-field">
           <span>授权根目录</span>
@@ -121,15 +108,8 @@ async function save() {
       </AppCard>
 
       <AppCard>
-        <div class="card-heading">
-          <div><span class="eyebrow">Network</span><h3>联网能力</h3></div>
-        </div>
-        <ToggleSwitch
-          v-model="form.allowNetwork"
-          :disabled="form.permissionMode !== 'safe'"
-          label="允许联网命令"
-          :description="form.permissionMode === 'safe' ? '允许 npm、pip、Git、curl 等工具访问网络。' : '信任模式和危险模式默认允许联网。'"
-        />
+        <div class="card-heading"><div><span class="eyebrow">Network</span><h3>联网能力</h3></div></div>
+        <ToggleSwitch v-model="form.allowNetwork" :disabled="form.permissionMode !== 'safe'" label="允许联网命令" :description="form.permissionMode === 'safe' ? '允许 npm、pip、Git、curl 等工具访问网络。' : '信任模式和危险模式默认允许联网。'" />
         <div class="capability-list">
           <div><AppIcon name="network" :size="16" /><span>包管理器与远程 Git</span><StatusPill :tone="form.permissionMode !== 'safe' || form.allowNetwork ? 'success' : 'neutral'">{{ form.permissionMode !== 'safe' || form.allowNetwork ? '允许' : '禁止' }}</StatusPill></div>
           <div><AppIcon name="terminal" :size="16" /><span>内联脚本与 Shell 展开</span><StatusPill :tone="form.permissionMode === 'safe' ? 'neutral' : 'success'">{{ form.permissionMode === 'safe' ? '限制' : '允许' }}</StatusPill></div>
@@ -137,5 +117,5 @@ async function save() {
         </div>
       </AppCard>
     </section>
-  </div>
+  </section>
 </template>

@@ -10,7 +10,7 @@ export const router = createRouter({
     { path: "/services", redirect: "/workspace" },
     { path: "/cloudflare", name: "cloudflare", component: () => import("@/pages/CloudflarePage.vue") },
     { path: "/logs", name: "logs", component: () => import("@/pages/LogsPage.vue") },
-    { path: "/security", name: "security", component: () => import("@/pages/SecurityPage.vue") },
+    { path: "/security", redirect: "/settings" },
     { path: "/settings", name: "settings", component: () => import("@/pages/SettingsPage.vue") },
     { path: "/control/login", name: "control-login", component: () => import("@/pages/ControlLoginPage.vue"), meta: { standalone: true, control: true } },
     { path: "/control", redirect: "/" },

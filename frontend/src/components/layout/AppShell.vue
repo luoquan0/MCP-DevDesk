@@ -16,7 +16,6 @@ const navigation = [
   { to: "/workspace", label: "项目与运行", icon: "projects" },
   { to: "/cloudflare", label: "Cloudflare", icon: "cloud" },
   { to: "/logs", label: "日志与诊断", icon: "logs" },
-  { to: "/security", label: "权限与安全", icon: "security" },
   { to: "/settings", label: "设置", icon: "settings" },
 ];
 
@@ -25,6 +24,15 @@ const connectionLabel = computed(() => app.connectionError ? "管理器离线" :
 const lastUpdated = computed(() => app.lastUpdatedAt?.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) ?? "--:--:--");
 const runningInstances = computed(() => app.instances.filter((instance) => instance.mcp.running).length);
 const runningTunnels = computed(() => app.instances.filter((instance) => instance.tunnel.running).length);
+const primaryServiceRunning = computed(() => Boolean(app.status?.mcp.running || app.status?.tunnel.running));
+
+async function runPrimaryService(action: "start" | "stop" | "restart") {
+  try {
+    await app.serviceAction(action);
+  } catch (error) {
+    ui.toast("主服务操作失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
 
 function handleShortcut(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -101,6 +109,32 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleShortcut));
           <kbd>Ctrl K</kbd>
         </button>
         <div class="topbar-actions">
+          <div class="topbar-service-controls">
+            <AppButton
+              v-if="!primaryServiceRunning"
+              tone="primary"
+              icon="play"
+              compact
+              :loading="app.actionPending === 'start'"
+              @click="runPrimaryService('start')"
+            >启动服务</AppButton>
+            <template v-else>
+              <AppButton
+                tone="secondary"
+                icon="restart"
+                compact
+                :loading="app.actionPending === 'restart'"
+                @click="runPrimaryService('restart')"
+              >重启</AppButton>
+              <AppButton
+                tone="quiet"
+                icon="stop"
+                compact
+                :loading="app.actionPending === 'stop'"
+                @click="runPrimaryService('stop')"
+              >停止</AppButton>
+            </template>
+          </div>
           <span class="topbar-endpoint">
             <AppIcon name="globe" :size="15" />
             {{ app.status?.remoteMcpUrl?.replace(/^https?:\/\//, '') || '本地模式' }}

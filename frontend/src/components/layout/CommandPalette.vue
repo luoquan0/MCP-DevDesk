@@ -16,6 +16,7 @@ const commands = computed(() => [
   { label: "打开项目与运行", hint: "页面", icon: "projects", run: () => router.push("/workspace") },
   { label: "打开 Cloudflare", hint: "页面", icon: "cloud", run: () => router.push("/cloudflare") },
   { label: "查看日志与诊断", hint: "页面", icon: "logs", run: () => router.push("/logs") },
+  { label: "打开设置与权限", hint: "页面", icon: "settings", run: () => router.push("/settings") },
   { label: "启动全部服务", hint: "动作", icon: "play", run: () => app.serviceAction("start") },
   { label: "重新启动服务", hint: "动作", icon: "restart", run: () => app.serviceAction("restart") },
   { label: "同步 Tunnel 端口", hint: "动作", icon: "network", run: () => app.syncTunnelPort() },

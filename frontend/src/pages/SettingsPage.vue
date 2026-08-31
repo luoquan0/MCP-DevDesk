@@ -6,6 +6,7 @@ import AppIcon from "@/components/ui/AppIcon.vue";
 import PageHeader from "@/components/ui/PageHeader.vue";
 import StatusPill from "@/components/ui/StatusPill.vue";
 import ToggleSwitch from "@/components/ui/ToggleSwitch.vue";
+import SecuritySettingsSection from "@/components/settings/SecuritySettingsSection.vue";
 import { useAppStore } from "@/stores/app";
 import { useUiStore, type ThemeMode } from "@/stores/ui";
 
@@ -204,7 +205,7 @@ onMounted(loadSecrets);
     <PageHeader
       eyebrow="Application preferences"
       title="设置"
-      description="调整界面外观、Windows 集成和本地数据位置。"
+      description="调整界面外观、Windows 集成、权限安全和本地数据位置。"
     />
 
     <AppCard>
@@ -273,6 +274,8 @@ onMounted(loadSecrets);
         </div>
       </AppCard>
     </section>
+
+    <SecuritySettingsSection />
 
     <AppCard class="web-control-settings-card">
       <div class="card-heading">

@@ -118,7 +118,7 @@ async function copy(value?: string) {
         <AppIcon name="chevron-right" :size="17" class="metric-chevron" />
       </AppCard>
 
-      <AppCard class="metric-card" interactive @click="router.push('/security')">
+      <AppCard class="metric-card" interactive @click="router.push('/settings')">
         <div class="metric-icon is-orange"><AppIcon name="shield" /></div>
         <div class="metric-copy">
           <span>权限策略</span>
