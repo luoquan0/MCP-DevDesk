@@ -9,6 +9,10 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 if (-not $ExePath) { $ExePath = Join-Path $Root "dist\mcp-core-amd64.exe" }
 if (-not $Workspace) { $Workspace = $Root }
 if (-not (Test-Path -LiteralPath $ExePath)) { throw "Go core executable not found: $ExePath" }
+$VersionFile = Join-Path $Root "app\internal\buildinfo\version.go"
+$VersionLine = Select-String -LiteralPath $VersionFile -Pattern 'const Version = "([^"]+)"'
+if (-not $VersionLine) { throw "Could not resolve expected version from $VersionFile" }
+$ExpectedVersion = $VersionLine.Matches[0].Groups[1].Value
 
 Add-Type -AssemblyName System.Net.Http
 
@@ -82,13 +86,17 @@ function Start-Core {
             $health = Send-Http -Method "GET" -Uri "$BaseUrl/healthz"
             if ($health.Status -eq 200) {
                 $parsed = $health.Body | ConvertFrom-Json
-                if ($parsed.ok -and $parsed.version -eq "0.12.8") { return }
+                if ($parsed.ok -and $parsed.version -eq $ExpectedVersion) { return }
             }
         } catch {}
         if ($started.HasExited) { break }
     }
+    if (-not $started.HasExited) {
+        Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue
+        $started.WaitForExit(5000) | Out-Null
+    }
     $stderr = $started.StandardError.ReadToEnd()
-    throw "Go MCP core did not become healthy. stderr: $stderr"
+    throw "Go MCP core did not become healthy at expected version $ExpectedVersion. stderr: $stderr"
 }
 
 function Stop-Core {
@@ -328,7 +336,7 @@ try {
     if ($batchCall.Status -ne 200) { throw "read_files call failed: $($batchCall.Status) $($batchCall.Body)" }
     $batchResult = ($batchCall.Body | ConvertFrom-Json).result
     if ($batchResult.isError -or $batchResult.structuredContent.succeeded -ne 2 -or
-        $batchResult.structuredContent.files[1].content -notlike '*0.12.8*') {
+        $batchResult.structuredContent.files[1].content -notlike "*$ExpectedVersion*") {
         throw "read_files returned an unexpected result: $($batchCall.Body)"
     }
 
