@@ -30,9 +30,10 @@ const webControlAuthEnabled = ref(false);
 const webControlPassword = ref("");
 const globalPromptEnabled = ref(false);
 const globalPromptDraft = ref("");
-const updateRepository = ref("");
 const updateChannel = ref<"stable" | "prerelease">("stable");
 const updateCheckOnStartup = ref(true);
+const updateProxyHost = ref("");
+const updateProxyPort = ref("");
 const updateChecking = ref(false);
 const appearanceFileInput = ref<HTMLInputElement | null>(null);
 const appearanceSaving = ref(false);
@@ -87,9 +88,10 @@ watch(() => app.appearance, (settings) => {
 
 watch(() => app.updateSettings, (settings) => {
   if (!settings) return;
-  updateRepository.value = settings.repository;
   updateChannel.value = settings.channel;
   updateCheckOnStartup.value = settings.checkOnStartup;
+  updateProxyHost.value = settings.proxyHost || "";
+  updateProxyPort.value = settings.proxyPort > 0 ? String(settings.proxyPort) : "";
 }, { immediate: true, deep: true });
 
 watch([() => app.webControl, () => app.config?.webControlPort], ([status, configuredPort]) => {
@@ -190,12 +192,34 @@ async function removeAppearanceBackground() {
   }
 }
 
+function updateProxyPayload() {
+  const proxyHost = updateProxyHost.value.trim();
+  const proxyPortText = updateProxyPort.value.trim();
+  if (!proxyHost && !proxyPortText) return { proxyHost: "", proxyPort: 0 };
+  if (!proxyHost) {
+    ui.toast("代理地址不完整", "请填写代理 IP；不使用代理时 IP 和端口都留空。", "danger");
+    return null;
+  }
+  const proxyPort = Number(proxyPortText);
+  if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) {
+    ui.toast("代理端口无效", "请输入 1 - 65535 之间的代理端口。", "danger");
+    return null;
+  }
+  if (proxyHost.includes("://") || /[\/\@\s]/.test(proxyHost)) {
+    ui.toast("代理 IP 格式无效", "这里只填写 IP 或主机名，不要填写 http://、路径、账号或密码。", "danger");
+    return null;
+  }
+  return { proxyHost, proxyPort };
+}
+
 async function saveUpdatePreferences() {
+  const proxy = updateProxyPayload();
+  if (!proxy) return;
   try {
     await app.saveUpdateSettings({
-      repository: updateRepository.value.trim(),
       channel: updateChannel.value,
       checkOnStartup: updateCheckOnStartup.value,
+      ...proxy,
     });
   } catch (error) {
     ui.toast("保存更新设置失败", error instanceof Error ? error.message : String(error), "danger");
@@ -203,18 +227,16 @@ async function saveUpdatePreferences() {
 }
 
 async function checkForUpdate() {
-  if (!updateRepository.value.trim()) {
-    ui.toast("请先配置 GitHub 仓库", "格式例如：your-name/mcp-devdesk", "info");
-    return;
-  }
+  const proxy = updateProxyPayload();
+  if (!proxy) return;
   updateChecking.value = true;
   try {
     const current = app.updateSettings;
-    if (!current || current.repository !== updateRepository.value.trim() || current.channel !== updateChannel.value || current.checkOnStartup !== updateCheckOnStartup.value) {
+    if (!current || current.channel !== updateChannel.value || current.checkOnStartup !== updateCheckOnStartup.value || current.proxyHost !== proxy.proxyHost || current.proxyPort !== proxy.proxyPort) {
       await app.saveUpdateSettings({
-        repository: updateRepository.value.trim(),
         channel: updateChannel.value,
         checkOnStartup: updateCheckOnStartup.value,
+        ...proxy,
       });
     }
     await app.checkForUpdate(false);
@@ -728,18 +750,23 @@ onMounted(() => {
         <div>
           <span class="eyebrow">GitHub Releases</span>
           <h3>软件更新</h3>
-          <p>从公开 GitHub Releases 检查并安装新版本。下载包必须同时提供 SHA256 文件，否则 DevDesk 会拒绝更新。</p>
+          <p>从内置 GitHub Releases 更新源检查并安装新版本。可选填写 HTTP 代理 IP 和端口；下载包仍必须通过 SHA256 校验。</p>
         </div>
-        <StatusPill :tone="app.updateRelease?.updateAvailable ? 'info' : updateRepository.trim() ? 'neutral' : 'warning'">
-          {{ app.updateRelease?.updateAvailable ? `可更新 ${app.updateRelease.latestVersion}` : updateRepository.trim() ? `当前 ${app.status?.version || '--'}` : '未配置仓库' }}
+        <StatusPill :tone="app.updateRelease?.updateAvailable ? 'info' : 'neutral'">
+          {{ app.updateRelease?.updateAvailable ? `可更新 ${app.updateRelease.latestVersion}` : `当前 ${app.status?.version || '--'}` }}
         </StatusPill>
       </div>
 
       <div class="software-update-grid">
-        <label class="field span-2">
-          <span>GitHub 仓库</span>
-          <input v-model.trim="updateRepository" type="text" spellcheck="false" placeholder="owner/repository，例如 your-name/mcp-devdesk" />
-          <small>GitHub Actions 正式构建会自动带入当前仓库；本地源码构建没有 remote 时可在这里手动填写。仅支持公开 GitHub Releases，不需要 Token。</small>
+        <label class="field">
+          <span>更新代理 IP</span>
+          <input v-model.trim="updateProxyHost" type="text" spellcheck="false" placeholder="例如 127.0.0.1" />
+          <small>可选 HTTP 代理。只填写 IP 或主机名；留空表示直连 GitHub。</small>
+        </label>
+        <label class="field">
+          <span>代理端口</span>
+          <input v-model="updateProxyPort" type="number" min="1" max="65535" inputmode="numeric" placeholder="例如 7890" />
+          <small>与代理 IP 配套使用，例如 Clash 常用 7890。</small>
         </label>
         <label class="field">
           <span>更新通道</span>
@@ -749,7 +776,7 @@ onMounted(() => {
           </select>
         </label>
         <div class="software-update-toggle">
-          <ToggleSwitch v-model="updateCheckOnStartup" label="启动时检查更新" description="软件启动后只检查一次 GitHub，不会后台频繁请求。" />
+          <ToggleSwitch v-model="updateCheckOnStartup" label="启动时检查更新" description="检查版本、SHA256 和下载更新包都会使用上面的代理。" />
         </div>
       </div>
 
@@ -768,7 +795,7 @@ onMounted(() => {
         <small>立即更新会先下载 Release ZIP 并校验 SHA256，再启动独立 updater。程序文件会替换，data/devdesk、项目目录和 AGENTS.md 不会被更新包覆盖；失败时自动回滚旧二进制。</small>
         <div class="form-footer-actions">
           <AppButton tone="quiet" :loading="app.actionPending === 'save-update-settings'" @click="saveUpdatePreferences">保存更新设置</AppButton>
-          <AppButton tone="secondary" icon="refresh" :loading="updateChecking" :disabled="!updateRepository.trim()" @click="checkForUpdate">检查更新</AppButton>
+          <AppButton tone="secondary" icon="refresh" :loading="updateChecking" @click="checkForUpdate">检查更新</AppButton>
           <AppButton v-if="app.updateRelease?.updateAvailable" tone="primary" icon="play" :loading="app.actionPending === 'install-update'" @click="installAvailableUpdate">立即更新到 {{ app.updateRelease.latestVersion }}</AppButton>
         </div>
       </div>

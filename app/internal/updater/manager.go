@@ -46,6 +46,8 @@ type Settings struct {
 	Repository     string            `json:"repository"`
 	Channel        string            `json:"channel"`
 	CheckOnStartup bool              `json:"checkOnStartup"`
+	ProxyHost      string            `json:"proxyHost"`
+	ProxyPort      int               `json:"proxyPort"`
 	Progress       *DownloadProgress `json:"progress,omitempty"`
 }
 
@@ -53,6 +55,8 @@ type SettingsUpdate struct {
 	Repository     *string `json:"repository"`
 	Channel        *string `json:"channel"`
 	CheckOnStartup *bool   `json:"checkOnStartup"`
+	ProxyHost      *string `json:"proxyHost"`
+	ProxyPort      *int    `json:"proxyPort"`
 }
 
 type Release struct {
@@ -229,6 +233,12 @@ func (m *Manager) UpdateSettings(update SettingsUpdate) (Settings, error) {
 	if update.CheckOnStartup != nil {
 		next.CheckOnStartup = *update.CheckOnStartup
 	}
+	if update.ProxyHost != nil {
+		next.ProxyHost = strings.TrimSpace(*update.ProxyHost)
+	}
+	if update.ProxyPort != nil {
+		next.ProxyPort = *update.ProxyPort
+	}
 	if err := validateSettings(next); err != nil {
 		return Settings{}, err
 	}
@@ -391,7 +401,7 @@ func (m *Manager) fetchReleases(ctx context.Context, settings Settings) ([]githu
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "MCP-DevDesk/"+m.version)
-	resp, err := m.client.Do(req)
+	resp, err := m.updateHTTPClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("check GitHub release: %w", err)
 	}
@@ -461,7 +471,7 @@ func (m *Manager) downloadChecksumAttempt(ctx context.Context, downloadURL, asse
 		return "", err
 	}
 	req.Header.Set("User-Agent", "MCP-DevDesk/"+m.version)
-	resp, err := m.client.Do(req)
+	resp, err := m.updateHTTPClient().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download checksum: %w", err)
 	}
@@ -542,7 +552,7 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, downloadURL, target s
 	if offset > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
-	resp, err := m.client.Do(req)
+	resp, err := m.updateHTTPClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("download update package: %w", err)
 	}
@@ -682,6 +692,7 @@ func waitForRetry(ctx context.Context, attempt int) error {
 func (m *Manager) normalizeLocked() {
 	m.current.Repository = strings.TrimSpace(m.current.Repository)
 	m.current.Channel = strings.ToLower(strings.TrimSpace(m.current.Channel))
+	m.current.ProxyHost = strings.TrimSpace(m.current.ProxyHost)
 	m.current.Progress = nil
 	if m.current.Channel == "" {
 		m.current.Channel = "stable"
@@ -697,7 +708,7 @@ func validateSettings(settings Settings) error {
 	default:
 		return errors.New("update channel must be stable or prerelease")
 	}
-	return nil
+	return validateProxySettings(settings)
 }
 
 func validateGitHubDownloadURL(raw string) error {

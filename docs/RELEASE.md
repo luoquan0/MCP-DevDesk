@@ -237,3 +237,7 @@ GitHub Actions 完成后检查：
 - 更新器替换正在运行的程序
 
 一旦重新使用本地开发目录，应先同步 GitHub `main`，不要基于长期落后的本地副本直接发布。
+
+## 软件更新代理
+
+MCP DevDesk 的更新源由正式构建内置，界面不再显示或编辑 GitHub 仓库。软件设置可选填写 HTTP 代理 IP/主机名与端口；填写后 Release 检查、SHA256 下载和 Portable ZIP 下载统一走该代理，留空则直连。代理设置只影响软件更新，不影响 MCP Core、Cloudflare Tunnel 或项目联网。

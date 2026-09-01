@@ -127,6 +127,8 @@ export interface UpdateSettings {
   repository: string;
   channel: "stable" | "prerelease";
   checkOnStartup: boolean;
+  proxyHost: string;
+  proxyPort: number;
 }
 
 export interface UpdateRelease {

@@ -121,12 +121,15 @@ export const useAppStore = defineStore("app", {
       if (!this.updateSettings || JSON.stringify(this.updateSettings) !== JSON.stringify(next)) this.updateSettings = next;
       return this.updateSettings;
     },
-    async saveUpdateSettings(settings: UpdateSettings) {
+    async saveUpdateSettings(settings: Pick<UpdateSettings, "channel" | "checkOnStartup" | "proxyHost" | "proxyPort">) {
       this.updateSettings = await this.runAction("save-update-settings", () => api<UpdateSettings>("/api/update/settings", {
         method: "PUT",
         body: settings as unknown as BodyInit,
       }));
-      useUiStore().toast("更新设置已保存", settings.repository ? `GitHub：${settings.repository}` : "尚未配置 GitHub 仓库。", "success");
+      const proxyLabel = settings.proxyHost && settings.proxyPort
+        ? `更新代理：http://${settings.proxyHost}:${settings.proxyPort}`
+        : "更新代理：直连";
+      useUiStore().toast("更新设置已保存", proxyLabel, "success");
       return this.updateSettings;
     },
     async checkForUpdate(silent = false) {
