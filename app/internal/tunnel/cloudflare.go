@@ -92,7 +92,7 @@ func (c *Client) Configure(ctx context.Context, cfg model.Config, request model.
 	// error was treated as success, which could leave the hostname pointing at
 	// an older, offline Tunnel and surface Cloudflare Error 1033 even while the
 	// newly configured Tunnel itself was healthy.
-	routeOutput, routeErr := c.ensureDNSRoute(commandCtx, cfg, tunnelID, request.Domain)
+	_, routeErr := c.ensureDNSRoute(commandCtx, cfg, tunnelID, request.Domain)
 	if routeErr != nil {
 		return model.ConfigureTunnelResult{}, routeErr
 	}
