@@ -33,7 +33,7 @@ const globalPromptDraft = ref("");
 const updateChannel = ref<"stable" | "prerelease">("stable");
 const updateCheckOnStartup = ref(true);
 const updateProxyHost = ref("");
-const updateProxyPort = ref("");
+const updateProxyPort = ref<string | number>("");
 const updateChecking = ref(false);
 const updateSettingsSaving = ref(false);
 const updateProxyTesting = ref(false);
@@ -98,7 +98,7 @@ watch(() => app.updateSettings, (settings) => {
   updateCheckOnStartup.value = settings.checkOnStartup;
   updateProxyHost.value = settings.proxyHost || "";
   updateProxyPort.value = settings.proxyPort > 0 ? String(settings.proxyPort) : "";
-  lastSavedProxySignature = `${updateProxyHost.value.trim()}:${updateProxyPort.value.trim()}`;
+  lastSavedProxySignature = `${updateProxyHost.value.trim()}:${normalizeUpdateProxyPortText(updateProxyPort.value)}`;
 }, { immediate: true, deep: true });
 
 watch([() => app.webControl, () => app.config?.webControlPort], ([status, configuredPort]) => {
@@ -199,9 +199,13 @@ async function removeAppearanceBackground() {
   }
 }
 
+function normalizeUpdateProxyPortText(value: string | number | null | undefined) {
+  return value == null ? "" : String(value).trim();
+}
+
 function updateProxyPayload(showErrors = true) {
   const proxyHost = updateProxyHost.value.trim();
-  const proxyPortText = updateProxyPort.value.trim();
+  const proxyPortText = normalizeUpdateProxyPortText(updateProxyPort.value);
   if (!proxyHost && !proxyPortText) return { proxyHost: "", proxyPort: 0 };
   if (!proxyHost) {
     if (showErrors) ui.toast("代理地址不完整", "请填写代理 IP；不使用代理时 IP 和端口都留空。", "danger");
