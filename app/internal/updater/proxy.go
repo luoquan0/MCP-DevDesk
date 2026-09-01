@@ -81,6 +81,10 @@ func (m *Manager) updateHTTPClient() *http.Client {
 	}}
 }
 
+// HTTPClient returns the same direct/HTTP/SOCKS5-aware client used by MCP DevDesk updates.
+// Auxiliary component updaters use it so the user's update proxy applies consistently.
+func (m *Manager) HTTPClient() *http.Client { return m.updateHTTPClient() }
+
 func directUpdateTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil

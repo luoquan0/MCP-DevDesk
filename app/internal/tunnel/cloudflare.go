@@ -23,6 +23,13 @@ type Client struct{}
 
 func NewClient() *Client { return &Client{} }
 
+func (c *Client) Version(ctx context.Context, cfg model.Config) (string, error) {
+	if _, err := os.Stat(cfg.CloudflaredExecutable); err != nil {
+		return "", err
+	}
+	return c.run(ctx, cfg, "--version")
+}
+
 func (c *Client) Status(cfg model.Config, login model.ProcessStatus) model.CloudflareStatus {
 	_, executableErr := os.Stat(cfg.CloudflaredExecutable)
 	certificate := processmanager.CertificatePath()
@@ -207,6 +214,36 @@ func (c *Client) RepairDNS(ctx context.Context, cfg model.Config) (model.Configu
 		AuthorizeURL:    "https://" + domain + "/oauth/authorize",
 		Message:         "DNS 路由已修复，并通过公网解析验证",
 	}, nil
+}
+
+func deleteTunnelArguments(tunnelID string) []string {
+	return []string{"tunnel", "delete", "--force", tunnelID}
+}
+
+// Delete removes the named Tunnel from Cloudflare. --force asks cloudflared to
+// cascade the Tunnel dependencies, including DNS routes attached to it.
+func (c *Client) Delete(ctx context.Context, cfg model.Config) (string, error) {
+	tunnelID := strings.ToLower(strings.TrimSpace(cfg.TunnelID))
+	if !uuidPattern.MatchString(tunnelID) {
+		return "", errors.New("当前配置没有有效的 Tunnel UUID")
+	}
+	if _, err := os.Stat(cfg.CloudflaredExecutable); err != nil {
+		return "", fmt.Errorf("cloudflared.exe 不存在: %w", err)
+	}
+	if _, err := os.Stat(processmanager.CertificatePath()); err != nil {
+		return "", errors.New("Cloudflare 尚未授权，无法清理远端 Tunnel")
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	output, err := c.run(commandCtx, cfg, deleteTunnelArguments(tunnelID)... )
+	if err != nil {
+		lower := strings.ToLower(output)
+		if !strings.Contains(lower, "not found") && !strings.Contains(lower, "does not exist") && !strings.Contains(lower, "no tunnel") {
+			return output, fmt.Errorf("删除 Cloudflare Tunnel 失败: %w; %s", err, compactOutput(output))
+		}
+	}
+	_ = os.Remove(processmanager.CredentialsPath(tunnelID))
+	return output, nil
 }
 
 func waitForDNS(ctx context.Context, domain string, timeout time.Duration) (bool, error) {

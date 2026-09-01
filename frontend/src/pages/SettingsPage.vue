@@ -7,6 +7,7 @@ import PageHeader from "@/components/ui/PageHeader.vue";
 import StatusPill from "@/components/ui/StatusPill.vue";
 import ToggleSwitch from "@/components/ui/ToggleSwitch.vue";
 import SecuritySettingsSection from "@/components/settings/SecuritySettingsSection.vue";
+import CloudflaredUpdateCard from "@/components/settings/CloudflaredUpdateCard.vue";
 import { useAppStore } from "@/stores/app";
 import { useUiStore, type ThemeMode } from "@/stores/ui";
 
@@ -901,6 +902,8 @@ onMounted(() => {
         </div>
       </div>
     </AppCard>
+
+    <CloudflaredUpdateCard v-if="activeSettingsSection === 'software'" />
 
     <AppCard v-if="activeSettingsSection === 'software'" class="about-card">
       <div class="about-mark">
