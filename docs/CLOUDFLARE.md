@@ -36,6 +36,8 @@ Windows 默认检查：
 
 登录进程退出且文件存在时判定授权成功。
 
+用户点击“重新授权”时，Windows 版会在启动 `cloudflared tunnel login` 前清理旧的 `cert.pem`。`cloudflared` 默认不会覆盖已经存在的 Origin Certificate；如果旧证书仍在，二次登录会立即退出，表现为点击“重新授权”后浏览器没有打开。清理后授权流程会重新生成 `cert.pem`。如果用户中途取消授权，界面会回到未授权状态，可以再次点击授权；已有 Tunnel JSON 凭据、Tunnel UUID 和 DNS 配置不会因此被删除。
+
 ## 4. 自动配置后的最终展示
 
 ```text
