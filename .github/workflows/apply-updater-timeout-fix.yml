@@ -66,15 +66,6 @@ export async function api<T>(path: string, options: ApiRequestInit = {}): Promis
           if old not in text:
               raise SystemExit('api function header not found')
           text = text.replace(old, new, 1)
-          old = '''  try {
-    const response = await fetch(path, request);
-'''
-          new = '''  try {
-    const response = await fetch(path, request);
-'''
-          if old not in text:
-              raise SystemExit('api try block not found')
-          # Keep the existing try body and insert a catch immediately before finally.
           old_finally = '''    return payload as T;
   } finally {
     if (stopProgressPolling) await stopProgressPolling();
@@ -116,7 +107,6 @@ export async function api<T>(path: string, options: ApiRequestInit = {}): Promis
   updateSettingsSaving.value = true;
 '''
           )
-
           replace(
               'frontend/src/pages/SettingsPage.vue',
               '''async function testUpdateProxy() {
@@ -140,7 +130,6 @@ export async function api<T>(path: string, options: ApiRequestInit = {}): Promis
               '''  updateProxyTesting.value = true;
 '''
           )
-
           replace(
               'frontend/src/pages/SettingsPage.vue',
               '''async function checkForUpdate() {
@@ -161,7 +150,6 @@ export async function api<T>(path: string, options: ApiRequestInit = {}): Promis
 
           replace('app/internal/web/server.go', 'context.WithTimeout(r.Context(), 13*time.Second)', 'context.WithTimeout(r.Context(), 11*time.Second)')
           replace('app/internal/web/server.go', 'context.WithTimeout(r.Context(), 20*time.Second)', 'context.WithTimeout(r.Context(), 16*time.Second)')
-
           replace('app/internal/updater/proxy.go', 'proxyConnectTimeout        = 3 * time.Second', 'proxyConnectTimeout        = 2 * time.Second')
           replace('app/internal/updater/proxy.go', 'proxyProbeTimeout          = 1200 * time.Millisecond', 'proxyProbeTimeout          = 900 * time.Millisecond')
           replace('app/internal/updater/proxy.go', 'proxyResponseHeaderTimeout = 6 * time.Second', 'proxyResponseHeaderTimeout = 4 * time.Second')
@@ -231,8 +219,7 @@ export async function api<T>(path: string, options: ApiRequestInit = {}): Promis
               text = text.replace('"net"\n\t"testing"', '"net"\n\t"strconv"\n\t"testing"', 1)
               p.write_text(text, encoding='utf-8')
 
-          workflow = Path('.github/workflows/apply-updater-timeout-fix.yml')
-          workflow.unlink()
+          Path('.github/workflows/apply-updater-timeout-fix.yml').unlink()
           PY
       - name: Commit patch
         shell: bash
@@ -242,3 +229,5 @@ export async function api<T>(path: string, options: ApiRequestInit = {}): Promis
           git add -A
           git commit -m "fix: enforce updater request deadlines"
           git push
+
+# second push intentionally triggers this already-registered workflow
