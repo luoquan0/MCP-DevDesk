@@ -1,0 +1,57 @@
+name: Apply multi-instance OAuth fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/.apply_multi_instance_oauth_fix"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Apply source patch
+        shell: pwsh
+        run: python tools/apply_multi_instance_oauth_fix.py
+
+      - name: Format Go
+        shell: pwsh
+        run: |
+          gofmt -w app/internal/mcpcore/oauth.go app/internal/mcpcore/oauth_test.go
+
+      - name: Run Go tests
+        shell: pwsh
+        working-directory: app
+        run: go test -mod=vendor ./...
+
+      - name: Validate diff
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- app/internal/mcpcore/oauth.go app/internal/mcpcore/oauth_test.go docs/SECURITY.md README.md
+
+      - name: Commit validated fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/internal/mcpcore/oauth.go app/internal/mcpcore/oauth_test.go docs/SECURITY.md README.md
+          git diff --cached --check
+          git commit -m "fix: isolate multi-instance OAuth pairing"
+          git push
