@@ -4,13 +4,14 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "tools/.apply_updater_proxy_runtime_fix"
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.event.head_commit.message == 'chore: apply updater proxy runtime fix'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
