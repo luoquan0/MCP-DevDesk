@@ -220,8 +220,8 @@ func deleteTunnelArguments(tunnelID string) []string {
 	return []string{"tunnel", "delete", "--force", tunnelID}
 }
 
-// Delete removes the named Tunnel from Cloudflare. --force asks cloudflared to
-// cascade the Tunnel dependencies, including DNS routes attached to it.
+// Delete removes the named Tunnel from Cloudflare. DNS hostnames are managed
+// separately by Cloudflare, so callers must explicitly remove the DNS record first.
 func (c *Client) Delete(ctx context.Context, cfg model.Config) (string, error) {
 	tunnelID := strings.ToLower(strings.TrimSpace(cfg.TunnelID))
 	if !uuidPattern.MatchString(tunnelID) {
@@ -238,7 +238,7 @@ func (c *Client) Delete(ctx context.Context, cfg model.Config) (string, error) {
 	output, err := c.run(commandCtx, cfg, deleteTunnelArguments(tunnelID)... )
 	if err != nil {
 		lower := strings.ToLower(output)
-		if !strings.Contains(lower, "not found") && !strings.Contains(lower, "does not exist") && !strings.Contains(lower, "no tunnel") {
+		if !strings.Contains(lower, "not found") && !strings.Contains(lower, "does not exist") && !strings.Contains(lower, "no tunnel") && !strings.Contains(lower, "already been deleted") && !strings.Contains(lower, "already deleted") {
 			return output, fmt.Errorf("删除 Cloudflare Tunnel 失败: %w; %s", err, compactOutput(output))
 		}
 	}

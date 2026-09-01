@@ -21,6 +21,13 @@ func TestCompareCloudflaredVersions(t *testing.T) {
     }
 }
 
+func TestNormalizeCloudflareCNAMEContent(t *testing.T) {
+    got := normalizeCloudflareCNAMEContent("  ABCD.cfargotunnel.com. ")
+    if got != "abcd.cfargotunnel.com" {
+        t.Fatalf("normalizeCloudflareCNAMEContent()=%q", got)
+    }
+}
+
 func TestCloudflaredVersionPattern(t *testing.T) {
     match := cloudflaredVersionPattern.FindStringSubmatch("cloudflared version 2026.8.3 (built 2026-08-31)")
     if len(match) < 2 || match[1] != "2026.8.3" {

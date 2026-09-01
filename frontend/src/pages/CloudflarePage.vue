@@ -59,14 +59,13 @@ async function stopProcess(pid: number, name?: string) {
 
 async function unbind(instance: (typeof app.instances)[number]) {
   const shared = sharedTunnelCount(instance.tunnelId);
-  if (shared > 1) {
-    ui.toast("该 Tunnel 正在被复用", `共有 ${shared} 个 MCP 实例使用 ${instance.tunnelName || instance.tunnelId}，为避免误删其他 DNS，暂不允许删除整个 Tunnel。`, "warning");
-    return;
-  }
+  const sharedBinding = shared > 1;
   const accepted = await ui.ask({
     title: "解绑并清理 Cloudflare",
-    message: `将停止 ${instance.name} 的 Tunnel，并从 Cloudflare 删除 ${instance.tunnelName || instance.tunnelId}。该 Tunnel 关联的 DNS 路由（包括 ${instance.domain}）会一起清理，本地 MCP 项目和端口不会删除。`,
-    confirmLabel: "删除 DNS + Tunnel",
+    message: sharedBinding
+      ? `${instance.tunnelName || instance.tunnelId} 还被其他 MCP 实例复用。本次只删除 ${instance.domain} 的 DNS 并解除当前实例绑定，Tunnel 本身会保留。`
+      : `将删除 DNS ${instance.domain}，并删除 Cloudflare Tunnel ${instance.tunnelName || instance.tunnelId}。本地 MCP 项目和端口不会删除。`,
+    confirmLabel: sharedBinding ? "删除当前 DNS" : "删除 DNS + Tunnel",
     danger: true,
   });
   if (!accepted) return;
@@ -111,7 +110,7 @@ async function unbind(instance: (typeof app.instances)[number]) {
 
     <AppCard class="binding-card">
       <div class="card-heading">
-        <div><span class="eyebrow">Managed bindings</span><h3>已绑定域名与 Tunnel</h3><p>这里列出 MCP DevDesk 当前管理的 Cloudflare 域名。解绑会同时清理该 Tunnel 在 Cloudflare 上的路由依赖。</p></div>
+        <div><span class="eyebrow">Managed bindings</span><h3>已绑定域名与 Tunnel</h3><p>这里列出 MCP DevDesk 当前管理的 Cloudflare 域名。解绑会显式删除当前 DNS；Tunnel 未被其他 MCP 复用时再一起删除 Tunnel。</p></div>
         <StatusPill :tone="bindings.length ? 'info' : 'neutral'">{{ bindings.length }} 个绑定</StatusPill>
       </div>
       <div v-if="bindings.length" class="binding-list">
@@ -122,7 +121,7 @@ async function unbind(instance: (typeof app.instances)[number]) {
             <span>{{ instance.name }} · MCP {{ instance.mcpPort }} · {{ instance.tunnelName || '未命名 Tunnel' }}</span>
             <code>{{ instance.tunnelId }}</code>
           </div>
-          <AppButton tone="danger" compact :disabled="!app.status?.cloudflare.authenticated || sharedTunnelCount(instance.tunnelId) > 1" @click="unbind(instance)">解绑并清理</AppButton>
+          <AppButton tone="danger" compact :disabled="!app.status?.cloudflare.authenticated" @click="unbind(instance)">解绑并清理</AppButton>
         </article>
       </div>
       <div v-else class="inline-empty large"><AppIcon name="cloud" :size="26" /><div><strong>还没有已绑定资源</strong><span>配置固定域名后，域名、Tunnel UUID 和对应 MCP 实例会集中显示在这里。</span></div></div>

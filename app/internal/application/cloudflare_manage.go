@@ -5,10 +5,12 @@ import (
     "crypto/sha256"
     "encoding/hex"
     "encoding/json"
+    "encoding/pem"
     "errors"
     "fmt"
     "io"
     "net/http"
+    "net/url"
     "os"
     "path/filepath"
     "regexp"
@@ -26,11 +28,14 @@ const cloudflaredLatestReleaseURL = "https://api.github.com/repos/cloudflare/clo
 var cloudflaredVersionPattern = regexp.MustCompile(`(?i)cloudflared version\s+([0-9]+(?:\.[0-9]+){1,3})`)
 
 type CloudflareUnbindResult struct {
-    InstanceID string `json:"instanceId"`
-    Domain     string `json:"domain"`
-    TunnelID   string `json:"tunnelId"`
-    TunnelName string `json:"tunnelName"`
-    Message    string `json:"message"`
+    InstanceID    string `json:"instanceId"`
+    Domain        string `json:"domain"`
+    TunnelID      string `json:"tunnelId"`
+    TunnelName    string `json:"tunnelName"`
+    DNSDeleted    bool   `json:"dnsDeleted"`
+    TunnelDeleted bool   `json:"tunnelDeleted"`
+    TunnelShared  bool   `json:"tunnelShared"`
+    Message       string `json:"message"`
 }
 
 type CloudflaredUpdateStatus struct {
@@ -65,13 +70,14 @@ func (a *App) UnbindInstanceCloudflare(ctx context.Context, id string) (Cloudfla
     defer managed.mu.Unlock()
 
     cfg := managed.config.Get()
-    if err := a.ensureTunnelExclusive(cfg.TunnelID, id); err != nil {
-        return CloudflareUnbindResult{}, err
+    domain := strings.ToLower(strings.TrimSpace(cfg.Domain))
+    tunnelID := strings.ToLower(strings.TrimSpace(cfg.TunnelID))
+    tunnelName := strings.TrimSpace(cfg.TunnelName)
+    if domain == "" && tunnelID == "" {
+        return CloudflareUnbindResult{}, errors.New("该实例没有可解绑的 Cloudflare 资源")
     }
-    domain, tunnelID, tunnelName := cfg.Domain, cfg.TunnelID, cfg.TunnelName
-    if strings.TrimSpace(tunnelID) == "" {
-        return CloudflareUnbindResult{}, errors.New("该实例没有可解绑的 Cloudflare Tunnel")
-    }
+    sharedUsers := a.tunnelUsers(tunnelID, id)
+    deleteTunnel := tunnelID != "" && len(sharedUsers) == 0
 
     _, tunnelStatus, _ := managed.process.Status()
     originalDesired := managed.desiredRunning
@@ -86,7 +92,9 @@ func (a *App) UnbindInstanceCloudflare(ctx context.Context, id string) (Cloudfla
             return CloudflareUnbindResult{}, err
         }
     }
-    if _, err := a.tunnel.Delete(ctx, cfg); err != nil {
+
+    dnsDeleted, err := a.deleteCloudflareDNSRecord(ctx, domain, tunnelID)
+    if err != nil {
         managed.desiredRunning = originalDesired
         if tunnelStatus.Running {
             _ = managed.process.StartTunnel(cfg)
@@ -94,19 +102,42 @@ func (a *App) UnbindInstanceCloudflare(ctx context.Context, id string) (Cloudfla
         return CloudflareUnbindResult{}, err
     }
 
+    tunnelDeleted := false
+    if deleteTunnel {
+        if _, err := a.tunnel.Delete(ctx, cfg); err != nil {
+            rollbackProblem := a.rollbackCloudflareDNS(cfg, dnsDeleted)
+            managed.desiredRunning = originalDesired
+            if tunnelStatus.Running {
+                _ = managed.process.StartTunnel(cfg)
+            }
+            return CloudflareUnbindResult{}, fmt.Errorf("DNS 已处理，但 Tunnel 删除失败: %w%s", err, rollbackProblem)
+        }
+        tunnelDeleted = true
+    }
+
     cfg.Domain = ""
     cfg.TunnelID = ""
     if _, err := managed.config.Replace(cfg); err != nil {
         managed.desiredRunning = originalDesired
-        return CloudflareUnbindResult{}, fmt.Errorf("Cloudflare 已删除，但清理本地实例配置失败: %w", err)
+        return CloudflareUnbindResult{}, fmt.Errorf("Cloudflare 资源已处理，但清理本地实例配置失败: %w", err)
     }
     managed.desiredRunning = originalDesired
+
+    message := fmt.Sprintf("已解绑 %s，并清理 DNS %s", record.Name, domain)
+    if tunnelDeleted {
+        message += fmt.Sprintf("；Tunnel %s 也已删除", tunnelName)
+    } else if len(sharedUsers) > 0 {
+        message += fmt.Sprintf("；Tunnel %s 仍被 %s 使用，因此已保留", tunnelName, strings.Join(sharedUsers, "、"))
+    }
     return CloudflareUnbindResult{
         InstanceID: id,
         Domain: domain,
         TunnelID: tunnelID,
         TunnelName: tunnelName,
-        Message: fmt.Sprintf("已解绑 %s，并删除 Tunnel %s 及其 Cloudflare 路由", record.Name, tunnelName),
+        DNSDeleted: dnsDeleted,
+        TunnelDeleted: tunnelDeleted,
+        TunnelShared: len(sharedUsers) > 0,
+        Message: message,
     }, nil
 }
 
@@ -115,13 +146,14 @@ func (a *App) unbindPrimaryCloudflare(ctx context.Context) (CloudflareUnbindResu
     defer a.mu.Unlock()
 
     cfg := a.config.Get()
-    if err := a.ensureTunnelExclusive(cfg.TunnelID, model.PrimaryInstanceID); err != nil {
-        return CloudflareUnbindResult{}, err
+    domain := strings.ToLower(strings.TrimSpace(cfg.Domain))
+    tunnelID := strings.ToLower(strings.TrimSpace(cfg.TunnelID))
+    tunnelName := strings.TrimSpace(cfg.TunnelName)
+    if domain == "" && tunnelID == "" {
+        return CloudflareUnbindResult{}, errors.New("主实例没有可解绑的 Cloudflare 资源")
     }
-    domain, tunnelID, tunnelName := cfg.Domain, cfg.TunnelID, cfg.TunnelName
-    if strings.TrimSpace(tunnelID) == "" {
-        return CloudflareUnbindResult{}, errors.New("主实例没有可解绑的 Cloudflare Tunnel")
-    }
+    sharedUsers := a.tunnelUsers(tunnelID, model.PrimaryInstanceID)
+    deleteTunnel := tunnelID != "" && len(sharedUsers) == 0
 
     _, tunnelStatus, _ := a.process.Status()
     previousDesired := a.tunnelDesired
@@ -130,29 +162,67 @@ func (a *App) unbindPrimaryCloudflare(ctx context.Context) (CloudflareUnbindResu
         a.tunnelDesired = previousDesired
         return CloudflareUnbindResult{}, err
     }
-    if _, err := a.tunnel.Delete(ctx, cfg); err != nil {
+
+    dnsDeleted, err := a.deleteCloudflareDNSRecord(ctx, domain, tunnelID)
+    if err != nil {
         a.tunnelDesired = previousDesired
         if tunnelStatus.Running {
             _ = a.process.StartTunnel(cfg)
         }
         return CloudflareUnbindResult{}, err
     }
+
+    tunnelDeleted := false
+    if deleteTunnel {
+        if _, err := a.tunnel.Delete(ctx, cfg); err != nil {
+            rollbackProblem := a.rollbackCloudflareDNS(cfg, dnsDeleted)
+            a.tunnelDesired = previousDesired
+            if tunnelStatus.Running {
+                _ = a.process.StartTunnel(cfg)
+            }
+            return CloudflareUnbindResult{}, fmt.Errorf("DNS 已处理，但 Tunnel 删除失败: %w%s", err, rollbackProblem)
+        }
+        tunnelDeleted = true
+    }
+
     cfg.Domain = ""
     cfg.TunnelID = ""
     if _, err := a.config.Replace(cfg); err != nil {
         a.tunnelDesired = previousDesired
-        return CloudflareUnbindResult{}, fmt.Errorf("Cloudflare 已删除，但清理本地主实例配置失败: %w", err)
+        return CloudflareUnbindResult{}, fmt.Errorf("Cloudflare 资源已处理，但清理本地主实例配置失败: %w", err)
+    }
+
+    message := fmt.Sprintf("已解绑主实例，并清理 DNS %s", domain)
+    if tunnelDeleted {
+        message += fmt.Sprintf("；Tunnel %s 也已删除", tunnelName)
+    } else if len(sharedUsers) > 0 {
+        message += fmt.Sprintf("；Tunnel %s 仍被 %s 使用，因此已保留", tunnelName, strings.Join(sharedUsers, "、"))
     }
     return CloudflareUnbindResult{
         InstanceID: model.PrimaryInstanceID,
         Domain: domain,
         TunnelID: tunnelID,
         TunnelName: tunnelName,
-        Message: fmt.Sprintf("已解绑主实例，并删除 Tunnel %s 及其 Cloudflare 路由", tunnelName),
+        DNSDeleted: dnsDeleted,
+        TunnelDeleted: tunnelDeleted,
+        TunnelShared: len(sharedUsers) > 0,
+        Message: message,
     }, nil
 }
 
-func (a *App) ensureTunnelExclusive(tunnelID, exceptID string) error {
+func (a *App) rollbackCloudflareDNS(cfg model.Config, deleted bool) string {
+    if !deleted || strings.TrimSpace(cfg.Domain) == "" || strings.TrimSpace(cfg.TunnelID) == "" {
+        return ""
+    }
+    rollbackCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+    defer cancel()
+    if _, err := a.tunnel.RepairDNS(rollbackCtx, cfg); err != nil {
+        return fmt.Sprintf("；DNS 回滚失败: %v", err)
+    }
+    return "；DNS 已自动回滚"
+}
+
+func (a *App) tunnelUsers(tunnelID, exceptID string) []string {
     tunnelID = strings.TrimSpace(tunnelID)
     if tunnelID == "" {
         return nil
@@ -178,10 +248,165 @@ func (a *App) ensureTunnelExclusive(tunnelID, exceptID string) error {
             users = append(users, record.Name)
         }
     }
-    if len(users) > 0 {
-        return fmt.Errorf("当前 Tunnel 仍被其他实例复用（%s），为避免误删它们的 DNS，不能直接解绑整个 Tunnel", strings.Join(users, "、"))
+    return users
+}
+
+type cloudflareOriginCert struct {
+    ZoneID    string `json:"zoneID"`
+    AccountID string `json:"accountID"`
+    APIToken  string `json:"apiToken"`
+    Endpoint  string `json:"endpoint,omitempty"`
+}
+
+type cloudflareAPIError struct {
+    Code    int    `json:"code"`
+    Message string `json:"message"`
+}
+
+func readCloudflareOriginCert() (cloudflareOriginCert, error) {
+    raw, err := os.ReadFile(processmanager.CertificatePath())
+    if err != nil {
+        return cloudflareOriginCert{}, fmt.Errorf("读取 Cloudflare 授权证书失败: %w", err)
     }
-    return nil
+    var cert cloudflareOriginCert
+    rest := raw
+    for len(rest) > 0 {
+        block, remaining := pem.Decode(rest)
+        rest = remaining
+        if block == nil {
+            break
+        }
+        if block.Type != "ARGO TUNNEL TOKEN" {
+            continue
+        }
+        if err := json.Unmarshal(block.Bytes, &cert); err != nil {
+            return cloudflareOriginCert{}, fmt.Errorf("解析 Cloudflare 授权证书失败: %w", err)
+        }
+        break
+    }
+    if strings.TrimSpace(cert.ZoneID) == "" || strings.TrimSpace(cert.APIToken) == "" {
+        return cloudflareOriginCert{}, errors.New("Cloudflare cert.pem 中没有可用于 DNS 管理的 zoneID/apiToken，请重新授权 Cloudflare")
+    }
+    return cert, nil
+}
+
+func cloudflareAPIBase(endpoint string) string {
+    if strings.EqualFold(strings.TrimSpace(endpoint), "fed") {
+        return "https://api.fed.cloudflare.com/client/v4"
+    }
+    return "https://api.cloudflare.com/client/v4"
+}
+
+func normalizeCloudflareCNAMEContent(value string) string {
+    return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
+}
+
+func cloudflareAPIErrorText(status int, errorsList []cloudflareAPIError) string {
+    if len(errorsList) == 0 {
+        return fmt.Sprintf("HTTP %d", status)
+    }
+    parts := make([]string, 0, len(errorsList))
+    for _, item := range errorsList {
+        if item.Message != "" {
+            parts = append(parts, item.Message)
+        }
+    }
+    if len(parts) == 0 {
+        return fmt.Sprintf("HTTP %d", status)
+    }
+    return strings.Join(parts, "; ")
+}
+
+func doCloudflareAPI(ctx context.Context, cert cloudflareOriginCert, method, endpoint string) (*http.Response, error) {
+    request, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
+    if err != nil {
+        return nil, err
+    }
+    request.Header.Set("Authorization", "Bearer "+cert.APIToken)
+    request.Header.Set("Accept", "application/json")
+    request.Header.Set("User-Agent", "MCP-DevDesk/"+Version)
+    client := &http.Client{Timeout: 20 * time.Second}
+    return client.Do(request)
+}
+
+func (a *App) deleteCloudflareDNSRecord(ctx context.Context, domain, tunnelID string) (bool, error) {
+    domain = strings.ToLower(strings.TrimSpace(domain))
+    tunnelID = strings.ToLower(strings.TrimSpace(tunnelID))
+    if domain == "" {
+        return false, nil
+    }
+    cert, err := readCloudflareOriginCert()
+    if err != nil {
+        return false, err
+    }
+    query := url.Values{}
+    query.Set("type", "CNAME")
+    query.Set("name", domain)
+    query.Set("per_page", "100")
+    endpoint := fmt.Sprintf("%s/zones/%s/dns_records?%s", cloudflareAPIBase(cert.Endpoint), url.PathEscape(cert.ZoneID), query.Encode())
+    response, err := doCloudflareAPI(ctx, cert, http.MethodGet, endpoint)
+    if err != nil {
+        return false, fmt.Errorf("查询 Cloudflare DNS %s 失败: %w", domain, err)
+    }
+    var listPayload struct {
+        Success bool `json:"success"`
+        Errors []cloudflareAPIError `json:"errors"`
+        Result []struct {
+            ID string `json:"id"`
+            Type string `json:"type"`
+            Name string `json:"name"`
+            Content string `json:"content"`
+        } `json:"result"`
+    }
+    decodeErr := json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(&listPayload)
+    response.Body.Close()
+    if decodeErr != nil {
+        return false, fmt.Errorf("解析 Cloudflare DNS 查询结果失败: %w", decodeErr)
+    }
+    if response.StatusCode < 200 || response.StatusCode >= 300 || !listPayload.Success {
+        return false, fmt.Errorf("查询 Cloudflare DNS %s 失败: %s", domain, cloudflareAPIErrorText(response.StatusCode, listPayload.Errors))
+    }
+
+    expectedTarget := normalizeCloudflareCNAMEContent(tunnelID + ".cfargotunnel.com")
+    matched := make([]string, 0, 1)
+    unexpectedTarget := ""
+    for _, record := range listPayload.Result {
+        if !strings.EqualFold(record.Name, domain) || !strings.EqualFold(record.Type, "CNAME") {
+            continue
+        }
+        if tunnelID == "" || normalizeCloudflareCNAMEContent(record.Content) == expectedTarget {
+            matched = append(matched, record.ID)
+        } else {
+            unexpectedTarget = record.Content
+        }
+    }
+    if len(matched) == 0 {
+        if unexpectedTarget != "" {
+            return false, fmt.Errorf("拒绝删除 DNS %s：它现在指向 %s，不是当前 Tunnel %s", domain, unexpectedTarget, tunnelID)
+        }
+        return false, nil
+    }
+
+    for _, recordID := range matched {
+        deleteEndpoint := fmt.Sprintf("%s/zones/%s/dns_records/%s", cloudflareAPIBase(cert.Endpoint), url.PathEscape(cert.ZoneID), url.PathEscape(recordID))
+        deleteResponse, deleteErr := doCloudflareAPI(ctx, cert, http.MethodDelete, deleteEndpoint)
+        if deleteErr != nil {
+            return false, fmt.Errorf("删除 Cloudflare DNS %s 失败: %w", domain, deleteErr)
+        }
+        var deletePayload struct {
+            Success bool `json:"success"`
+            Errors []cloudflareAPIError `json:"errors"`
+        }
+        decodeDeleteErr := json.NewDecoder(io.LimitReader(deleteResponse.Body, 1<<20)).Decode(&deletePayload)
+        deleteResponse.Body.Close()
+        if decodeDeleteErr != nil {
+            return false, fmt.Errorf("解析 Cloudflare DNS 删除结果失败: %w", decodeDeleteErr)
+        }
+        if deleteResponse.StatusCode < 200 || deleteResponse.StatusCode >= 300 || !deletePayload.Success {
+            return false, fmt.Errorf("删除 Cloudflare DNS %s 失败: %s", domain, cloudflareAPIErrorText(deleteResponse.StatusCode, deletePayload.Errors))
+        }
+    }
+    return true, nil
 }
 
 func (a *App) CheckCloudflaredUpdate(ctx context.Context) (CloudflaredUpdateStatus, error) {
@@ -371,9 +596,9 @@ func (a *App) InstallCloudflaredUpdate(ctx context.Context) (CloudflaredUpdateRe
     }
     _ = os.Remove(backup)
 
+    restarted, restartErrors := restartCloudflaredStates(states)
     restoreDesired()
     restored = true
-    restarted, restartErrors := restartCloudflaredStates(states)
     release.CurrentVersion = verifyVersion
     release.Installed = true
     release.UpdateAvailable = compareCloudflaredVersions(verifyVersion, release.LatestVersion) < 0
