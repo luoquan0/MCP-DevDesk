@@ -1,0 +1,37 @@
+name: Apply Cloudflare Resource Manager
+
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - ".github/scripts/apply_cloudflare_resource_manager.py"
+      - ".github/workflows/apply-cloudflare-resource-manager.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply patch
+        run: python .github/scripts/apply_cloudflare_resource_manager.py
+
+      - name: Commit business changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app frontend
+          if git diff --cached --quiet; then
+            echo "No business changes to commit"
+            exit 0
+          fi
+          git commit -m "feat: manage Cloudflare bindings and cloudflared updates [skip release]"
+          git push origin HEAD:main
