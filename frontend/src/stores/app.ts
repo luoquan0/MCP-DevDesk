@@ -123,10 +123,12 @@ export const useAppStore = defineStore("app", {
       return this.updateSettings;
     },
     async saveUpdateSettings(settings: Pick<UpdateSettings, "channel" | "checkOnStartup" | "proxyHost" | "proxyPort">) {
-      this.updateSettings = await this.runAction("save-update-settings", () => api<UpdateSettings>("/api/update/settings", {
+      // Update settings deliberately bypass the global actionPending mutex-like UI state.
+      // A slow or interrupted update request must never make the whole settings card feel disabled.
+      this.updateSettings = await api<UpdateSettings>("/api/update/settings", {
         method: "PUT",
         body: settings as unknown as BodyInit,
-      }));
+      });
       if (settings.proxyHost && settings.proxyPort) {
         useUiStore().toast(
           "已使用代理模式",
@@ -139,7 +141,7 @@ export const useAppStore = defineStore("app", {
       return this.updateSettings;
     },
     async testUpdateProxy() {
-      return this.runAction("test-update-proxy", () => api<UpdateProxyTestResult>("/api/update/proxy-test", { method: "POST" }));
+      return api<UpdateProxyTestResult>("/api/update/proxy-test", { method: "POST" });
     },
     async checkForUpdate(silent = false) {
       try {

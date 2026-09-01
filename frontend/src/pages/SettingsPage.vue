@@ -35,8 +35,12 @@ const updateCheckOnStartup = ref(true);
 const updateProxyHost = ref("");
 const updateProxyPort = ref("");
 const updateChecking = ref(false);
+const updateSettingsSaving = ref(false);
 const updateProxyTesting = ref(false);
 const updateProxyTestMessage = ref("");
+const updateActionFeedback = ref("");
+let updateProxyAutoSaveTimer: number | undefined;
+let lastSavedProxySignature = "";
 const appearanceFileInput = ref<HTMLInputElement | null>(null);
 const appearanceSaving = ref(false);
 const appearanceUploading = ref(false);
@@ -94,6 +98,7 @@ watch(() => app.updateSettings, (settings) => {
   updateCheckOnStartup.value = settings.checkOnStartup;
   updateProxyHost.value = settings.proxyHost || "";
   updateProxyPort.value = settings.proxyPort > 0 ? String(settings.proxyPort) : "";
+  lastSavedProxySignature = `${updateProxyHost.value.trim()}:${updateProxyPort.value.trim()}`;
 }, { immediate: true, deep: true });
 
 watch([() => app.webControl, () => app.config?.webControlPort], ([status, configuredPort]) => {
@@ -194,56 +199,92 @@ async function removeAppearanceBackground() {
   }
 }
 
-function updateProxyPayload() {
+function updateProxyPayload(showErrors = true) {
   const proxyHost = updateProxyHost.value.trim();
   const proxyPortText = updateProxyPort.value.trim();
   if (!proxyHost && !proxyPortText) return { proxyHost: "", proxyPort: 0 };
   if (!proxyHost) {
-    ui.toast("代理地址不完整", "请填写代理 IP；不使用代理时 IP 和端口都留空。", "danger");
+    if (showErrors) ui.toast("代理地址不完整", "请填写代理 IP；不使用代理时 IP 和端口都留空。", "danger");
     return null;
   }
   const proxyPort = Number(proxyPortText);
   if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) {
-    ui.toast("代理端口无效", "请输入 1 - 65535 之间的代理端口。", "danger");
+    if (showErrors) ui.toast("代理端口无效", "请输入 1 - 65535 之间的代理端口。", "danger");
     return null;
   }
   if (proxyHost.includes("://") || /[\/\@\s]/.test(proxyHost)) {
-    ui.toast("代理 IP 格式无效", "这里只填写 IP 或主机名，不要填写 http://、路径、账号或密码。", "danger");
+    if (showErrors) ui.toast("代理 IP 格式无效", "这里只填写 IP 或主机名，不要填写 http://、路径、账号或密码。", "danger");
     return null;
   }
   return { proxyHost, proxyPort };
 }
 
-async function saveUpdatePreferences() {
-  const proxy = updateProxyPayload();
+function proxySignature(proxy: { proxyHost: string; proxyPort: number }) {
+  return `${proxy.proxyHost}:${proxy.proxyPort || ""}`;
+}
+
+function scheduleUpdateProxyAutoSave() {
+  if (updateProxyAutoSaveTimer) window.clearTimeout(updateProxyAutoSaveTimer);
+  updateProxyAutoSaveTimer = undefined;
+  const proxy = updateProxyPayload(false);
   if (!proxy) return;
+  const signature = proxySignature(proxy);
+  if (signature === lastSavedProxySignature) return;
+  updateActionFeedback.value = proxy.proxyHost ? "代理地址已填写，正在自动保存…" : "正在切换为直连模式…";
+  updateProxyAutoSaveTimer = window.setTimeout(() => {
+    updateProxyAutoSaveTimer = undefined;
+    void saveUpdatePreferences(true);
+  }, 650);
+}
+
+function markUpdateAction(label: string) {
+  updateActionFeedback.value = `已收到点击：${label}`;
+}
+
+async function saveUpdatePreferences(auto = false) {
+  const proxy = updateProxyPayload(!auto);
+  if (!proxy || updateSettingsSaving.value) return;
+  updateSettingsSaving.value = true;
+  updateActionFeedback.value = proxy.proxyHost ? "正在保存代理模式…" : "正在保存直连模式…";
   try {
     await app.saveUpdateSettings({
       channel: updateChannel.value,
       checkOnStartup: updateCheckOnStartup.value,
       ...proxy,
     });
+    lastSavedProxySignature = proxySignature(proxy);
+    updateActionFeedback.value = proxy.proxyHost
+      ? `已使用代理模式 · ${proxy.proxyHost}:${proxy.proxyPort}`
+      : "已恢复直连模式";
   } catch (error) {
-    ui.toast("保存更新设置失败", error instanceof Error ? error.message : String(error), "danger");
+    updateActionFeedback.value = error instanceof Error ? error.message : String(error);
+    ui.toast("保存更新设置失败", updateActionFeedback.value, "danger");
+  } finally {
+    updateSettingsSaving.value = false;
   }
 }
 
 async function testUpdateProxy() {
+  markUpdateAction("测试代理");
   const proxy = updateProxyPayload();
   if (!proxy) return;
   if (!proxy.proxyHost || !proxy.proxyPort) {
     ui.toast("未配置代理", "请先填写代理 IP 和端口；留空表示直连，无需测试。", "info");
     return;
   }
+  if (updateProxyTesting.value) return;
   updateProxyTesting.value = true;
   updateProxyTestMessage.value = "正在自动测试 HTTP / SOCKS5...";
+  updateActionFeedback.value = "已收到点击：测试代理 · 正在连接…";
   try {
-    await app.saveUpdateSettings({ channel: updateChannel.value, checkOnStartup: updateCheckOnStartup.value, ...proxy });
+    if (proxySignature(proxy) !== lastSavedProxySignature) await saveUpdatePreferences(false);
     const result = await app.testUpdateProxy();
     updateProxyTestMessage.value = `${result.protocol} 可用 · ${result.latencyMs} ms`;
+    updateActionFeedback.value = `已使用代理模式 · ${result.protocol} · ${result.latencyMs} ms`;
     ui.toast("已使用代理模式", result.message, "success");
   } catch (error) {
     updateProxyTestMessage.value = error instanceof Error ? error.message : String(error);
+    updateActionFeedback.value = `代理测试失败 · ${updateProxyTestMessage.value}`;
     ui.toast("代理测试失败", updateProxyTestMessage.value, "danger");
   } finally {
     updateProxyTesting.value = false;
@@ -251,21 +292,20 @@ async function testUpdateProxy() {
 }
 
 async function checkForUpdate() {
+  markUpdateAction("检查更新");
   const proxy = updateProxyPayload();
-  if (!proxy) return;
+  if (!proxy || updateChecking.value) return;
   updateChecking.value = true;
+  updateActionFeedback.value = "已收到点击：检查更新 · 正在请求 GitHub…";
   try {
     const current = app.updateSettings;
     if (!current || current.channel !== updateChannel.value || current.checkOnStartup !== updateCheckOnStartup.value || current.proxyHost !== proxy.proxyHost || current.proxyPort !== proxy.proxyPort) {
-      await app.saveUpdateSettings({
-        channel: updateChannel.value,
-        checkOnStartup: updateCheckOnStartup.value,
-        ...proxy,
-      });
+      await saveUpdatePreferences(false);
     }
     await app.checkForUpdate(false);
+    updateActionFeedback.value = "检查更新完成";
   } catch {
-    // checkForUpdate already reports a user-facing error.
+    updateActionFeedback.value = "检查更新失败，请查看右下角提示";
   } finally {
     updateChecking.value = false;
   }
@@ -784,12 +824,12 @@ onMounted(() => {
       <div class="software-update-grid">
         <label class="field">
           <span>更新代理 IP</span>
-          <input v-model.trim="updateProxyHost" type="text" spellcheck="false" placeholder="例如 127.0.0.1" />
+          <input v-model.trim="updateProxyHost" type="text" spellcheck="false" placeholder="例如 127.0.0.1" @input="scheduleUpdateProxyAutoSave" />
           <small>可选代理。只填写 IP 或主机名；程序会自动识别 HTTP 或 SOCKS5，留空表示直连 GitHub。</small>
         </label>
         <label class="field">
           <span>代理端口</span>
-          <input v-model="updateProxyPort" type="number" min="1" max="65535" inputmode="numeric" placeholder="例如 7890" />
+          <input v-model="updateProxyPort" type="number" min="1" max="65535" inputmode="numeric" placeholder="例如 7890" @input="scheduleUpdateProxyAutoSave" />
           <small>与代理 IP 配套使用，例如 7890、1080、10808；可用“测试代理”确认协议和连通性。</small>
         </label>
         <label class="field">
@@ -816,11 +856,17 @@ onMounted(() => {
       </div>
 
       <div class="form-footer top-divider">
-        <small>{{ updateProxyTestMessage || '立即更新会先下载 Release ZIP 并校验 SHA256，再启动独立 updater。代理仅用于软件更新，不影响 MCP 和 Cloudflare。' }}</small>
-        <div class="form-footer-actions">
-          <AppButton tone="quiet" :loading="app.actionPending === 'save-update-settings'" @click.stop="saveUpdatePreferences">保存更新设置</AppButton>
-          <AppButton tone="secondary" icon="shield" :loading="updateProxyTesting || app.actionPending === 'test-update-proxy'" @click.stop="testUpdateProxy">测试代理</AppButton>
-          <AppButton tone="secondary" icon="refresh" :loading="updateChecking" @click.stop="checkForUpdate">检查更新</AppButton>
+        <small>{{ updateActionFeedback || updateProxyTestMessage || '代理 IP 和端口填完整后会自动保存；也可以手动测试代理或检查更新。代理仅用于软件更新。' }}</small>
+        <div class="form-footer-actions software-update-actions">
+          <button type="button" class="app-button is-quiet" :disabled="updateSettingsSaving" @pointerdown="markUpdateAction('保存更新设置')" @click="saveUpdatePreferences(false)">
+            <span v-if="updateSettingsSaving" class="button-spinner" /><span>保存更新设置</span>
+          </button>
+          <button type="button" class="app-button is-secondary" :disabled="updateProxyTesting" @pointerdown="markUpdateAction('测试代理')" @click="testUpdateProxy">
+            <span v-if="updateProxyTesting" class="button-spinner" /><AppIcon v-else name="shield" :size="16" /><span>测试代理</span>
+          </button>
+          <button type="button" class="app-button is-secondary" :disabled="updateChecking" @pointerdown="markUpdateAction('检查更新')" @click="checkForUpdate">
+            <span v-if="updateChecking" class="button-spinner" /><AppIcon v-else name="refresh" :size="16" /><span>检查更新</span>
+          </button>
           <AppButton v-if="app.updateRelease?.updateAvailable" tone="primary" icon="play" :loading="app.actionPending === 'install-update'" @click="installAvailableUpdate">立即更新到 {{ app.updateRelease.latestVersion }}</AppButton>
         </div>
       </div>

@@ -3719,6 +3719,29 @@ kbd {
   text-align: right;
 }
 
+.software-update-card {
+  position: relative;
+  isolation: isolate;
+  /* WebView2 can occasionally mis-hit-test interactive descendants inside a
+     scrolled backdrop-filter layer. Keep this one form on a normal surface. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.software-update-card input,
+.software-update-card select,
+.software-update-card button,
+.software-update-card .toggle-row,
+.software-update-actions {
+  position: relative;
+  z-index: 3;
+  pointer-events: auto;
+}
+
+.software-update-actions {
+  z-index: 5;
+}
+
 .software-update-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
