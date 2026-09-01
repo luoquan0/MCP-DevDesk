@@ -2,18 +2,15 @@ package updater
 
 import (
 	"context"
-	"errors"
-	"net/http"
+	"io"
+	"net"
 	"testing"
+	"time"
 )
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 
 func TestUpdateProxySettingsPersist(t *testing.T) {
 	dataDir := t.TempDir()
-	manager, err := NewManager(dataDir, "0.12.14", "owner/repository")
+	manager, err := NewManager(dataDir, "0.12.15", "owner/repository")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +23,7 @@ func TestUpdateProxySettingsPersist(t *testing.T) {
 	if settings.ProxyHost != host || settings.ProxyPort != port {
 		t.Fatalf("proxy settings = %+v", settings)
 	}
-	reloaded, err := NewManager(dataDir, "0.12.14", "owner/repository")
+	reloaded, err := NewManager(dataDir, "0.12.15", "owner/repository")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,39 +33,107 @@ func TestUpdateProxySettingsPersist(t *testing.T) {
 	}
 }
 
-func TestAutoProxyRoundTripperFallsBackToSOCKS5(t *testing.T) {
-	manager, err := NewManager(t.TempDir(), "0.12.14", "owner/repository")
+func TestDetectSOCKS5ProxyProtocol(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	primaryCalls := 0
-	secondaryCalls := 0
-	transport := &autoProxyRoundTripper{manager: manager,
-		httpProxy: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			primaryCalls++
-			return nil, errors.New("not an HTTP proxy")
-		}),
-		socks5: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			secondaryCalls++
-			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header), Request: request}, nil
-		}),
-	}
-	request, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://github.com/", nil)
-	response, err := transport.RoundTrip(request)
+	defer listener.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer conn.Close()
+		greeting := make([]byte, 3)
+		if _, err := io.ReadFull(conn, greeting); err != nil {
+			done <- err
+			return
+		}
+		if greeting[0] != 0x05 {
+			done <- io.ErrUnexpectedEOF
+			return
+		}
+		_, err = conn.Write([]byte{0x05, 0x00})
+		done <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	mode, err := detectProxyProtocol(ctx, listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = response.Body.Close()
-	if primaryCalls != 1 || secondaryCalls != 1 {
-		t.Fatalf("calls http=%d socks=%d", primaryCalls, secondaryCalls)
+	if mode != "socks5" {
+		t.Fatalf("mode = %q", mode)
 	}
-	if manager.cachedProxyMode() != "socks5" {
-		t.Fatalf("cached proxy mode = %q", manager.cachedProxyMode())
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDetectHTTPProxyProtocol(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer conn.Close()
+		buffer := make([]byte, 3)
+		if _, err := io.ReadFull(conn, buffer); err != nil {
+			done <- err
+			return
+		}
+		_, err = conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
+		done <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	mode, err := detectProxyProtocol(ctx, listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "http" {
+		t.Fatalf("mode = %q", mode)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDetectUnavailableProxyFailsQuickly(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	_ = listener.Close()
+
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := detectProxyProtocol(ctx, address); err == nil {
+		t.Fatal("expected unavailable proxy to fail")
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("unavailable proxy took too long: %s", elapsed)
 	}
 }
 
 func TestUpdateProxySettingsRequireCompleteAddress(t *testing.T) {
-	manager, err := NewManager(t.TempDir(), "0.12.14", "owner/repository")
+	manager, err := NewManager(t.TempDir(), "0.12.15", "owner/repository")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +150,7 @@ func TestUpdateProxySettingsRequireCompleteAddress(t *testing.T) {
 }
 
 func TestUpdateProxyCanBeDisabledAgain(t *testing.T) {
-	manager, err := NewManager(t.TempDir(), "0.12.14", "owner/repository")
+	manager, err := NewManager(t.TempDir(), "0.12.15", "owner/repository")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +171,7 @@ func TestUpdateProxyCanBeDisabledAgain(t *testing.T) {
 }
 
 func TestProxyTestRequiresConfiguredProxy(t *testing.T) {
-	manager, err := NewManager(t.TempDir(), "0.12.14", "owner/repository")
+	manager, err := NewManager(t.TempDir(), "0.12.15", "owner/repository")
 	if err != nil {
 		t.Fatal(err)
 	}
