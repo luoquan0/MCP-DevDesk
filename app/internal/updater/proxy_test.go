@@ -2,8 +2,10 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
@@ -231,5 +233,97 @@ func TestProxyTestRequiresConfiguredProxy(t *testing.T) {
 	}
 	if _, err := manager.TestProxy(context.Background()); err == nil {
 		t.Fatal("expected missing proxy to fail")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type requestContextBody struct {
+	ctx  context.Context
+	sent bool
+}
+
+func (b *requestContextBody) Read(buffer []byte) (int, error) {
+	select {
+	case <-b.ctx.Done():
+		return 0, b.ctx.Err()
+	default:
+	}
+	if b.sent {
+		return 0, io.EOF
+	}
+	b.sent = true
+	return copy(buffer, "ok"), nil
+}
+
+func (b *requestContextBody) Close() error { return nil }
+
+func TestAutoProxyFallbackKeepsResponseBodyUsable(t *testing.T) {
+	manager, err := NewManager(t.TempDir(), "0.12.20", "owner/repository")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.setCachedProxyMode("http")
+
+	transport := &autoProxyRoundTripper{
+		manager: manager,
+		address: "127.0.0.1:10808",
+		httpProxy: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("not an HTTP proxy")
+		}),
+		socks5: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       &requestContextBody{ctx: request.Context()},
+				Request:    request,
+			}, nil
+		}),
+	}
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.github.com/rate_limit", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("fallback response body became unreadable: %v", err)
+	}
+	if string(body) != "ok" {
+		t.Fatalf("fallback body = %q", string(body))
+	}
+	if manager.cachedProxyMode() != "socks5" {
+		t.Fatalf("cached proxy mode = %q", manager.cachedProxyMode())
+	}
+}
+
+func TestSOCKS5TransportUsesNativeProxyURL(t *testing.T) {
+	settings := Settings{ProxyHost: "127.0.0.1", ProxyPort: 10808}
+	transport := socks5ProxyTransport(settings)
+	request, err := http.NewRequest(http.MethodGet, "https://api.github.com/rate_limit", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyURL, err := transport.Proxy(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proxyURL == nil {
+		t.Fatal("expected SOCKS5 proxy URL")
+	}
+	if proxyURL.Scheme != "socks5h" {
+		t.Fatalf("proxy scheme = %q", proxyURL.Scheme)
+	}
+	if proxyURL.Host != "127.0.0.1:10808" {
+		t.Fatalf("proxy host = %q", proxyURL.Host)
 	}
 }
