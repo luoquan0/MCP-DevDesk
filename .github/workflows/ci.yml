@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   apply-updater-timeout-fix:
-    if: github.event_name == 'push' && github.event.head_commit.message == 'chore: run updater timeout patch'
+    if: "${{ github.event_name == 'push' && github.event.head_commit.message == 'chore: run updater timeout patch' }}"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
