@@ -241,7 +241,7 @@ async function testUpdateProxy() {
     await app.saveUpdateSettings({ channel: updateChannel.value, checkOnStartup: updateCheckOnStartup.value, ...proxy });
     const result = await app.testUpdateProxy();
     updateProxyTestMessage.value = `${result.protocol} 可用 · ${result.latencyMs} ms`;
-    ui.toast("代理测试成功", result.message, "success");
+    ui.toast("已使用代理模式", result.message, "success");
   } catch (error) {
     updateProxyTestMessage.value = error instanceof Error ? error.message : String(error);
     ui.toast("代理测试失败", updateProxyTestMessage.value, "danger");

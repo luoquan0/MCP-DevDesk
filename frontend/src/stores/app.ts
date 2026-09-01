@@ -127,10 +127,15 @@ export const useAppStore = defineStore("app", {
         method: "PUT",
         body: settings as unknown as BodyInit,
       }));
-      const proxyLabel = settings.proxyHost && settings.proxyPort
-        ? `更新代理：http://${settings.proxyHost}:${settings.proxyPort}`
-        : "更新代理：直连";
-      useUiStore().toast("更新设置已保存", proxyLabel, "success");
+      if (settings.proxyHost && settings.proxyPort) {
+        useUiStore().toast(
+          "已使用代理模式",
+          `${settings.proxyHost}:${settings.proxyPort} · 自动识别 HTTP / SOCKS5；可点击“测试代理”确认协议。`,
+          "success",
+        );
+      } else {
+        useUiStore().toast("已恢复直连模式", "软件更新将直接连接 GitHub。", "success");
+      }
       return this.updateSettings;
     },
     async testUpdateProxy() {
