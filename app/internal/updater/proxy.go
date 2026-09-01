@@ -13,7 +13,12 @@ import (
 	"time"
 )
 
-const proxyConnectTimeout = 4 * time.Second
+const (
+	proxyConnectTimeout        = 3 * time.Second
+	proxyProbeTimeout          = 1200 * time.Millisecond
+	proxyResponseHeaderTimeout = 6 * time.Second
+	proxyFallbackTimeout       = 6 * time.Second
+)
 
 type ProxyTestResult struct {
 	OK        bool   `json:"ok"`
@@ -24,30 +29,42 @@ type ProxyTestResult struct {
 
 type autoProxyRoundTripper struct {
 	manager   *Manager
+	address   string
 	httpProxy http.RoundTripper
 	socks5    http.RoundTripper
 }
 
 func (t *autoProxyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if mode := t.manager.cachedProxyMode(); mode != "" {
-		if mode == "socks5" {
-			return t.socks5.RoundTrip(req)
+	mode := t.manager.cachedProxyMode()
+	if mode == "" {
+		detected, err := detectProxyProtocol(req.Context(), t.address)
+		if err != nil {
+			return nil, fmt.Errorf("update proxy unavailable: %w", err)
 		}
-		return t.httpProxy.RoundTrip(req)
+		mode = detected
+		t.manager.setCachedProxyMode(mode)
 	}
-	first := req.Clone(req.Context())
-	response, httpErr := t.httpProxy.RoundTrip(first)
-	if httpErr == nil {
-		t.manager.setCachedProxyMode("http")
+
+	primary, fallback := t.httpProxy, t.socks5
+	fallbackMode := "socks5"
+	if mode == "socks5" {
+		primary, fallback = t.socks5, t.httpProxy
+		fallbackMode = "http"
+	}
+
+	response, primaryErr := primary.RoundTrip(req.Clone(req.Context()))
+	if primaryErr == nil {
 		return response, nil
 	}
-	second := req.Clone(req.Context())
-	response, socksErr := t.socks5.RoundTrip(second)
-	if socksErr == nil {
-		t.manager.setCachedProxyMode("socks5")
+
+	fallbackCtx, cancel := context.WithTimeout(req.Context(), proxyFallbackTimeout)
+	defer cancel()
+	response, fallbackErr := fallback.RoundTrip(req.Clone(fallbackCtx))
+	if fallbackErr == nil {
+		t.manager.setCachedProxyMode(fallbackMode)
 		return response, nil
 	}
-	return nil, fmt.Errorf("proxy connection failed (HTTP: %v; SOCKS5: %v)", httpErr, socksErr)
+	return nil, fmt.Errorf("proxy request failed (%s: %v; %s fallback: %v)", strings.ToUpper(mode), primaryErr, strings.ToUpper(fallbackMode), fallbackErr)
 }
 
 func (m *Manager) updateHTTPClient() *http.Client {
@@ -55,8 +72,10 @@ func (m *Manager) updateHTTPClient() *http.Client {
 	if strings.TrimSpace(settings.ProxyHost) == "" || settings.ProxyPort <= 0 {
 		return &http.Client{Transport: directUpdateTransport()}
 	}
+	address := net.JoinHostPort(strings.TrimSpace(settings.ProxyHost), strconv.Itoa(settings.ProxyPort))
 	return &http.Client{Transport: &autoProxyRoundTripper{
 		manager:   m,
+		address:   address,
 		httpProxy: httpProxyTransport(settings),
 		socks5:    socks5ProxyTransport(settings),
 	}}
@@ -71,17 +90,65 @@ func directUpdateTransport() *http.Transport {
 	return transport
 }
 
-func httpProxyTransport(settings Settings) *http.Transport {
+func proxyBaseTransport() *http.Transport {
 	transport := directUpdateTransport()
-	proxyURL := &url.URL{Scheme: "http", Host: net.JoinHostPort(strings.TrimSpace(settings.ProxyHost), strconv.Itoa(settings.ProxyPort))}
+	transport.ResponseHeaderTimeout = proxyResponseHeaderTimeout
+	transport.TLSHandshakeTimeout = proxyResponseHeaderTimeout
+	return transport
+}
+
+func httpProxyTransport(settings Settings) *http.Transport {
+	transport := proxyBaseTransport()
+	proxyURL := &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(strings.TrimSpace(settings.ProxyHost), strconv.Itoa(settings.ProxyPort)),
+	}
 	transport.Proxy = http.ProxyURL(proxyURL)
 	return transport
 }
 
 func socks5ProxyTransport(settings Settings) *http.Transport {
-	transport := directUpdateTransport()
+	transport := proxyBaseTransport()
 	transport.DialContext = socks5DialContext(net.JoinHostPort(strings.TrimSpace(settings.ProxyHost), strconv.Itoa(settings.ProxyPort)))
 	return transport
+}
+
+func detectProxyProtocol(ctx context.Context, proxyAddress string) (string, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, proxyProbeTimeout)
+	defer cancel()
+
+	dialer := &net.Dialer{Timeout: proxyProbeTimeout}
+	conn, err := dialer.DialContext(probeCtx, "tcp", proxyAddress)
+	if err != nil {
+		return "", fmt.Errorf("cannot connect to %s: %w", proxyAddress, err)
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(proxyProbeTimeout)
+	if value, ok := probeCtx.Deadline(); ok && value.Before(deadline) {
+		deadline = value
+	}
+	_ = conn.SetDeadline(deadline)
+	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		return "", fmt.Errorf("probe %s: %w", proxyAddress, err)
+	}
+
+	reply := make([]byte, 2)
+	if _, err := io.ReadFull(conn, reply); err == nil {
+		if reply[0] == 0x05 {
+			if reply[1] == 0x00 {
+				return "socks5", nil
+			}
+			return "", fmt.Errorf("SOCKS5 proxy requires an unsupported authentication method (0x%02x)", reply[1])
+		}
+		return "http", nil
+	}
+
+	// An HTTP CONNECT proxy commonly waits for a full HTTP request and therefore
+	// does not answer the short SOCKS greeting. A successful TCP connection with
+	// no SOCKS5 greeting is enough to classify it as HTTP; the real request below
+	// still has a strict response-header timeout and will report a useful error.
+	return "http", nil
 }
 
 func (m *Manager) TestProxy(ctx context.Context) (ProxyTestResult, error) {
@@ -89,38 +156,63 @@ func (m *Manager) TestProxy(ctx context.Context) (ProxyTestResult, error) {
 	if strings.TrimSpace(settings.ProxyHost) == "" || settings.ProxyPort <= 0 {
 		return ProxyTestResult{}, errors.New("请先填写代理 IP 和端口")
 	}
-	modes := []struct {
-		name      string
-		transport http.RoundTripper
-	}{{"HTTP", httpProxyTransport(settings)}, {"SOCKS5", socks5ProxyTransport(settings)}}
-	var failures []string
-	for _, mode := range modes {
-		attemptCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-		start := time.Now()
-		request, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, "https://github.com/", nil)
-		if err != nil {
-			cancel()
-			return ProxyTestResult{}, err
-		}
-		request.Header.Set("User-Agent", "MCP-DevDesk/"+m.version)
-		response, err := (&http.Client{Transport: mode.transport}).Do(request)
-		latency := time.Since(start)
-		if err == nil {
-			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
-			_ = response.Body.Close()
-		}
-		cancel()
-		if err == nil && response.StatusCode >= 200 && response.StatusCode < 400 {
-			m.setCachedProxyMode(strings.ToLower(mode.name))
-			return ProxyTestResult{OK: true, Protocol: mode.name, LatencyMS: latency.Milliseconds(), Message: fmt.Sprintf("代理可用 · %s · %d ms", mode.name, latency.Milliseconds())}, nil
-		}
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", mode.name, err))
-		} else {
-			failures = append(failures, fmt.Sprintf("%s: GitHub HTTP %d", mode.name, response.StatusCode))
-		}
+
+	address := net.JoinHostPort(strings.TrimSpace(settings.ProxyHost), strconv.Itoa(settings.ProxyPort))
+	mode, err := detectProxyProtocol(ctx, address)
+	if err != nil {
+		return ProxyTestResult{}, err
 	}
-	return ProxyTestResult{}, fmt.Errorf("代理测试失败（已尝试 HTTP 和 SOCKS5）：%s", strings.Join(failures, "; "))
+
+	start := time.Now()
+	if err := m.testProxyMode(ctx, settings, mode); err != nil {
+		fallbackMode := "socks5"
+		if mode == "socks5" {
+			fallbackMode = "http"
+		}
+		fallbackCtx, cancel := context.WithTimeout(ctx, proxyFallbackTimeout)
+		defer cancel()
+		if fallbackErr := m.testProxyMode(fallbackCtx, settings, fallbackMode); fallbackErr != nil {
+			return ProxyTestResult{}, fmt.Errorf("代理测试失败（%s: %v；%s: %v）", strings.ToUpper(mode), err, strings.ToUpper(fallbackMode), fallbackErr)
+		}
+		mode = fallbackMode
+	}
+
+	m.setCachedProxyMode(mode)
+	latency := time.Since(start).Milliseconds()
+	protocol := strings.ToUpper(mode)
+	return ProxyTestResult{
+		OK:        true,
+		Protocol:  protocol,
+		LatencyMS: latency,
+		Message:   fmt.Sprintf("已使用代理模式 · %s · %d ms", protocol, latency),
+	}, nil
+}
+
+func (m *Manager) testProxyMode(ctx context.Context, settings Settings, mode string) error {
+	requestCtx, cancel := context.WithTimeout(ctx, proxyResponseHeaderTimeout)
+	defer cancel()
+
+	endpoint := strings.TrimRight(m.apiBaseURL, "/") + "/rate_limit"
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("User-Agent", "MCP-DevDesk/"+m.version)
+
+	var transport http.RoundTripper = httpProxyTransport(settings)
+	if mode == "socks5" {
+		transport = socks5ProxyTransport(settings)
+	}
+	response, err := (&http.Client{Transport: transport}).Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 8<<10))
+	if response.StatusCode < 200 || response.StatusCode >= 400 {
+		return fmt.Errorf("GitHub returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 func (m *Manager) cachedProxyMode() string {
@@ -128,11 +220,13 @@ func (m *Manager) cachedProxyMode() string {
 	defer m.proxyModeMu.RUnlock()
 	return m.proxyMode
 }
+
 func (m *Manager) setCachedProxyMode(mode string) {
 	m.proxyModeMu.Lock()
 	m.proxyMode = mode
 	m.proxyModeMu.Unlock()
 }
+
 func (m *Manager) resetCachedProxyMode() { m.setCachedProxyMode("") }
 
 func validateProxySettings(settings Settings) error {
@@ -166,11 +260,13 @@ func socks5DialContext(proxyAddress string) func(context.Context, string, string
 				_ = conn.Close()
 			}
 		}()
+
 		deadline := time.Now().Add(proxyConnectTimeout)
 		if value, ok := ctx.Deadline(); ok && value.Before(deadline) {
 			deadline = value
 		}
 		_ = conn.SetDeadline(deadline)
+
 		if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
 			return nil, err
 		}
@@ -181,6 +277,7 @@ func socks5DialContext(proxyAddress string) func(context.Context, string, string
 		if greeting[0] != 0x05 || greeting[1] != 0x00 {
 			return nil, fmt.Errorf("SOCKS5 proxy does not allow unauthenticated connections")
 		}
+
 		host, portText, err := net.SplitHostPort(targetAddress)
 		if err != nil {
 			return nil, err
@@ -209,6 +306,7 @@ func socks5DialContext(proxyAddress string) func(context.Context, string, string
 		if _, err := conn.Write(request); err != nil {
 			return nil, err
 		}
+
 		header := make([]byte, 4)
 		if _, err := io.ReadFull(conn, header); err != nil {
 			return nil, err
