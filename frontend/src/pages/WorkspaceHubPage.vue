@@ -424,6 +424,21 @@ async function saveRuntimeConfig() {
   }
 }
 
+async function repairProjectTunnelDNS(project: Project | null) {
+  if (!project) return;
+  const instance = instanceForProject(project);
+  if (!instance?.domain || !instance.tunnelId) {
+    openRuntimeConfig(project);
+    ui.toast("暂时无法修复 DNS", "请先保存公网域名并成功创建或复用 Tunnel。", "info");
+    return;
+  }
+  try {
+    await app.repairInstanceTunnelDNS(instance.id);
+  } catch (error) {
+    ui.toast("修复 DNS 失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
 async function runProject(project: Project, action: "start" | "stop" | "restart") {
   const instance = instanceForProject(project);
   if (!instance) {
@@ -616,6 +631,7 @@ onMounted(async () => {
             <AppButton tone="quiet" compact icon="folder" @click="openPathEdit(project)">路径</AppButton>
             <AppButton tone="quiet" compact icon="settings" @click="openProjectPrompt(project)">AGENTS.md</AppButton>
             <AppButton tone="secondary" compact icon="settings" @click="openRuntimeConfig(project)">配置</AppButton>
+            <AppButton v-if="instanceForProject(project)?.domain && instanceForProject(project)?.tunnelId" tone="quiet" compact icon="refresh" :loading="app.actionPending === `repair-instance-dns-${instanceForProject(project)?.id}`" @click="repairProjectTunnelDNS(project)">修复DNS</AppButton>
             <AppButton v-if="!instanceForProject(project)?.mcp.running" tone="primary" compact icon="play" @click="runProject(project, 'start')">启动</AppButton>
             <AppButton v-else tone="secondary" compact icon="restart" @click="runProject(project, 'restart')">重启</AppButton>
             <AppButton v-if="instanceForProject(project)?.mcp.running" tone="quiet" compact icon="stop" @click="runProject(project, 'stop')">停止</AppButton>
@@ -703,6 +719,10 @@ onMounted(async () => {
             </div>
             <ToggleSwitch v-model="runtimeForm.reuseTunnel" label="复用已有 Tunnel" />
             <small v-if="instanceForProject(runtimeProject)?.remoteMcpUrl" class="workspace-tunnel-url">{{ instanceForProject(runtimeProject)?.remoteMcpUrl }}</small>
+            <div v-if="instanceForProject(runtimeProject)?.domain && instanceForProject(runtimeProject)?.tunnelId" class="form-footer">
+              <small>Tunnel 正常但域名没有 DNS 时，可重新绑定当前 Tunnel UUID 并验证公网解析。</small>
+              <AppButton tone="secondary" icon="refresh" :loading="app.actionPending === `repair-instance-dns-${instanceForProject(runtimeProject)?.id}`" @click="repairProjectTunnelDNS(runtimeProject)">修复 DNS</AppButton>
+            </div>
           </div>
         </div>
         <div class="instance-toggle-grid"><ToggleSwitch v-model="runtimeForm.autoStart" label="自动启动" /><ToggleSwitch v-model="runtimeForm.watchdog" label="运行守护" /><ToggleSwitch v-model="runtimeForm.loggingEnabled" label="记录日志" /><ToggleSwitch v-model="runtimeForm.allowNetwork" label="允许网络" /></div>
