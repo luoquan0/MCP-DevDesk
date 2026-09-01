@@ -52,7 +52,7 @@ Tunnel UUID:   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 - 同名 Tunnel：允许复用或创建新名称。
 - DNS 已存在：要求用户确认，不静默覆盖。
 - 网络不通：展示需要手工添加的 CNAME。
-- 凭据缺失：提示重新授权或选择凭据文件。
+- 凭据缺失或 Origin Certificate 过期：允许重新授权并重建 `cert.pem`；已有 Tunnel 凭据、Tunnel UUID 和 DNS 配置不会被删除。
 - Tunnel 掉线：Watchdog 自动重启并记录日志。
 
 ## 6. MCP 端口联动
