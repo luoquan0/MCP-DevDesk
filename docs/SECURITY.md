@@ -102,7 +102,7 @@ Go 核心还会过滤命令子进程继承的常见敏感环境变量，包括�
 - ChatGPT 为不同自定义 MCP 应用生成不同 `/connector/oauth/<id>` 回调路径；当用户已经登记过一个 ChatGPT 回调时，仅在同一 `https://chatgpt.com/connector/oauth/` 家族内允许新的生成式回调，其他已配置回调仍保持精确匹配。
 - 授权服务器声明并接受 `offline_access`，继续为远程 MCP 会话签发可轮换 Refresh Token。
 - OAuth Token 绑定到精确的 MCP `resource` 受众。
-- 回调地址必须精确匹配；只允许 HTTPS 或本机回环 HTTP。
+- 非 ChatGPT 回调以及不属于已登记 ChatGPT 回调家族的地址仍必须精确匹配；所有回调只允许 HTTPS 或本机回环 HTTP。
 - 刷新令牌使用一次后立即轮换，旧令牌不能重复使用。
 - MCP 未授权响应返回受保护资源元数据地址。
 - 浏览器 Origin 只允许本机或已配置的公开服务源，降低 DNS rebinding 风险。
@@ -116,4 +116,3 @@ Go 核心还会过滤命令子进程继承的常见敏感环境变量，包括�
 - 其他 Cloudflare Tunnel 不会被批量终止。
 - 进程命令行中的 `--token` 值在返回管理 API 前会被替换为 `***`。
 - 修改端口采用新 MCP 先就绪、旧 Tunnel 后关闭的顺序，降低公网连接中断时间。
-
