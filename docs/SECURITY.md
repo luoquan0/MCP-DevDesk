@@ -98,6 +98,9 @@ Go 核心还会过滤命令子进程继承的常见敏感环境变量，包括�
 ## 6. OAuth 与远程访问
 
 - 授权码流程必须使用 PKCE S256。
+- 内置静态客户端允许基于 PKCE 的 public-client Token 交换；客户端如果主动提交 Client Secret，则仍必须与本机保存值一致。
+- ChatGPT 为不同自定义 MCP 应用生成不同 `/connector/oauth/<id>` 回调路径；当用户已经登记过一个 ChatGPT 回调时，仅在同一 `https://chatgpt.com/connector/oauth/` 家族内允许新的生成式回调，其他已配置回调仍保持精确匹配。
+- 授权服务器声明并接受 `offline_access`，继续为远程 MCP 会话签发可轮换 Refresh Token。
 - OAuth Token 绑定到精确的 MCP `resource` 受众。
 - 回调地址必须精确匹配；只允许 HTTPS 或本机回环 HTTP。
 - 刷新令牌使用一次后立即轮换，旧令牌不能重复使用。

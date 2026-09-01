@@ -267,7 +267,7 @@ func (s *oauthServer) handleAuthorizationServerMetadata(w http.ResponseWriter, _
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"none", "client_secret_post", "client_secret_basic"},
-		"scopes_supported":                      []string{"mcp"},
+		"scopes_supported":                      []string{"mcp", "offline_access"},
 	})
 }
 
@@ -462,17 +462,8 @@ func (s *oauthServer) validateAuthorizationRequest(values url.Values) (validated
 	// Built-in desktop client compatibility: MCP clients may use a generated
 	// callback endpoint. Do not permanently bind the built-in client to an old
 	// callback saved by an earlier version, but keep URI validation enabled.
-	if !containsExact(client.RedirectURIs, redirectURI) {
-		if client.ClientID == s.staticClientID && len(s.staticRedirectURIs) == 0 {
-			// The built-in desktop client is intentionally not pinned to one
-			// callback. MCP desktop clients commonly allocate a local callback
-			// port during startup. Security comes from HTTPS/loopback validation.
-			if err := validateRedirectURI(redirectURI); err != nil {
-				return validatedAuthorizationRequest{}, errors.New("redirect_uri is not registered for this client")
-			}
-		} else {
-			return validatedAuthorizationRequest{}, errors.New("redirect_uri is not registered for this client")
-		}
+	if !s.redirectURIAllowed(client, redirectURI) {
+		return validatedAuthorizationRequest{}, errors.New("redirect_uri is not registered for this client")
 	}
 	challenge := strings.TrimSpace(values.Get("code_challenge"))
 	if values.Get("code_challenge_method") != "S256" || len(challenge) < 43 || len(challenge) > 128 {
@@ -483,7 +474,7 @@ func (s *oauthServer) validateAuthorizationRequest(values url.Values) (validated
 		return validatedAuthorizationRequest{}, errors.New("resource must identify this MCP server")
 	}
 	scope := normalizeScope(values.Get("scope"))
-	if scope != "mcp" {
+	if !validOAuthScope(scope) {
 		return validatedAuthorizationRequest{}, errors.New("unsupported scope")
 	}
 	name := client.ClientName
@@ -494,6 +485,40 @@ func (s *oauthServer) validateAuthorizationRequest(values url.Values) (validated
 		clientID: clientID, clientName: name, redirectURI: redirectURI,
 		state: values.Get("state"), codeChallenge: challenge, resource: resource, scope: scope,
 	}, nil
+}
+
+func (s *oauthServer) redirectURIAllowed(client oauthClient, redirectURI string) bool {
+	if containsExact(client.RedirectURIs, redirectURI) {
+		return true
+	}
+	if client.ClientID != s.staticClientID || validateRedirectURI(redirectURI) != nil {
+		return false
+	}
+	// The built-in MCP client is intentionally not pinned when no callbacks
+	// have been configured. ChatGPT also allocates a different callback path
+	// for each custom app. If the user explicitly registered one ChatGPT
+	// connector callback, keep the origin/path family pinned to ChatGPT while
+	// allowing another generated connector callback for a second MCP instance.
+	if len(s.staticRedirectURIs) == 0 {
+		return true
+	}
+	if !isChatGPTConnectorRedirect(redirectURI) {
+		return false
+	}
+	for _, registered := range s.staticRedirectURIs {
+		if isChatGPTConnectorRedirect(registered) {
+			return true
+		}
+	}
+	return false
+}
+
+func isChatGPTConnectorRedirect(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "chatgpt.com") || parsed.Port() != "" || parsed.Fragment != "" {
+		return false
+	}
+	return strings.HasPrefix(parsed.Path, "/connector/oauth/") && len(strings.TrimPrefix(parsed.Path, "/connector/oauth/")) > 0
 }
 
 func (s *oauthServer) handleToken(w http.ResponseWriter, r *http.Request) {
@@ -632,6 +657,18 @@ func (s *oauthServer) authenticateClient(r *http.Request) (oauthClient, error) {
 	client, ok := s.lookupClient(clientID)
 	if !ok {
 		return oauthClient{}, errors.New("unknown client")
+	}
+	if clientID == s.staticClientID {
+		// PKCE is mandatory for authorization-code grants, so the built-in
+		// client can safely operate as a public client. Keep the configured
+		// secret as an optional compatibility check: clients that send it must
+		// send the correct value, while clients such as ChatGPT may omit it.
+		if clientSecret != "" {
+			if s.staticSecret == "" || subtle.ConstantTimeCompare([]byte(s.staticSecret), []byte(clientSecret)) != 1 {
+				return oauthClient{}, errors.New("client authentication failed")
+			}
+		}
+		return client, nil
 	}
 	if client.TokenEndpointAuthMethod == "none" {
 		if clientSecret != "" {
@@ -1019,6 +1056,18 @@ func normalizeScope(value string) string {
 		return "mcp"
 	}
 	return strings.Join(uniqueStrings(fields), " ")
+}
+
+func validOAuthScope(value string) bool {
+	if !containsScope(value, "mcp") {
+		return false
+	}
+	for _, scope := range strings.Fields(value) {
+		if scope != "mcp" && scope != "offline_access" {
+			return false
+		}
+	}
+	return true
 }
 
 func containsScope(value, expected string) bool {

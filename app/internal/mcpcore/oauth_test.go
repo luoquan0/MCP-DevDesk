@@ -167,6 +167,151 @@ func TestOAuthPKCEAndProtectedMCP(t *testing.T) {
 	}
 }
 
+func TestOAuthStaticClientSupportsMultipleChatGPTInstances(t *testing.T) {
+	const (
+		ownerPassword  = "owner-password-long-enough"
+		clientID       = "mcp-devdesk"
+		clientSecret   = "static-client-secret-value"
+		firstCallback  = "https://chatgpt.com/connector/oauth/first-app"
+		secondCallback = "https://chatgpt.com/connector/oauth/second-app"
+	)
+	tokenSecret := strings.Repeat("de", 32)
+
+	type instance struct {
+		issuer   string
+		resource string
+		handler  http.Handler
+	}
+	newInstance := func(issuer string) instance {
+		resource := issuer + "/mcp"
+		server := mustNewServer(t, Options{
+			Workspace: t.TempDir(),
+			OAuth: OAuthOptions{
+				Enabled:       true,
+				Issuer:        issuer,
+				Resource:      resource,
+				OwnerPassword: ownerPassword,
+				ClientID:      clientID,
+				ClientSecret:  clientSecret,
+				RedirectURIs:  []string{firstCallback},
+				TokenSecret:   tokenSecret,
+				DataDir:       t.TempDir(),
+			},
+		})
+		return instance{issuer: issuer, resource: resource, handler: server.Handler()}
+	}
+
+	first := newInstance("https://mcp1.example.test")
+	second := newInstance("https://mcp2.example.test")
+
+	exchange := func(target instance, callback string, withSecret bool) string {
+		t.Helper()
+		verifier := strings.Repeat("z", 43)
+		values := url.Values{
+			"response_type":         {"code"},
+			"client_id":             {clientID},
+			"redirect_uri":          {callback},
+			"code_challenge":        {pkceChallenge(verifier)},
+			"code_challenge_method": {"S256"},
+			"resource":              {target.resource},
+			"scope":                 {"mcp offline_access"},
+		}
+		page := httptest.NewRecorder()
+		target.handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, target.issuer+"/oauth/authorize?"+values.Encode(), nil))
+		if page.Code != http.StatusOK {
+			t.Fatalf("authorize page for %s = %d %s", target.issuer, page.Code, page.Body.String())
+		}
+
+		values.Set("owner_password", ownerPassword)
+		authorized := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, target.issuer+"/oauth/authorize", strings.NewReader(values.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		target.handler.ServeHTTP(authorized, request)
+		if authorized.Code != http.StatusFound {
+			t.Fatalf("authorize for %s = %d %s", target.issuer, authorized.Code, authorized.Body.String())
+		}
+		redirect, err := url.Parse(authorized.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := redirect.Query().Get("code")
+		if code == "" {
+			t.Fatalf("authorization code missing for %s", target.issuer)
+		}
+
+		tokenValues := url.Values{
+			"grant_type":    {"authorization_code"},
+			"client_id":     {clientID},
+			"code":          {code},
+			"redirect_uri":  {callback},
+			"code_verifier": {verifier},
+			"resource":      {target.resource},
+		}
+		if withSecret {
+			tokenValues.Set("client_secret", clientSecret)
+		}
+		tokenRecorder := httptest.NewRecorder()
+		tokenRequest := httptest.NewRequest(http.MethodPost, target.issuer+"/oauth/token", strings.NewReader(tokenValues.Encode()))
+		tokenRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		target.handler.ServeHTTP(tokenRecorder, tokenRequest)
+		if tokenRecorder.Code != http.StatusOK {
+			t.Fatalf("token exchange for %s = %d %s", target.issuer, tokenRecorder.Code, tokenRecorder.Body.String())
+		}
+		var tokenResult struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			Scope        string `json:"scope"`
+		}
+		decodeJSON(t, tokenRecorder.Body, &tokenResult)
+		if tokenResult.AccessToken == "" || tokenResult.RefreshToken == "" || !containsScope(tokenResult.Scope, "offline_access") {
+			t.Fatalf("incomplete token response for %s: %#v", target.issuer, tokenResult)
+		}
+		return tokenResult.AccessToken
+	}
+
+	firstToken := exchange(first, firstCallback, true)
+	_ = exchange(second, secondCallback, false)
+
+	initializeBody := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"chatgpt","version":"1"}}}`
+	crossInstance := httptest.NewRecorder()
+	crossRequest := httptest.NewRequest(http.MethodPost, second.resource, strings.NewReader(initializeBody))
+	crossRequest.Header.Set("Content-Type", "application/json")
+	crossRequest.Header.Set("Accept", "application/json, text/event-stream")
+	crossRequest.Header.Set("Authorization", "Bearer "+firstToken)
+	second.handler.ServeHTTP(crossInstance, crossRequest)
+	if crossInstance.Code != http.StatusUnauthorized {
+		t.Fatalf("token issued by first instance was accepted by second instance: %d %s", crossInstance.Code, crossInstance.Body.String())
+	}
+}
+
+func TestOAuthStaticClientRejectsWrongOptionalSecret(t *testing.T) {
+	const issuer = "http://127.0.0.1:18765"
+	server := mustNewServer(t, Options{
+		Workspace: t.TempDir(),
+		OAuth: OAuthOptions{
+			Enabled:       true,
+			Issuer:        issuer,
+			Resource:      issuer + "/mcp",
+			OwnerPassword: "owner-password-long-enough",
+			ClientID:      "mcp-devdesk",
+			ClientSecret:  "correct-static-secret",
+			TokenSecret:   strings.Repeat("ef", 32),
+			DataDir:       t.TempDir(),
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, issuer+"/oauth/token", strings.NewReader(url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {"mcp-devdesk"},
+		"client_secret": {"wrong-static-secret"},
+	}.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized || !strings.Contains(recorder.Body.String(), "client authentication failed") {
+		t.Fatalf("wrong optional static secret = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestAuthorizationContentSecurityPolicyUsesOnlyValidatedRedirectOrigin(t *testing.T) {
 	policy := authorizationContentSecurityPolicy("https://chatgpt.com/connector/oauth/callback?state=abc")
 	if !strings.Contains(policy, "form-action 'self' https://chatgpt.com") {
