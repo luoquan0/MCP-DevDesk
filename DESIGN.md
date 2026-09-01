@@ -156,6 +156,7 @@ Dangerous changes such as permission mode, port takeover and process termination
 - Use toast notifications for completed operations.
 - Use skeletons for initial loading.
 - Use an inspector drawer for detailed errors and process metadata.
+- Log source switching should prefer a compact dropdown above the console instead of a permanently tall source sidebar; log consoles should use a bounded scrollable height.
 - Never block the whole application for routine refresh operations.
 
 ## Motion

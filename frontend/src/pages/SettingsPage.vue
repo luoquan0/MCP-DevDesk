@@ -246,8 +246,21 @@ function markUpdateAction(label: string) {
 }
 
 async function saveUpdatePreferences(auto = false) {
+  if (!auto && updateProxyAutoSaveTimer) {
+    window.clearTimeout(updateProxyAutoSaveTimer);
+    updateProxyAutoSaveTimer = undefined;
+  }
   const proxy = updateProxyPayload(!auto);
   if (!proxy) return;
+  const current = app.updateSettings;
+  if (!auto && current
+    && current.channel === updateChannel.value
+    && current.checkOnStartup === updateCheckOnStartup.value
+    && current.proxyHost === proxy.proxyHost
+    && current.proxyPort === proxy.proxyPort) {
+    updateActionFeedback.value = proxy.proxyHost ? "代理设置已经保存" : "当前已经是直连模式";
+    return;
+  }
   if (updateSettingsSaving.value) {
     updateActionFeedback.value = "上一轮更新设置仍在保存，最多 6 秒会自动结束";
     return;
@@ -873,16 +886,16 @@ onMounted(() => {
       <div class="form-footer top-divider">
         <small>{{ updateActionFeedback || updateProxyTestMessage || '代理 IP 和端口填完整后会自动保存；也可以手动测试代理或检查更新。代理仅用于软件更新。' }}</small>
         <div class="form-footer-actions software-update-actions">
-          <button type="button" class="app-button is-quiet" :disabled="updateSettingsSaving" @pointerdown.prevent.stop="saveUpdatePreferences(false)" @click="saveUpdatePreferences(false)">
+          <button type="button" class="app-button is-quiet" :disabled="updateSettingsSaving" @pointerdown.prevent.stop="saveUpdatePreferences(false)" @keydown.enter.prevent="saveUpdatePreferences(false)" @keydown.space.prevent="saveUpdatePreferences(false)">
             <span v-if="updateSettingsSaving" class="button-spinner" /><span>保存更新设置</span>
           </button>
-          <button type="button" class="app-button is-secondary" :disabled="updateProxyTesting" @pointerdown.prevent.stop="testUpdateProxy" @click="testUpdateProxy">
+          <button type="button" class="app-button is-secondary" :disabled="updateProxyTesting" @pointerdown.prevent.stop="testUpdateProxy" @keydown.enter.prevent="testUpdateProxy" @keydown.space.prevent="testUpdateProxy">
             <span v-if="updateProxyTesting" class="button-spinner" /><AppIcon v-else name="shield" :size="16" /><span>测试代理</span>
           </button>
-          <button type="button" class="app-button is-secondary" :disabled="updateChecking" @pointerdown.prevent.stop="checkForUpdate" @click="checkForUpdate">
+          <button type="button" class="app-button is-secondary" :disabled="updateChecking" @pointerdown.prevent.stop="checkForUpdate" @keydown.enter.prevent="checkForUpdate" @keydown.space.prevent="checkForUpdate">
             <span v-if="updateChecking" class="button-spinner" /><AppIcon v-else name="refresh" :size="16" /><span>检查更新</span>
           </button>
-          <button v-if="app.updateRelease?.updateAvailable" type="button" class="app-button is-primary" :disabled="app.actionPending === 'install-update'" @pointerdown.prevent.stop="installAvailableUpdate" @click="installAvailableUpdate">
+          <button v-if="app.updateRelease?.updateAvailable" type="button" class="app-button is-primary" :disabled="app.actionPending === 'install-update'" @pointerdown.prevent.stop="installAvailableUpdate" @keydown.enter.prevent="installAvailableUpdate" @keydown.space.prevent="installAvailableUpdate">
             <span v-if="app.actionPending === 'install-update'" class="button-spinner" /><AppIcon v-else name="play" :size="16" /><span>立即更新到 {{ app.updateRelease.latestVersion }}</span>
           </button>
         </div>

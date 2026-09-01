@@ -26,6 +26,7 @@ const sources = [
   { id: "audit", label: "MCP 审计", icon: "shield" },
 ];
 
+const activeSource = computed(() => sources.find((source) => source.id === activeLog.value) ?? sources[0]);
 const diagnosticRows = computed(() => Object.entries(app.diagnostics || {}).filter(([key]) => !key.endsWith("Path") && !key.endsWith("Url")));
 
 async function loadLog(name = activeLog.value) {
@@ -59,32 +60,33 @@ onMounted(() => loadLog());
       </template>
     </PageHeader>
 
-    <section class="logs-layout">
-      <AppCard class="log-source-card" :padded="false">
-        <div class="log-source-header"><span>日志来源</span><small>{{ sources.length }}</small></div>
-        <nav class="log-source-list">
-          <button v-for="source in sources" :key="source.id" type="button" :class="{ 'is-active': activeLog === source.id }" @click="loadLog(source.id)">
-            <AppIcon :name="source.icon" :size="16" />
-            <span>{{ source.label }}</span>
-            <AppIcon name="chevron-right" :size="14" />
-          </button>
-        </nav>
-      </AppCard>
+    <section class="logs-compact-stack">
+      <AppCard class="log-view-card log-view-compact" :padded="false">
+        <div class="log-view-toolbar log-view-toolbar-compact">
+          <label class="log-source-picker">
+            <span class="log-source-picker-label">日志来源</span>
+            <span class="log-source-select-wrap">
+              <AppIcon :name="activeSource.icon" :size="16" />
+              <select v-model="activeLog" :disabled="loading" @change="loadLog(activeLog)">
+                <option v-for="source in sources" :key="source.id" :value="source.id">{{ source.label }}</option>
+              </select>
+            </span>
+          </label>
 
-      <AppCard class="log-view-card" :padded="false">
-        <div class="log-view-toolbar">
-          <div>
-            <strong>{{ sources.find((source) => source.id === activeLog)?.label }}</strong>
-            <span class="mono">{{ logData?.path || '正在读取…' }}</span>
+          <div class="log-view-current">
+            <strong>{{ activeSource.label }}</strong>
+            <span class="mono" :title="logData?.path || ''">{{ logData?.path || '正在读取…' }}</span>
           </div>
+
           <StatusPill tone="neutral">{{ logData?.lines.length ?? 0 }} 行</StatusPill>
         </div>
-        <div class="log-console" :class="{ 'is-loading': loading }">
+
+        <div class="log-console log-console-compact" :class="{ 'is-loading': loading }">
           <pre>{{ logData?.lines.length ? logData.lines.join('\n') : '日志文件尚未产生内容。' }}</pre>
         </div>
       </AppCard>
 
-      <AppCard class="diagnostic-card" :padded="false">
+      <AppCard class="diagnostic-card diagnostic-card-compact" :padded="false">
         <div class="diagnostic-header">
           <div><strong>环境诊断</strong><span>本机组件和端口检查</span></div>
           <AppIcon name="activity" :size="18" />
@@ -101,3 +103,135 @@ onMounted(() => loadLog());
     </section>
   </div>
 </template>
+
+<style scoped>
+.logs-compact-stack {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.log-view-card.log-view-compact {
+  min-height: 0 !important;
+  overflow: hidden;
+  grid-template-rows: auto auto;
+}
+
+.log-view-toolbar-compact {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+  min-height: 0;
+  padding: 14px 16px;
+}
+
+.log-source-picker {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.log-source-picker-label {
+  color: var(--text-secondary) !important;
+  font-size: 11px !important;
+  font-weight: 650;
+}
+
+.log-source-select-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.log-source-select-wrap .app-icon {
+  position: absolute;
+  left: 12px;
+  z-index: 1;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.log-source-select-wrap select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 34px 0 38px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 11px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-solid) 90%, transparent);
+  cursor: pointer;
+}
+
+.log-source-select-wrap select:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.log-view-current {
+  display: grid !important;
+  min-width: 0;
+  gap: 4px !important;
+  padding-bottom: 3px;
+}
+
+.log-view-current strong {
+  font-size: 12px !important;
+}
+
+.log-view-current .mono {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 9px !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-console.log-console-compact {
+  width: 100%;
+  height: clamp(300px, 44vh, 460px);
+  min-height: 300px;
+  max-height: 460px;
+  overflow: auto;
+}
+
+.diagnostic-card.diagnostic-card-compact {
+  min-height: 0 !important;
+  grid-template-rows: auto auto;
+}
+
+@media (max-width: 880px) {
+  .log-view-toolbar-compact {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .log-source-picker {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .log-view-toolbar-compact {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .log-source-picker,
+  .log-view-current {
+    grid-column: 1;
+  }
+
+  .log-view-toolbar-compact :deep(.status-pill) {
+    justify-self: start;
+  }
+
+  .log-console.log-console-compact {
+    height: 340px;
+    min-height: 340px;
+  }
+}
+</style>
