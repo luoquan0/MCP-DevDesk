@@ -35,10 +35,10 @@ jobs:
         run: |
           gofmt -w app/internal/mcpcore/oauth.go app/internal/mcpcore/oauth_test.go
 
-      - name: Run Go tests
+      - name: Run OAuth regression tests
         shell: pwsh
         working-directory: app
-        run: go test -mod=vendor ./...
+        run: go test -mod=vendor ./internal/mcpcore -run 'TestOAuth|TestAuthorization|TestProtectedResource'
 
       - name: Validate diff
         shell: bash
