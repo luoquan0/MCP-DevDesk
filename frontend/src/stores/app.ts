@@ -368,6 +368,15 @@ export const useAppStore = defineStore("app", {
       ui.toast("实例 Tunnel 已配置", result.remoteMcpUrl, "success");
       return result;
     },
+    async repairInstanceTunnelDNS(id: string) {
+      const ui = useUiStore();
+      const result = await this.runAction(`repair-instance-dns-${id}`, () => api<ConfigureTunnelResult>(`/api/instances/${encodeURIComponent(id)}/cloudflare/repair-dns`, {
+        method: "POST",
+      }));
+      await this.loadInstances();
+      ui.toast("DNS 修复完成", result.message || result.domain, "success");
+      return result;
+    },
     async loadInstanceLog(id: string, name: string, limit = 100) {
       return api<LogResponse>(`/api/instances/${encodeURIComponent(id)}/logs?name=${encodeURIComponent(name)}&limit=${limit}`);
     },

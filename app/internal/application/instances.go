@@ -542,6 +542,24 @@ func (a *App) ConfigureInstanceTunnel(ctx context.Context, id string, request mo
 	return result, nil
 }
 
+func (a *App) RepairInstanceTunnelDNS(ctx context.Context, id string) (model.ConfigureTunnelResult, error) {
+	if id == model.PrimaryInstanceID {
+		return a.tunnel.RepairDNS(ctx, a.config.Get())
+	}
+	_, runtime, err := a.instanceRecordAndRuntime(id)
+	if err != nil {
+		return model.ConfigureTunnelResult{}, err
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	result, err := a.tunnel.RepairDNS(ctx, runtime.config.Get())
+	if err != nil {
+		return model.ConfigureTunnelResult{}, err
+	}
+	_, _ = a.instances.Touch(id)
+	return result, nil
+}
+
 func (a *App) InstanceLogs(id, name string, maxLines int) (model.LogResponse, error) {
 	if id == model.PrimaryInstanceID {
 		return a.Logs(name, maxLines)

@@ -97,6 +97,7 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/instances/{id}/stop", s.handleStopInstance)
 	mux.HandleFunc("POST /api/instances/{id}/restart", s.handleRestartInstance)
 	mux.HandleFunc("POST /api/instances/{id}/cloudflare/configure", s.handleConfigureInstanceTunnel)
+	mux.HandleFunc("POST /api/instances/{id}/cloudflare/repair-dns", s.handleRepairInstanceTunnelDNS)
 	mux.HandleFunc("GET /api/instances/{id}/logs", s.handleInstanceLogs)
 	mux.HandleFunc("POST /api/services/start", s.handleStartServices)
 	mux.HandleFunc("POST /api/services/stop", s.handleStopServices)
@@ -658,6 +659,17 @@ func (s *Server) handleConfigureInstanceTunnel(w http.ResponseWriter, r *http.Re
 	result, err := s.app.ConfigureInstanceTunnel(ctx, r.PathValue("id"), request)
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleRepairInstanceTunnelDNS(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+	defer cancel()
+	result, err := s.app.RepairInstanceTunnelDNS(ctx, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

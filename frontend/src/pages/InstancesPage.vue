@@ -294,6 +294,14 @@ async function configureTunnel(instance: MCPInstance) {
   }
 }
 
+async function repairTunnelDNS(instance: MCPInstance) {
+  try {
+    await app.repairInstanceTunnelDNS(instance.id);
+  } catch (error) {
+    ui.toast("修复 DNS 失败", errorMessage(error), "danger");
+  }
+}
+
 async function copyValue(value: string, label: string) {
   try {
     await navigator.clipboard.writeText(value);
@@ -432,6 +440,7 @@ onMounted(async () => {
           <AppButton v-if="!instance.primary" tone="secondary" icon="settings" @click="startEdit(instance)">编辑配置</AppButton>
           <AppButton tone="secondary" icon="copy" :loading="app.actionPending === `clone-instance-${instance.id}`" @click="cloneWithOtherCore(instance)">复制到另一核心</AppButton>
           <AppButton tone="secondary" icon="cloud" @click="startTunnelEdit(instance)">配置 Tunnel</AppButton>
+          <AppButton v-if="instance.domain && instance.tunnelId" tone="secondary" icon="refresh" :loading="app.actionPending === `repair-instance-dns-${instance.id}`" @click="repairTunnelDNS(instance)">修复 DNS</AppButton>
           <AppButton tone="secondary" icon="logs" @click="openLogs(instance)">实例日志</AppButton>
           <AppButton v-if="!instance.primary" tone="quiet" @click="deleteInstance(instance)">删除</AppButton>
         </div>
@@ -457,7 +466,7 @@ onMounted(async () => {
         </form>
 
         <form v-if="tunnelEditingId === instance.id" class="instance-inline-editor" @submit.prevent="configureTunnel(instance)">
-          <div class="card-heading"><div><span class="eyebrow">Cloudflare Tunnel</span><h3>配置独立域名</h3></div><AppButton tone="quiet" @click="tunnelEditingId = ''">取消</AppButton></div>
+          <div class="card-heading"><div><span class="eyebrow">Cloudflare Tunnel</span><h3>配置独立域名</h3><small>保存后会自动创建并验证公网 DNS；失败会显示 cloudflared 原始错误。</small></div><AppButton tone="quiet" @click="tunnelEditingId = ''">取消</AppButton></div>
           <div class="field-grid">
             <label class="field"><span>完整域名</span><input v-model="tunnelForm.domain" placeholder="api-mcp.example.com" /></label>
             <label class="field"><span>Tunnel 名称</span><input v-model="tunnelForm.tunnelName" placeholder="mcp-devdesk-api" /></label>
