@@ -249,7 +249,7 @@ func (s *Server) handleSaveUpdateSettings(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleTestUpdateProxy(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 13*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 11*time.Second)
 	defer cancel()
 	result, err := s.app.TestUpdateProxy(ctx)
 	if err != nil {
@@ -260,7 +260,7 @@ func (s *Server) handleTestUpdateProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCheckForUpdate(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 16*time.Second)
 	defer cancel()
 	release, err := s.app.CheckForUpdate(ctx)
 	if err != nil {

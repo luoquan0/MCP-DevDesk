@@ -64,10 +64,31 @@ function startUpdateProgressPolling() {
   };
 }
 
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+export interface ApiRequestInit extends RequestInit {
+  timeoutMs?: number;
+  timeoutMessage?: string;
+}
+
+function requestTimeoutFor(path: string, method: string): number {
+  if (path === "/api/update/settings") return 6000;
+  if (path === "/api/update/proxy-test" && method === "POST") return 14000;
+  if (path === "/api/update/check" && method === "POST") return 19000;
+  return 0;
+}
+
+export async function api<T>(path: string, options: ApiRequestInit = {}): Promise<T> {
+  const method = String(options.method || "GET").toUpperCase();
+  const { timeoutMs: configuredTimeout, timeoutMessage, ...fetchOptions } = options;
+  const timeoutMs = configuredTimeout ?? requestTimeoutFor(path, method);
+  const timeoutController = timeoutMs > 0 && !fetchOptions.signal ? new AbortController() : null;
+  let timeoutHandle: number | undefined;
+  if (timeoutController) {
+    timeoutHandle = window.setTimeout(() => timeoutController.abort(), timeoutMs);
+  }
   const request: RequestInit = {
-    ...options,
-    headers: { ...(options.headers ?? {}) },
+    ...fetchOptions,
+    signal: timeoutController?.signal ?? fetchOptions.signal,
+    headers: { ...(fetchOptions.headers ?? {}) },
   };
 
   if (request.body && typeof request.body !== "string") {
@@ -96,7 +117,16 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     }
 
     return payload as T;
+  } catch (error) {
+    if (timeoutController?.signal.aborted) {
+      throw new ApiError(
+        timeoutMessage || `请求超时（${Math.ceil(timeoutMs / 1000)} 秒），请检查本机服务或代理连接。`,
+        408,
+      );
+    }
+    throw error;
   } finally {
+    if (timeoutHandle !== undefined) window.clearTimeout(timeoutHandle);
     if (stopProgressPolling) await stopProgressPolling();
   }
 }

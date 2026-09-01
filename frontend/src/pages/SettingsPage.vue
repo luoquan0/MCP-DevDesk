@@ -243,7 +243,11 @@ function markUpdateAction(label: string) {
 
 async function saveUpdatePreferences(auto = false) {
   const proxy = updateProxyPayload(!auto);
-  if (!proxy || updateSettingsSaving.value) return;
+  if (!proxy) return;
+  if (updateSettingsSaving.value) {
+    updateActionFeedback.value = "上一轮更新设置仍在保存，最多 6 秒会自动结束";
+    return;
+  }
   updateSettingsSaving.value = true;
   updateActionFeedback.value = proxy.proxyHost ? "正在保存代理模式…" : "正在保存直连模式…";
   try {
@@ -265,6 +269,10 @@ async function saveUpdatePreferences(auto = false) {
 }
 
 async function testUpdateProxy() {
+  if (updateProxyTesting.value) {
+    updateActionFeedback.value = "上一轮代理测试仍在进行，最多 14 秒会自动结束";
+    return;
+  }
   markUpdateAction("测试代理");
   const proxy = updateProxyPayload();
   if (!proxy) return;
@@ -272,7 +280,6 @@ async function testUpdateProxy() {
     ui.toast("未配置代理", "请先填写代理 IP 和端口；留空表示直连，无需测试。", "info");
     return;
   }
-  if (updateProxyTesting.value) return;
   updateProxyTesting.value = true;
   updateProxyTestMessage.value = "正在自动测试 HTTP / SOCKS5...";
   updateActionFeedback.value = "已收到点击：测试代理 · 正在连接…";
@@ -292,9 +299,13 @@ async function testUpdateProxy() {
 }
 
 async function checkForUpdate() {
+  if (updateChecking.value) {
+    updateActionFeedback.value = "上一轮检查仍在进行，最多 19 秒会自动结束";
+    return;
+  }
   markUpdateAction("检查更新");
   const proxy = updateProxyPayload();
-  if (!proxy || updateChecking.value) return;
+  if (!proxy) return;
   updateChecking.value = true;
   updateActionFeedback.value = "已收到点击：检查更新 · 正在请求 GitHub…";
   try {

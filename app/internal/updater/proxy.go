@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	proxyConnectTimeout        = 3 * time.Second
-	proxyProbeTimeout          = 1200 * time.Millisecond
-	proxyResponseHeaderTimeout = 6 * time.Second
-	proxyFallbackTimeout       = 6 * time.Second
+	proxyConnectTimeout        = 2 * time.Second
+	proxyProbeTimeout          = 900 * time.Millisecond
+	proxyResponseHeaderTimeout = 4 * time.Second
+	proxyFallbackTimeout       = 4 * time.Second
 )
 
 type ProxyTestResult struct {

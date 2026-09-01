@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -130,6 +131,59 @@ func TestDetectUnavailableProxyFailsQuickly(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("unavailable proxy took too long: %s", elapsed)
 	}
+}
+
+func TestProxyTestHonorsContextDeadline(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buffer := make([]byte, 32)
+				_, _ = c.Read(buffer)
+				<-time.After(5 * time.Second)
+			}(conn)
+		}
+	}()
+
+	manager, err := NewManager(t.TempDir(), "0.12.18", "owner/repository")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, portText, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.UpdateSettings(SettingsUpdate{ProxyHost: &host, ProxyPort: &port}); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	if _, err := manager.TestProxy(ctx); err == nil {
+		t.Fatal("expected proxy test to fail on context deadline")
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("proxy test ignored context deadline: %s", elapsed)
+	}
+	_ = listener.Close()
+	<-done
 }
 
 func TestUpdateProxySettingsRequireCompleteAddress(t *testing.T) {
