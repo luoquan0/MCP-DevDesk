@@ -1,0 +1,47 @@
+name: Apply update proxy port value fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/.apply_update_proxy_port_value_fix"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Apply source patch
+        run: python tools/apply_update_proxy_port_value_fix.py
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Build frontend
+        run: npm run build --prefix frontend
+
+      - name: Commit validated fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/pages/SettingsPage.vue docs/UPDATER_PROXY.md
+          git diff --cached --check
+          git commit -m "fix: normalize updater proxy port input"
+          git push
