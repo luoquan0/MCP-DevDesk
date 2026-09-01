@@ -131,6 +131,13 @@ export interface UpdateSettings {
   proxyPort: number;
 }
 
+export interface UpdateProxyTestResult {
+  ok: boolean;
+  protocol: "HTTP" | "SOCKS5" | string;
+  latencyMs: number;
+  message: string;
+}
+
 export interface UpdateRelease {
   currentVersion: string;
   latestVersion: string;

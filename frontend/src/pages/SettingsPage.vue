@@ -35,6 +35,8 @@ const updateCheckOnStartup = ref(true);
 const updateProxyHost = ref("");
 const updateProxyPort = ref("");
 const updateChecking = ref(false);
+const updateProxyTesting = ref(false);
+const updateProxyTestMessage = ref("");
 const appearanceFileInput = ref<HTMLInputElement | null>(null);
 const appearanceSaving = ref(false);
 const appearanceUploading = ref(false);
@@ -223,6 +225,28 @@ async function saveUpdatePreferences() {
     });
   } catch (error) {
     ui.toast("保存更新设置失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
+
+async function testUpdateProxy() {
+  const proxy = updateProxyPayload();
+  if (!proxy) return;
+  if (!proxy.proxyHost || !proxy.proxyPort) {
+    ui.toast("未配置代理", "请先填写代理 IP 和端口；留空表示直连，无需测试。", "info");
+    return;
+  }
+  updateProxyTesting.value = true;
+  updateProxyTestMessage.value = "正在自动测试 HTTP / SOCKS5...";
+  try {
+    await app.saveUpdateSettings({ channel: updateChannel.value, checkOnStartup: updateCheckOnStartup.value, ...proxy });
+    const result = await app.testUpdateProxy();
+    updateProxyTestMessage.value = `${result.protocol} 可用 · ${result.latencyMs} ms`;
+    ui.toast("代理测试成功", result.message, "success");
+  } catch (error) {
+    updateProxyTestMessage.value = error instanceof Error ? error.message : String(error);
+    ui.toast("代理测试失败", updateProxyTestMessage.value, "danger");
+  } finally {
+    updateProxyTesting.value = false;
   }
 }
 
@@ -750,7 +774,7 @@ onMounted(() => {
         <div>
           <span class="eyebrow">GitHub Releases</span>
           <h3>软件更新</h3>
-          <p>从内置 GitHub Releases 更新源检查并安装新版本。可选填写 HTTP 代理 IP 和端口；下载包仍必须通过 SHA256 校验。</p>
+          <p>从内置 GitHub Releases 更新源检查并安装新版本。代理只需填写 IP 和端口，自动兼容 HTTP / SOCKS5；下载包仍必须通过 SHA256 校验。</p>
         </div>
         <StatusPill :tone="app.updateRelease?.updateAvailable ? 'info' : 'neutral'">
           {{ app.updateRelease?.updateAvailable ? `可更新 ${app.updateRelease.latestVersion}` : `当前 ${app.status?.version || '--'}` }}
@@ -761,12 +785,12 @@ onMounted(() => {
         <label class="field">
           <span>更新代理 IP</span>
           <input v-model.trim="updateProxyHost" type="text" spellcheck="false" placeholder="例如 127.0.0.1" />
-          <small>可选 HTTP 代理。只填写 IP 或主机名；留空表示直连 GitHub。</small>
+          <small>可选代理。只填写 IP 或主机名；程序会自动识别 HTTP 或 SOCKS5，留空表示直连 GitHub。</small>
         </label>
         <label class="field">
           <span>代理端口</span>
           <input v-model="updateProxyPort" type="number" min="1" max="65535" inputmode="numeric" placeholder="例如 7890" />
-          <small>与代理 IP 配套使用，例如 Clash 常用 7890。</small>
+          <small>与代理 IP 配套使用，例如 7890、1080、10808；可用“测试代理”确认协议和连通性。</small>
         </label>
         <label class="field">
           <span>更新通道</span>
@@ -792,10 +816,11 @@ onMounted(() => {
       </div>
 
       <div class="form-footer top-divider">
-        <small>立即更新会先下载 Release ZIP 并校验 SHA256，再启动独立 updater。程序文件会替换，data/devdesk、项目目录和 AGENTS.md 不会被更新包覆盖；失败时自动回滚旧二进制。</small>
+        <small>{{ updateProxyTestMessage || '立即更新会先下载 Release ZIP 并校验 SHA256，再启动独立 updater。代理仅用于软件更新，不影响 MCP 和 Cloudflare。' }}</small>
         <div class="form-footer-actions">
-          <AppButton tone="quiet" :loading="app.actionPending === 'save-update-settings'" @click="saveUpdatePreferences">保存更新设置</AppButton>
-          <AppButton tone="secondary" icon="refresh" :loading="updateChecking" @click="checkForUpdate">检查更新</AppButton>
+          <AppButton tone="quiet" :loading="app.actionPending === 'save-update-settings'" @click.stop="saveUpdatePreferences">保存更新设置</AppButton>
+          <AppButton tone="secondary" icon="shield" :loading="updateProxyTesting || app.actionPending === 'test-update-proxy'" @click.stop="testUpdateProxy">测试代理</AppButton>
+          <AppButton tone="secondary" icon="refresh" :loading="updateChecking" @click.stop="checkForUpdate">检查更新</AppButton>
           <AppButton v-if="app.updateRelease?.updateAvailable" tone="primary" icon="play" :loading="app.actionPending === 'install-update'" @click="installAvailableUpdate">立即更新到 {{ app.updateRelease.latestVersion }}</AppButton>
         </div>
       </div>

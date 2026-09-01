@@ -241,3 +241,7 @@ GitHub Actions 完成后检查：
 ## 软件更新代理
 
 MCP DevDesk 的更新源由正式构建内置，界面不再显示或编辑 GitHub 仓库。软件设置可选填写 HTTP 代理 IP/主机名与端口；填写后 Release 检查、SHA256 下载和 Portable ZIP 下载统一走该代理，留空则直连。代理设置只影响软件更新，不影响 MCP Core、Cloudflare Tunnel 或项目联网。
+
+### 代理连通性测试
+
+更新代理支持只填写 IP/主机名和端口，程序自动尝试 HTTP CONNECT 与无认证 SOCKS5。设置页提供“测试代理”，测试请求有独立短超时并显示识别到的协议与耗时；错误代理不会再让“检查更新”长时间看起来无响应。代理仅用于 GitHub Release 元数据、SHA256 和更新包下载。

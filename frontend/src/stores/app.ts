@@ -26,6 +26,7 @@ import type {
   ServiceStatus,
   TunnelInventory,
   UpdateInstallResult,
+  UpdateProxyTestResult,
   UpdateRelease,
   UpdateSettings,
   WebControlStatus,
@@ -131,6 +132,9 @@ export const useAppStore = defineStore("app", {
         : "更新代理：直连";
       useUiStore().toast("更新设置已保存", proxyLabel, "success");
       return this.updateSettings;
+    },
+    async testUpdateProxy() {
+      return this.runAction("test-update-proxy", () => api<UpdateProxyTestResult>("/api/update/proxy-test", { method: "POST" }));
     },
     async checkForUpdate(silent = false) {
       try {

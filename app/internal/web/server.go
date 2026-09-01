@@ -67,6 +67,7 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("DELETE /api/appearance/background", s.handleRemoveAppearanceBackground)
 	mux.HandleFunc("GET /api/update/settings", s.handleUpdateSettings)
 	mux.HandleFunc("PUT /api/update/settings", s.handleSaveUpdateSettings)
+	mux.HandleFunc("POST /api/update/proxy-test", s.handleTestUpdateProxy)
 	mux.HandleFunc("POST /api/update/check", s.handleCheckForUpdate)
 	mux.HandleFunc("POST /api/update/install", s.handleInstallUpdate)
 	mux.HandleFunc("GET /api/projects", s.handleListProjects)
@@ -247,8 +248,19 @@ func (s *Server) handleSaveUpdateSettings(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, settings)
 }
 
+func (s *Server) handleTestUpdateProxy(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 13*time.Second)
+	defer cancel()
+	result, err := s.app.TestUpdateProxy(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleCheckForUpdate(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	release, err := s.app.CheckForUpdate(ctx)
 	if err != nil {

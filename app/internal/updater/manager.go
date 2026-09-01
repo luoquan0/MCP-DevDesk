@@ -112,6 +112,8 @@ type Manager struct {
 	client       *http.Client
 	progressMu   sync.RWMutex
 	progress     DownloadProgress
+	proxyModeMu  sync.RWMutex
+	proxyMode    string
 }
 
 func NewManager(dataDir, currentVersion string, defaultRepository ...string) (*Manager, error) {
@@ -243,10 +245,14 @@ func (m *Manager) UpdateSettings(update SettingsUpdate) (Settings, error) {
 		return Settings{}, err
 	}
 	previous := m.current
+	proxyChanged := previous.ProxyHost != next.ProxyHost || previous.ProxyPort != next.ProxyPort
 	m.current = next
 	if err := m.saveLocked(); err != nil {
 		m.current = previous
 		return Settings{}, err
+	}
+	if proxyChanged {
+		m.resetCachedProxyMode()
 	}
 	return m.current, nil
 }

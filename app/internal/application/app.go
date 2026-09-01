@@ -143,6 +143,10 @@ func (a *App) CheckForUpdate(ctx context.Context) (appupdater.Release, error) {
 	return a.updates.Check(ctx)
 }
 
+func (a *App) TestUpdateProxy(ctx context.Context) (appupdater.ProxyTestResult, error) {
+	return a.updates.TestProxy(ctx)
+}
+
 func (a *App) PrepareUpdate(ctx context.Context) (appupdater.PreparedUpdate, error) {
 	release, err := a.updates.Check(ctx)
 	if err != nil {
