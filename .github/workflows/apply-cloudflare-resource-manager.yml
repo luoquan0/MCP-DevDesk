@@ -5,7 +5,7 @@ on:
     branches:
       - "main"
     paths:
-      - ".github/scripts/apply_cloudflare_resource_manager.py"
+      - ".github/scripts/harden_cloudflare_resource_manager.py"
       - ".github/workflows/apply-cloudflare-resource-manager.yml"
   workflow_dispatch:
 
@@ -21,8 +21,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply patch
-        run: python .github/scripts/apply_cloudflare_resource_manager.py
+      - name: Harden cleanup semantics
+        run: python .github/scripts/harden_cloudflare_resource_manager.py
 
       - name: Commit business changes
         run: |
@@ -33,5 +33,5 @@ jobs:
             echo "No business changes to commit"
             exit 0
           fi
-          git commit -m "feat: manage Cloudflare bindings and cloudflared updates [skip release]"
+          git commit -m "fix: explicitly clean Cloudflare DNS before Tunnel removal [skip release]"
           git push origin HEAD:main
