@@ -869,16 +869,18 @@ onMounted(() => {
       <div class="form-footer top-divider">
         <small>{{ updateActionFeedback || updateProxyTestMessage || '代理 IP 和端口填完整后会自动保存；也可以手动测试代理或检查更新。代理仅用于软件更新。' }}</small>
         <div class="form-footer-actions software-update-actions">
-          <button type="button" class="app-button is-quiet" :disabled="updateSettingsSaving" @pointerdown="markUpdateAction('保存更新设置')" @click="saveUpdatePreferences(false)">
+          <button type="button" class="app-button is-quiet" :disabled="updateSettingsSaving" @pointerdown.prevent.stop="saveUpdatePreferences(false)" @click="saveUpdatePreferences(false)">
             <span v-if="updateSettingsSaving" class="button-spinner" /><span>保存更新设置</span>
           </button>
-          <button type="button" class="app-button is-secondary" :disabled="updateProxyTesting" @pointerdown="markUpdateAction('测试代理')" @click="testUpdateProxy">
+          <button type="button" class="app-button is-secondary" :disabled="updateProxyTesting" @pointerdown.prevent.stop="testUpdateProxy" @click="testUpdateProxy">
             <span v-if="updateProxyTesting" class="button-spinner" /><AppIcon v-else name="shield" :size="16" /><span>测试代理</span>
           </button>
-          <button type="button" class="app-button is-secondary" :disabled="updateChecking" @pointerdown="markUpdateAction('检查更新')" @click="checkForUpdate">
+          <button type="button" class="app-button is-secondary" :disabled="updateChecking" @pointerdown.prevent.stop="checkForUpdate" @click="checkForUpdate">
             <span v-if="updateChecking" class="button-spinner" /><AppIcon v-else name="refresh" :size="16" /><span>检查更新</span>
           </button>
-          <AppButton v-if="app.updateRelease?.updateAvailable" tone="primary" icon="play" :loading="app.actionPending === 'install-update'" @click="installAvailableUpdate">立即更新到 {{ app.updateRelease.latestVersion }}</AppButton>
+          <button v-if="app.updateRelease?.updateAvailable" type="button" class="app-button is-primary" :disabled="app.actionPending === 'install-update'" @pointerdown.prevent.stop="installAvailableUpdate" @click="installAvailableUpdate">
+            <span v-if="app.actionPending === 'install-update'" class="button-spinner" /><AppIcon v-else name="play" :size="16" /><span>立即更新到 {{ app.updateRelease.latestVersion }}</span>
+          </button>
         </div>
       </div>
     </AppCard>
