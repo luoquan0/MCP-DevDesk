@@ -14,6 +14,8 @@ MCP-DevDesk/
 ├── devdeskctl.exe
 └── data/
     └── devdesk/
+        └── cloudflare/
+            └── <Tunnel-UUID>.json
 ```
 
 ## 程序文件路径
@@ -55,17 +57,23 @@ D:\work\backend
 - `instances/`
 - `secrets.json`
 - OAuth 刷新令牌
+- `cloudflare/<Tunnel-UUID>.json`
 - 外观设置与背景
 - 更新设置
 
-不要把真实运行中的 `data/devdesk` 提交到 GitHub。
+Cloudflare Tunnel 的单隧道 JSON 凭据现在统一保存在 `data/devdesk/cloudflare/`，因此复制整个 MCP DevDesk 目录到另一台电脑时，该 Tunnel 的运行凭据会一起迁移。旧版本位于 `%USERPROFILE%\.cloudflared\<Tunnel-UUID>.json` 的文件会在首次使用时自动复制到便携目录。
+
+`%USERPROFILE%\.cloudflared\cert.pem` 仍是 Cloudflare 账号级 Origin Certificate，不属于便携运行数据，也不应放进发布包。新电脑仅运行已经配置好的 Tunnel 不依赖它；若需要在新电脑创建、删除 Tunnel 或修改 DNS，则应在该电脑重新执行 Cloudflare 授权。
+
+不要把真实运行中的 `data/devdesk` 提交到 GitHub，也不要把 Tunnel JSON 或 `cert.pem` 放进源码仓库或 Release 固定文件中。
 
 ## 推荐迁移方式
 
 1. 彻底退出 MCP DevDesk，并确认管理器和由它管理的服务已经停止。
 2. 将整个运行目录移动到新位置，例如 `C:\MCP-DevDesk`。
 3. 从新位置启动 `MCP-DevDesk.exe`。
-4. 确认项目、实例、端口、凭据和外观仍然正常。
-5. 确认无误后再删除旧空目录。
+4. 确认项目、实例、端口、Tunnel 凭据和外观仍然正常。
+5. 如果需要在新电脑管理 Cloudflare 账号或 DNS，再单独执行一次 Cloudflare 登录授权。
+6. 确认无误后再删除旧空目录。
 
-新版本不应要求因为单纯移动 MCP DevDesk 运行目录而手工修改三个内置 EXE 路径。
+新版本不应要求因为单纯移动 MCP DevDesk 运行目录而手工修改三个内置 EXE 路径或重新创建 Tunnel。
