@@ -1,7 +1,6 @@
 package startup
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -187,8 +186,4 @@ func recoverUpdateSettings(dataDir string) (bool, error) {
 func directoryExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
-}
-
-func IsRecoverableMissingFile(err error) bool {
-	return errors.Is(err, os.ErrNotExist)
 }
