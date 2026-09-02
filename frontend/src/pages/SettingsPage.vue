@@ -4,6 +4,7 @@ import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
 import PageHeader from "@/components/ui/PageHeader.vue";
+import PromptTemplateDialog from "@/components/ui/PromptTemplateDialog.vue";
 import StatusPill from "@/components/ui/StatusPill.vue";
 import ToggleSwitch from "@/components/ui/ToggleSwitch.vue";
 import SecuritySettingsSection from "@/components/settings/SecuritySettingsSection.vue";
@@ -31,6 +32,7 @@ const webControlAuthEnabled = ref(false);
 const webControlPassword = ref("");
 const globalPromptEnabled = ref(false);
 const globalPromptDraft = ref("");
+const globalPromptTemplatesOpen = ref(false);
 const updateChannel = ref<"stable" | "prerelease">("stable");
 const updateCheckOnStartup = ref(true);
 const updateProxyHost = ref("");
@@ -57,12 +59,6 @@ const globalPromptActive = computed(() => globalPromptEnabled.value && Boolean(g
 const appearanceBackgroundUrl = computed(() => app.appearance?.hasBackgroundImage
   ? `/api/appearance/background?rev=${encodeURIComponent(String(app.appearance.backgroundRevision))}`
   : "");
-const globalPromptTemplate = `# 全局 Agent 规则
-
-## 通用执行原则
-- 优先完成用户当前要求中能够直接执行的步骤，不要为了汇报进度而中断可继续完成的工作。
-- 修改代码后执行与改动相关的测试、构建或验证；无法执行时明确说明原因。
-- 不覆盖项目自己的 AGENTS.md 规则；项目级约束应保留在项目目录中。`;
 const secretForm = reactive({
   ownerPassword: "",
   clientId: "",
@@ -402,7 +398,12 @@ async function saveGlobalPrompt() {
 }
 
 function useGlobalPromptTemplate() {
-  globalPromptDraft.value = globalPromptTemplate;
+  globalPromptTemplatesOpen.value = true;
+}
+
+function applyGlobalPromptTemplate(content: string) {
+  globalPromptDraft.value = content;
+  globalPromptTemplatesOpen.value = false;
 }
 
 async function loadSecrets() {
@@ -729,7 +730,7 @@ onMounted(() => {
       <div class="form-footer">
         <small>保存后会同步到运行中的 Go MCP 实例；全局规则只存在 DevDesk 数据目录，不会复制到每个项目文件夹。</small>
         <div class="form-footer-actions">
-          <AppButton tone="secondary" @click="useGlobalPromptTemplate">使用通用模板</AppButton>
+          <AppButton tone="secondary" @click="useGlobalPromptTemplate">使用模板</AppButton>
           <AppButton tone="primary" :loading="app.actionPending === 'save-global-project-prompt'" @click="saveGlobalPrompt">保存全局提示词</AppButton>
         </div>
       </div>
@@ -916,5 +917,13 @@ onMounted(() => {
       </div>
       <StatusPill :tone="app.updateRelease?.updateAvailable ? 'info' : 'neutral'">{{ app.updateRelease?.updateAvailable ? '有新版本' : 'GitHub Releases' }}</StatusPill>
     </AppCard>
+
+    <PromptTemplateDialog
+      :open="globalPromptTemplatesOpen"
+      title="全局提示词模板"
+      target-label="全局提示词"
+      @close="globalPromptTemplatesOpen = false"
+      @apply="applyGlobalPromptTemplate"
+    />
   </div>
 </template>
