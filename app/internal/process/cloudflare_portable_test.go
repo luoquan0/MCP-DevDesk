@@ -3,6 +3,7 @@ package process
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -59,5 +60,50 @@ func TestStorePortableCredentialsUsesTunnelUUIDFilename(t *testing.T) {
 	}
 	if _, err := os.Stat(got); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPreparePortableCredentialsCreatePathUsesPortableDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("MCP_DEVDESK_ROOT", root)
+
+	path, err := PreparePortableCredentialsCreatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDir := filepath.Join(root, "data", "devdesk", "cloudflare")
+	if filepath.Dir(path) != wantDir {
+		t.Fatalf("create path dir = %q, want %q", filepath.Dir(path), wantDir)
+	}
+	if !strings.HasPrefix(filepath.Base(path), ".tunnel-create-") || filepath.Ext(path) != ".json" {
+		t.Fatalf("unexpected create path %q", path)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("reserved path must not exist before cloudflared writes it, stat err = %v", err)
+	}
+}
+
+func TestFinalizePortableCredentialsMovesTemporaryFile(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("MCP_DEVDESK_ROOT", root)
+	tunnelID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	source, err := PreparePortableCredentialsCreatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("portable-created"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := FinalizePortableCredentials(tunnelID, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "data", "devdesk", "cloudflare", tunnelID+".json")
+	if got != want {
+		t.Fatalf("final path = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("temporary credentials should be removed, stat err = %v", err)
 	}
 }
