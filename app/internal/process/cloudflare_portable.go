@@ -145,6 +145,9 @@ func StorePortableCredentials(rootDir, tunnelID, src string) (string, error) {
 		return dst, err
 	}
 	if filepath.Clean(src) != filepath.Clean(dst) {
+		// cloudflared writes newly created credentials as read-only (0400).
+		// Clear that bit before removing the temporary portable create file on Windows.
+		_ = os.Chmod(src, 0o600)
 		_ = os.Remove(src)
 	}
 	return dst, nil
