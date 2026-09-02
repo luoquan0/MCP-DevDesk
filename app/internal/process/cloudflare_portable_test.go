@@ -94,6 +94,11 @@ func TestFinalizePortableCredentialsMovesTemporaryFile(t *testing.T) {
 	if err := os.WriteFile(source, []byte("portable-created"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// cloudflared writes tunnel credentials as 0400. On Windows this can map to
+	// a read-only file attribute, so finalization must make the temporary file removable.
+	if err := os.Chmod(source, 0o400); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := FinalizePortableCredentials(tunnelID, source)
 	if err != nil {
