@@ -125,6 +125,10 @@ func Install(options Options) error {
 		_ = restartProcess(options.CurrentExe, options.RestartArgs)
 		return fmt.Errorf("restart updated application: %w", err)
 	}
+	// The archive is only needed through extraction. Once the updated manager
+	// has been launched successfully, remove the verified package immediately;
+	// startup housekeeping remains a fallback for interrupted/older updates.
+	_ = os.Remove(options.PackagePath)
 	return nil
 }
 
