@@ -10,8 +10,8 @@
 → 用户登录并选择域名
 → 程序检测 cert.pem
 → 用户填写完整子域名
-→ 程序创建 Tunnel
-→ 程序把 Tunnel JSON 保存到 data/devdesk/cloudflare/
+→ 程序创建 Tunnel，并让 cloudflared 直接把 JSON 写入 data/devdesk/cloudflare/
+→ 程序按 Tunnel UUID 固定凭据文件名
 → 程序创建 DNS 路由
 → 启动 MCP 和 Tunnel
 → 显示最终 MCP 地址
@@ -22,16 +22,18 @@
 ```powershell
 cloudflared.exe tunnel login
 cloudflared.exe tunnel list
-cloudflared.exe tunnel create mcp-devdesk
+cloudflared.exe tunnel create --credentials-file <MCP-DevDesk目录>\data\devdesk\cloudflare\.tunnel-create-<随机值>.json mcp-devdesk
 cloudflared.exe tunnel route dns mcp-devdesk mcp.example.com
 cloudflared.exe tunnel run --credentials-file <MCP-DevDesk目录>\data\devdesk\cloudflare\<Tunnel-UUID>.json --protocol http2 --url http://127.0.0.1:<当前 MCP 端口> mcp-devdesk
 ```
 
-MCP DevDesk 不再依赖 `%USERPROFILE%\.cloudflared\<Tunnel-UUID>.json` 运行 Tunnel。新建或复用 Tunnel 后，单 Tunnel JSON 凭据会进入：
+MCP DevDesk 不再依赖 `%USERPROFILE%\.cloudflared\<Tunnel-UUID>.json` 运行 Tunnel。当前 cloudflared 支持 `--credentials-file` 时，新 Tunnel 的 JSON 从创建时就直接写入软件便携数据目录，随后重命名为稳定的 UUID 文件名：
 
 ```text
 <MCP-DevDesk目录>\data\devdesk\cloudflare\<Tunnel-UUID>.json
 ```
+
+为了兼容非常旧、不认识 `--credentials-file` 的 cloudflared，程序会检测该参数错误并仅在这种情况下回退到旧创建方式，然后立即把生成的 JSON 自动迁移到便携目录。
 
 旧版本已经存在于 `%USERPROFILE%\.cloudflared\` 的 Tunnel JSON 会在首次使用时自动复制到便携目录。之后 Tunnel 进程使用便携目录中的文件，因此整个 MCP DevDesk 文件夹可以一起迁移到另一台电脑。
 
@@ -65,6 +67,7 @@ Credentials:   data/devdesk/cloudflare/<Tunnel-UUID>.json
 - DNS 已存在：要求用户确认，不静默覆盖。
 - 网络不通：展示需要手工添加的 CNAME。
 - 便携凭据缺失：尝试从当前用户 `%USERPROFILE%\.cloudflared\<Tunnel-UUID>.json` 迁移；两处都不存在时提示重新配置。
+- 新 Tunnel 已创建但 UUID 输出解析异常：程序还会从刚生成的 JSON 中读取 Tunnel UUID；仍无法识别时保留临时凭据文件并报告其路径，避免凭据丢失。
 - Origin Certificate 过期：允许重新授权并重建 `cert.pem`；已有便携 Tunnel 凭据、Tunnel UUID 和 DNS 配置不会被删除。
 - Tunnel 掉线：Watchdog 自动重启并记录日志。
 
