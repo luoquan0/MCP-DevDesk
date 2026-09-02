@@ -18,6 +18,8 @@ import (
 	"mcp-devdesk/internal/application"
 	"mcp-devdesk/internal/desktop"
 	devlogging "mcp-devdesk/internal/logging"
+	"mcp-devdesk/internal/maintenance"
+	"mcp-devdesk/internal/startup"
 	"mcp-devdesk/internal/web"
 )
 
@@ -29,6 +31,12 @@ func main() {
 	}
 	dataDir := filepath.Join(rootDir, "data", "devdesk")
 
+	cleanupReport := maintenance.Cleanup(dataDir)
+	recoveryReport, recoveryErr := startup.Prepare(rootDir, dataDir)
+	if recoveryErr != nil {
+		log.Printf("startup data recovery warning: %v", recoveryErr)
+	}
+
 	app, err := application.New(rootDir, dataDir)
 	if err != nil {
 		log.Fatalf("initialize application: %v", err)
@@ -36,6 +44,12 @@ func main() {
 	closeLog := configureLogging(dataDir, func() bool { return app.Config().LoggingEnabled })
 	defer closeLog()
 	defer app.Close()
+	if cleanupReport.FilesRemoved > 0 {
+		log.Printf("storage cleanup removed %d files and freed %d bytes", cleanupReport.FilesRemoved, cleanupReport.BytesFreed)
+	}
+	for _, message := range recoveryReport.Recovered {
+		log.Printf("startup recovery: %s", message)
+	}
 
 	cfg := app.Config()
 	address := cfg.AdminHost + ":" + strconv.Itoa(cfg.AdminPort)
@@ -129,6 +143,9 @@ func main() {
 			run(backgroundCtx)
 		}()
 	}
+	launchBackground(func(ctx context.Context) {
+		maintenance.RunPeriodic(ctx, dataDir)
+	})
 
 	if cfg.OpenBrowserOnStart && !background {
 		launchBackground(func(ctx context.Context) {
