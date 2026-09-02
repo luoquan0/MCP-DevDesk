@@ -77,7 +77,12 @@ Windows 正式版使用当前用户 DPAPI 加密 `secrets.json`：
 
 旧版明文 `secrets.json` 会在首次成功读取后自动迁移为加密信封。动态注册的 OAuth 客户端在 Windows 下同样使用当前用户 DPAPI 加密存储，因此轮换 Token 签名密钥不会导致客户端数据无法解密。
 
-Cloudflare Tunnel JSON 凭据继续由 `cloudflared` 放在用户配置目录，并限制文件 ACL。
+Cloudflare 凭据分两级处理：
+
+- 单 Tunnel 的 `<Tunnel-UUID>.json` 只具备运行对应 Tunnel 的能力，保存在便携数据目录 `data/devdesk/cloudflare/`，随用户主动复制整个 MCP DevDesk 目录迁移。旧版用户目录中的同名 JSON 会自动复制到该目录。
+- `%USERPROFILE%\.cloudflared\cert.pem` 是 Cloudflare 账号级 Origin Certificate，继续留在 Windows 用户配置目录，不进入便携包、不提交 GitHub，也不随在线更新分发。需要创建、删除 Tunnel 或修改 DNS 时，目标电脑应重新完成 Cloudflare 授权。
+
+`data/devdesk` 本身属于敏感运行数据，不得提交到源码仓库或作为公共 Release 内容固化。便携复制意味着拿到该目录的人可能获得其中 Tunnel 的运行能力，因此用户应像保护其他本地应用凭据一样保护整个便携目录。
 
 ## 5. 命令审计
 
