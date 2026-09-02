@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	Interval       = 6 * time.Hour
-	LogMaxAge      = 14 * 24 * time.Hour
-	RecoveryMaxAge = 30 * 24 * time.Hour
-	TempMaxAge     = 24 * time.Hour
+	Interval          = 6 * time.Hour
+	LogMaxAge         = 14 * 24 * time.Hour
+	RecoveryMaxAge    = 30 * 24 * time.Hour
+	TempMaxAge        = 24 * time.Hour
 	MaxRecoveryPerDir = 20
 )
 
@@ -25,13 +25,10 @@ type Report struct {
 	BytesFreed   int64
 }
 
+// Cleanup is intended for process startup, when no update download is active.
+// It removes every completed/partial update package left from previous runs.
 func Cleanup(dataDir string) Report {
-	var report Report
-	cleanupUpdates(filepath.Join(dataDir, "updates"), &report)
-	cleanupLogs(dataDir, &report)
-	cleanupRecovery(dataDir, &report)
-	cleanupUpdaterTemp(&report)
-	return report
+	return cleanup(dataDir, true)
 }
 
 func RunPeriodic(ctx context.Context, dataDir string) {
@@ -42,16 +39,26 @@ func RunPeriodic(ctx context.Context, dataDir string) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			Cleanup(dataDir)
+			cleanup(dataDir, false)
 		}
 	}
 }
 
-func cleanupUpdates(dir string, report *Report) {
+func cleanup(dataDir string, startup bool) Report {
+	var report Report
+	cleanupUpdates(filepath.Join(dataDir, "updates"), startup, &report)
+	cleanupLogs(dataDir, &report)
+	cleanupRecovery(dataDir, &report)
+	cleanupUpdaterTemp(&report)
+	return report
+}
+
+func cleanupUpdates(dir string, startup bool, report *Report) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
+	now := time.Now()
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -59,6 +66,12 @@ func cleanupUpdates(dir string, report *Report) {
 		name := strings.ToLower(entry.Name())
 		if !strings.HasSuffix(name, ".zip") && !strings.HasSuffix(name, ".tmp") && !strings.HasSuffix(name, ".sha256") {
 			continue
+		}
+		if !startup {
+			info, err := entry.Info()
+			if err != nil || now.Sub(info.ModTime()) <= TempMaxAge {
+				continue
+			}
 		}
 		removeFile(filepath.Join(dir, entry.Name()), report)
 	}
