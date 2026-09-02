@@ -12,8 +12,8 @@ const (
 	// MaxEntries is the maximum number of newline-delimited records retained
 	// in any MCP DevDesk log file.
 	MaxEntries = 100
-	// MaxBytes protects against a single abnormally large log line.
-	MaxBytes = int64(2 << 20)
+	// MaxBytes bounds both on-disk history and the in-memory FileWriter cache.
+	MaxBytes = int64(512 << 10)
 )
 
 type EnabledFunc func() bool
