@@ -63,9 +63,16 @@ const serviceForm = reactive({
 });
 
 const normalizedSearch = computed(() => search.value.trim().toLocaleLowerCase());
-const runningProjectInstances = computed(() => app.instances.filter((instance) => !instance.primary && instance.mcp.running).length);
+const runningProjectInstances = computed(() => app.instances.filter((instance) => (
+  !instance.primary
+  && instance.mcp.running
+  && normalizePath(instance.workspace) !== normalizePath(app.config?.workspace)
+)).length);
 const promptBytes = computed(() => new TextEncoder().encode(promptDraft.value).length);
 const selectedProjectIdSet = computed(() => new Set(selectedProjectIds.value));
+const primaryProject = computed(() => app.projects.find((project) => (
+  normalizePath(project.path) === normalizePath(app.config?.workspace)
+)) || app.projects[0] || null);
 
 function toggleFolderPane() {
   folderPaneCollapsed.value = !folderPaneCollapsed.value;
@@ -80,12 +87,13 @@ const visibleFolders = computed(() => {
 
 const filteredProjects = computed(() => {
   const query = normalizedSearch.value;
-  return app.projects.filter((project) => {
+  const projects = app.projects.filter((project) => {
     if (selectedFolder.value === "__unfiled__" && project.folder) return false;
     if (selectedFolder.value !== "__all__" && selectedFolder.value !== "__unfiled__" && project.folder !== selectedFolder.value) return false;
     if (!query) return true;
     return [project.name, project.path, project.folder || ""].some((value) => value.toLocaleLowerCase().includes(query));
   });
+  return projects.sort((left, right) => Number(isPrimaryProject(right)) - Number(isPrimaryProject(left)));
 });
 
 function normalizePath(value = "") {
@@ -96,12 +104,22 @@ function isActiveProject(project: Project) {
   return normalizePath(project.path) === normalizePath(app.config?.workspace);
 }
 
+function isPrimaryProject(project: Project) {
+  return primaryProject.value?.id === project.id;
+}
+
 function instanceForProject(project: Project) {
+  if (isPrimaryProject(project)) return undefined;
   return app.instances.find((instance) => !instance.primary && instance.projectId === project.id)
     || app.instances.find((instance) => !instance.primary && normalizePath(instance.workspace) === normalizePath(project.path));
 }
 
 function runtimeStatus(project: Project) {
+  if (isPrimaryProject(project)) {
+    const port = app.config?.mcpPort || "--";
+    if (app.status?.mcp.running) return { label: `主项目运行中 · ${port}`, tone: "success" as const };
+    return { label: `主项目 · ${port}`, tone: "info" as const };
+  }
   const instance = instanceForProject(project);
   if (!instance) return { label: "未配置", tone: "neutral" as const };
   if (instance.mcp.running) return { label: `运行中 · ${instance.mcpPort}`, tone: "success" as const };
@@ -323,6 +341,10 @@ async function saveProjectPrompt() {
 }
 
 function openRuntimeConfig(project: Project) {
+  if (isPrimaryProject(project)) {
+    ui.toast("主项目使用主服务", "请在上方运行控制和下方基础设置中管理主项目。", "info");
+    return;
+  }
   const instance = instanceForProject(project);
   runtimeProject.value = project;
   runtimeForm.name = instance?.name || `${project.name} MCP`;
@@ -440,6 +462,10 @@ async function repairProjectTunnelDNS(project: Project | null) {
 }
 
 async function runProject(project: Project, action: "start" | "stop" | "restart") {
+  if (isPrimaryProject(project)) {
+    await runPrimary(action);
+    return;
+  }
   const instance = instanceForProject(project);
   if (!instance) {
     openRuntimeConfig(project);
@@ -454,6 +480,10 @@ async function runProject(project: Project, action: "start" | "stop" | "restart"
 }
 
 async function removeProject(project: Project) {
+  if (isPrimaryProject(project)) {
+    ui.toast("主项目不能直接移除", "如需更换主项目，请先切换主工作目录。", "info");
+    return;
+  }
   const active = isActiveProject(project);
   const linkedInstance = instanceForProject(project);
   const accepted = await ui.ask({
@@ -546,7 +576,7 @@ onMounted(async () => {
 
 <template>
   <div class="page-stack workspace-hub-page">
-    <PageHeader eyebrow="Projects & runtimes" title="项目与运行" description="项目库、独立 MCP 运行实例和基础服务设置集中在一个工作区中。">
+    <PageHeader eyebrow="Projects & runtimes" title="项目与运行" description="第一个项目作为主项目跟随主服务；其他项目可配置独立 MCP 实例。">
       <template #actions>
         <AppButton tone="secondary" icon="folder" @click="showAddFolder = !showAddFolder">新建文件夹</AppButton>
         <AppButton tone="primary" icon="projects" @click="showAddProject = !showAddProject">添加项目</AppButton>
@@ -571,11 +601,11 @@ onMounted(async () => {
 
     <AppCard class="workspace-runtime-summary">
       <div class="card-heading">
-        <div><span class="eyebrow">Runtime</span><h3>运行控制</h3><p>主工作区与各项目独立实例可以同时运行。</p></div>
+        <div><span class="eyebrow">Runtime</span><h3>运行控制</h3><p>主项目统一使用主服务；其余项目可按需独立运行。</p></div>
         <StatusPill :tone="app.status?.mcp.running ? 'success' : 'neutral'">{{ app.status?.mcp.running ? '主服务运行中' : '主服务已停止' }}</StatusPill>
       </div>
       <div class="workspace-runtime-facts">
-        <div><span>当前工作目录</span><code>{{ app.config?.workspace || '--' }}</code></div>
+        <div><span>主项目目录</span><code>{{ app.config?.workspace || '--' }}</code></div>
         <div><span>本地 MCP</span><code>{{ app.status?.localMcpUrl || '--' }}</code></div>
         <div><span>独立项目实例</span><strong>{{ runningProjectInstances }} 个运行中</strong></div>
       </div>
@@ -621,22 +651,27 @@ onMounted(async () => {
         <div class="workspace-project-header">
           <span>名称</span><span>MCP</span><span>操作</span>
         </div>
-        <article v-for="project in filteredProjects" :key="project.id" class="workspace-project-row" :class="{ 'is-active': isActiveProject(project), 'is-selected': selectedProjectIdSet.has(project.id) }">
+        <article v-for="project in filteredProjects" :key="project.id" class="workspace-project-row" :class="{ 'is-active': isActiveProject(project), 'is-primary': isPrimaryProject(project), 'is-selected': selectedProjectIdSet.has(project.id) }">
           <div class="workspace-project-name" draggable="true" title="点击选择；Shift 连选；拖到左侧文件夹可批量归类" @click="selectProject(project, $event)" @dragstart="beginProjectDrag(project, $event)" @dragend="endProjectDrag">
             <span class="workspace-row-icon"><AppIcon name="folder" :size="17" /></span>
-            <div><strong>{{ project.name }}</strong><small>{{ project.folder || '未归类' }}</small></div>
+            <div><strong>{{ project.name }}</strong><small>{{ project.folder || '未归类' }}<span v-if="isPrimaryProject(project)"> · 主项目</span></small></div>
           </div>
           <div class="workspace-runtime-state"><StatusPill :tone="runtimeStatus(project).tone">{{ runtimeStatus(project).label }}</StatusPill></div>
           <div class="workspace-project-actions">
             <AppButton tone="quiet" compact icon="folder" @click="openPathEdit(project)">路径</AppButton>
             <AppButton tone="quiet" compact icon="settings" @click="openProjectPrompt(project)">AGENTS.md</AppButton>
-            <AppButton tone="secondary" compact icon="settings" @click="openRuntimeConfig(project)">配置</AppButton>
-            <AppButton v-if="instanceForProject(project)?.domain && instanceForProject(project)?.tunnelId" tone="quiet" compact icon="refresh" :loading="app.actionPending === `repair-instance-dns-${instanceForProject(project)?.id}`" @click="repairProjectTunnelDNS(project)">修复DNS</AppButton>
-            <AppButton v-if="!instanceForProject(project)?.mcp.running" tone="primary" compact icon="play" @click="runProject(project, 'start')">启动</AppButton>
-            <AppButton v-else tone="secondary" compact icon="restart" @click="runProject(project, 'restart')">重启</AppButton>
-            <AppButton v-if="instanceForProject(project)?.mcp.running" tone="quiet" compact icon="stop" @click="runProject(project, 'stop')">停止</AppButton>
-            <AppButton v-if="!isActiveProject(project)" tone="quiet" compact icon="restart" @click="switchProject(project)">切换</AppButton>
-            <AppButton tone="quiet" compact @click="removeProject(project)">移除</AppButton>
+            <template v-if="isPrimaryProject(project)">
+              <StatusPill tone="info">使用主服务</StatusPill>
+            </template>
+            <template v-else>
+              <AppButton tone="secondary" compact icon="settings" @click="openRuntimeConfig(project)">配置</AppButton>
+              <AppButton v-if="instanceForProject(project)?.domain && instanceForProject(project)?.tunnelId" tone="quiet" compact icon="refresh" :loading="app.actionPending === `repair-instance-dns-${instanceForProject(project)?.id}`" @click="repairProjectTunnelDNS(project)">修复DNS</AppButton>
+              <AppButton v-if="!instanceForProject(project)?.mcp.running" tone="primary" compact icon="play" @click="runProject(project, 'start')">启动</AppButton>
+              <AppButton v-else tone="secondary" compact icon="restart" @click="runProject(project, 'restart')">重启</AppButton>
+              <AppButton v-if="instanceForProject(project)?.mcp.running" tone="quiet" compact icon="stop" @click="runProject(project, 'stop')">停止</AppButton>
+              <AppButton v-if="!isActiveProject(project)" tone="quiet" compact icon="restart" @click="switchProject(project)">切换</AppButton>
+              <AppButton tone="quiet" compact @click="removeProject(project)">移除</AppButton>
+            </template>
           </div>
           <select class="workspace-folder-mobile-select" :value="project.folder || ''" aria-label="项目归类" @change="handleMobileProjectFolderChange(project, $event)">
             <option value="">未归类</option>
@@ -700,7 +735,7 @@ onMounted(async () => {
 
     <div v-if="runtimeProject" class="workspace-runtime-backdrop" @click.self="runtimeProject = null">
       <AppCard class="workspace-runtime-dialog">
-        <div class="card-heading"><div><span class="eyebrow">Project runtime</span><h3>{{ runtimeProject.name }} · MCP 配置</h3><p>每个项目使用独立端口和进程，因此可与其他项目同时运行。</p></div><AppButton tone="quiet" @click="runtimeProject = null">关闭</AppButton></div>
+        <div class="card-heading"><div><span class="eyebrow">Project runtime</span><h3>{{ runtimeProject.name }} · MCP 配置</h3><p>每个非主项目使用独立端口和进程，因此可与其他项目同时运行。</p></div><AppButton tone="quiet" @click="runtimeProject = null">关闭</AppButton></div>
         <div class="field-grid">
           <label class="field"><span>实例名称</span><input v-model="runtimeForm.name" /></label>
           <label class="field"><span>MCP 端口</span><input v-model.number="runtimeForm.mcpPort" type="number" min="0" max="65535" /><small>新配置填写 0 自动分配。</small></label>
