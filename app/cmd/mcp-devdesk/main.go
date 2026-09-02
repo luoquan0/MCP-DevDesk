@@ -155,7 +155,7 @@ func main() {
 	launchBackground(func(parent context.Context) {
 		ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 		defer cancel()
-		for _, err := range app.StartAutoInstances(ctx) {
+		for _, err := range app.StartAutoProjectInstances(ctx) {
 			log.Printf("instance auto-start failed: %v", err)
 		}
 	})
