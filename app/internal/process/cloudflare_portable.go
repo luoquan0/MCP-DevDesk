@@ -18,13 +18,54 @@ func PortableCredentialsPath(rootDir, tunnelID string) string {
 	return filepath.Join(rootDir, "data", "devdesk", "cloudflare", tunnelID+".json")
 }
 
+// LegacyCredentialsPath remains as the compatibility entrypoint used by older
+// call sites, but now resolves to MCP DevDesk's portable file location. When a
+// legacy cloudflared file exists it is copied into portable storage first.
 func LegacyCredentialsPath(tunnelID string) string {
+	rootDir := defaultPortableRoot()
+	if rootDir == "" {
+		return userCloudflaredCredentialsPath(tunnelID)
+	}
+	if path, err := EnsurePortableCredentials(rootDir, tunnelID); err == nil {
+		return path
+	}
+	return PortableCredentialsPath(rootDir, tunnelID)
+}
+
+func userCloudflaredCredentialsPath(tunnelID string) string {
 	home := UserHomeDir()
 	tunnelID = strings.ToLower(strings.TrimSpace(tunnelID))
 	if home == "" || tunnelID == "" {
 		return ""
 	}
 	return filepath.Join(home, ".cloudflared", tunnelID+".json")
+}
+
+func defaultPortableRoot() string {
+	if configured := strings.TrimSpace(os.Getenv("MCP_DEVDESK_ROOT")); configured != "" {
+		if absolute, err := filepath.Abs(configured); err == nil {
+			return absolute
+		}
+	}
+
+	candidates := make([]string, 0, 4)
+	if executable, err := os.Executable(); err == nil {
+		dir := filepath.Dir(executable)
+		candidates = append(candidates, dir, filepath.Dir(dir))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, cwd, filepath.Dir(cwd))
+	}
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(candidate)
+		if info, err := os.Stat(filepath.Join(candidate, "cloudflared.exe")); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	if len(candidates) > 0 {
+		return filepath.Clean(candidates[0])
+	}
+	return ""
 }
 
 func EnsurePortableCredentials(rootDir, tunnelID string) (string, error) {
@@ -37,7 +78,7 @@ func EnsurePortableCredentials(rootDir, tunnelID string) (string, error) {
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return dst, err
 	}
-	src := LegacyCredentialsPath(tunnelID)
+	src := userCloudflaredCredentialsPath(tunnelID)
 	if src == "" {
 		return dst, errors.New("legacy Cloudflare path is unavailable")
 	}
