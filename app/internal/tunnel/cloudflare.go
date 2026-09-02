@@ -77,21 +77,22 @@ func (c *Client) Configure(ctx context.Context, cfg model.Config, request model.
 		return model.ConfigureTunnelResult{}, fmt.Errorf("已存在同名 Tunnel %q，请勾选复用或更换名称", request.TunnelName)
 	}
 
+	credentials := ""
 	if !found {
-		output, createErr := c.run(commandCtx, cfg, "tunnel", "create", request.TunnelName)
-		if createErr != nil {
-			return model.ConfigureTunnelResult{}, fmt.Errorf("创建 Tunnel 失败: %w; %s", createErr, compactOutput(output))
+		var createOutput string
+		tunnelID, credentials, createOutput, err = c.createTunnel(commandCtx, cfg, request.TunnelName)
+		if err != nil {
+			return model.ConfigureTunnelResult{}, fmt.Errorf("创建 Tunnel 失败: %w; %s", err, compactOutput(createOutput))
 		}
-		match := uuidPattern.FindString(output)
-		if match == "" {
-			return model.ConfigureTunnelResult{}, fmt.Errorf("创建成功但未能解析 Tunnel UUID: %s", compactOutput(output))
-		}
-		tunnelID = strings.ToLower(match)
+	} else {
+		credentials = processmanager.CredentialsPath(tunnelID)
 	}
 
-	credentials := processmanager.CredentialsPath(tunnelID)
+	if credentials == "" {
+		credentials = processmanager.CredentialsPath(tunnelID)
+	}
 	if _, err := os.Stat(credentials); err != nil {
-		return model.ConfigureTunnelResult{}, fmt.Errorf("Tunnel 凭据文件不存在: %s", credentials)
+		return model.ConfigureTunnelResult{}, fmt.Errorf("Tunnel 凭据文件不存在: %s: %w", credentials, err)
 	}
 
 	// Always bind the hostname to the exact Tunnel UUID and ask cloudflared to
@@ -113,6 +114,98 @@ func (c *Client) Configure(ctx context.Context, cfg model.Config, request model.
 		AuthorizeURL:    "https://" + request.Domain + "/oauth/authorize",
 		Message:         "Tunnel 和 DNS 已配置完成，公网 DNS 验证通过",
 	}, nil
+}
+
+func tunnelCreateArguments(credentialsPath, name string) []string {
+	return []string{"tunnel", "create", "--credentials-file", credentialsPath, name}
+}
+
+func legacyTunnelCreateArguments(name string) []string {
+	return []string{"tunnel", "create", name}
+}
+
+func credentialsFileFlagUnsupported(output string, err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(output)
+	if !strings.Contains(lower, "credentials-file") && !strings.Contains(lower, "cred-file") {
+		return false
+	}
+	return strings.Contains(lower, "unknown flag") ||
+		strings.Contains(lower, "flag provided but not defined") ||
+		strings.Contains(lower, "unknown shorthand flag") ||
+		strings.Contains(lower, "no such flag")
+}
+
+func (c *Client) createTunnel(ctx context.Context, cfg model.Config, name string) (string, string, string, error) {
+	createPath, err := processmanager.PreparePortableCredentialsCreatePath()
+	if err != nil {
+		return "", "", "", err
+	}
+
+	output, createErr := c.run(ctx, cfg, tunnelCreateArguments(createPath, name)...)
+	usedPortableTarget := true
+	if credentialsFileFlagUnsupported(output, createErr) {
+		_ = os.Remove(createPath)
+		legacyOutput, legacyErr := c.run(ctx, cfg, legacyTunnelCreateArguments(name)...)
+		if strings.TrimSpace(legacyOutput) != "" {
+			if strings.TrimSpace(output) != "" {
+				output += "\n"
+			}
+			output += legacyOutput
+		}
+		createErr = legacyErr
+		usedPortableTarget = false
+	}
+	if createErr != nil {
+		if usedPortableTarget {
+			_ = os.Remove(createPath)
+		}
+		return "", "", output, createErr
+	}
+
+	tunnelID := strings.ToLower(uuidPattern.FindString(output))
+	if tunnelID == "" && usedPortableTarget {
+		tunnelID = tunnelIDFromCredentialsFile(createPath)
+	}
+	if tunnelID == "" {
+		if usedPortableTarget {
+			return "", "", output, fmt.Errorf("创建成功但未能解析 Tunnel UUID；临时凭据保留在 %s", createPath)
+		}
+		return "", "", output, errors.New("创建成功但未能解析 Tunnel UUID")
+	}
+
+	if usedPortableTarget {
+		credentials, finalizeErr := processmanager.FinalizePortableCredentials(tunnelID, createPath)
+		if finalizeErr != nil {
+			return tunnelID, "", output, fmt.Errorf("Tunnel 已创建，但便携凭据整理失败（临时文件 %s）: %w", createPath, finalizeErr)
+		}
+		return tunnelID, credentials, output, nil
+	}
+
+	credentials := processmanager.CredentialsPath(tunnelID)
+	if _, statErr := os.Stat(credentials); statErr != nil {
+		return tunnelID, credentials, output, fmt.Errorf("旧版 cloudflared 已创建 Tunnel，但凭据迁移失败: %w", statErr)
+	}
+	return tunnelID, credentials, output, nil
+}
+
+func tunnelIDFromCredentialsFile(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var credentials struct {
+		TunnelID string `json:"TunnelID"`
+	}
+	if json.Unmarshal(raw, &credentials) != nil {
+		return ""
+	}
+	if !uuidPattern.MatchString(credentials.TunnelID) {
+		return ""
+	}
+	return strings.ToLower(uuidPattern.FindString(credentials.TunnelID))
 }
 
 func dnsRouteArguments(tunnelID, domain string) []string {
@@ -235,7 +328,7 @@ func (c *Client) Delete(ctx context.Context, cfg model.Config) (string, error) {
 	}
 	commandCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	output, err := c.run(commandCtx, cfg, deleteTunnelArguments(tunnelID)... )
+	output, err := c.run(commandCtx, cfg, deleteTunnelArguments(tunnelID)...)
 	if err != nil {
 		lower := strings.ToLower(output)
 		if !strings.Contains(lower, "not found") && !strings.Contains(lower, "does not exist") && !strings.Contains(lower, "no tunnel") && !strings.Contains(lower, "already been deleted") && !strings.Contains(lower, "already deleted") {
