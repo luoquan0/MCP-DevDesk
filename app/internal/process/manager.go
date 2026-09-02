@@ -109,9 +109,6 @@ func (m *Manager) syncInstructionsFile(cfg model.Config) (string, error) {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("remove project instructions: %w", err)
 		}
-		// Always return the watched path for Go cores, even when the file does
-		// not exist yet. This lets a running core notice the first prompt saved
-		// after startup instead of requiring a manual restart.
 		return path, nil
 	}
 	desired := content + "\n"
@@ -212,7 +209,10 @@ func (m *Manager) StartTunnel(cfg model.Config) error {
 		return errors.New("tunnel name and domain are required")
 	}
 
-	credentials := CredentialsPath(cfg.TunnelID)
+	credentials, err := EnsurePortableCredentials(m.rootDir, cfg.TunnelID)
+	if err != nil {
+		return fmt.Errorf("tunnel credentials unavailable: %w", err)
+	}
 	if _, err := os.Stat(credentials); err != nil {
 		return fmt.Errorf("tunnel credentials unavailable at %s: %w", credentials, err)
 	}
@@ -408,11 +408,9 @@ func (m *Manager) stop(target *managedProcess) error {
 		return nil
 	}
 
-	// taskkill /T terminates package-manager and shell descendants as well.
 	kill := exec.Command("taskkill.exe", "/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F")
 	configureChildProcess(kill, true)
 	if output, err := kill.CombinedOutput(); err != nil {
-		// A process may exit naturally between the status check and taskkill.
 		text := strings.ToLower(string(output))
 		if !strings.Contains(text, "not found") && !strings.Contains(text, "no running instance") {
 			target.mu.Lock()
@@ -434,11 +432,7 @@ func statusOf(target *managedProcess) model.ProcessStatus {
 }
 
 func CredentialsPath(tunnelID string) string {
-	home := UserHomeDir()
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".cloudflared", tunnelID+".json")
+	return LegacyCredentialsPath(tunnelID)
 }
 
 func CertificatePath() string {
@@ -449,13 +443,7 @@ func CertificatePath() string {
 	return filepath.Join(home, ".cloudflared", "cert.pem")
 }
 
-// UserHomeDir is deliberately more defensive than os.UserHomeDir. Desktop
-// launchers, Windows services and sandboxed management clients sometimes
-// remove USERPROFILE even though the interactive Windows account is known.
 func UserHomeDir() string {
-	// Prefer native Windows identity sources. Sandboxed launchers often set
-	// HOME to an isolated directory while Cloudflare still stores credentials
-	// under the interactive Windows profile.
 	candidates := []string{os.Getenv("USERPROFILE")}
 	if current, err := user.Current(); err == nil {
 		candidates = append(candidates, current.HomeDir)
