@@ -4,6 +4,7 @@ import AppButton from "@/components/ui/AppButton.vue";
 import AppCard from "@/components/ui/AppCard.vue";
 import AppIcon from "@/components/ui/AppIcon.vue";
 import PageHeader from "@/components/ui/PageHeader.vue";
+import PromptTemplateDialog from "@/components/ui/PromptTemplateDialog.vue";
 import RemoteFolderPicker from "@/components/ui/RemoteFolderPicker.vue";
 import StatusPill from "@/components/ui/StatusPill.vue";
 import ToggleSwitch from "@/components/ui/ToggleSwitch.vue";
@@ -32,6 +33,7 @@ const pathProject = ref<Project | null>(null);
 const pathDraft = ref("");
 const promptProject = ref<Project | null>(null);
 const promptDraft = ref("");
+const promptTemplatesOpen = ref(false);
 const selectedProjectIds = ref<string[]>([]);
 const selectionAnchorId = ref("");
 const draggedProjectIds = ref<string[]>([]);
@@ -327,6 +329,16 @@ async function saveProjectPath() {
 function openProjectPrompt(project: Project) {
   promptProject.value = project;
   promptDraft.value = project.prompt || "";
+  promptTemplatesOpen.value = false;
+}
+
+function openProjectPromptTemplates() {
+  promptTemplatesOpen.value = true;
+}
+
+function applyProjectPromptTemplate(content: string) {
+  promptDraft.value = content;
+  promptTemplatesOpen.value = false;
 }
 
 async function saveProjectPrompt() {
@@ -334,6 +346,7 @@ async function saveProjectPrompt() {
   if (!project) return;
   try {
     await app.updateProjectPrompt(project.id, promptDraft.value);
+    promptTemplatesOpen.value = false;
     promptProject.value = null;
   } catch (error) {
     ui.toast("保存 AGENTS.md 失败", error instanceof Error ? error.message : String(error), "danger");
@@ -725,11 +738,17 @@ onMounted(async () => {
       </AppCard>
     </div>
 
-    <div v-if="promptProject" class="workspace-runtime-backdrop" @click.self="promptProject = null">
+    <div v-if="promptProject" class="workspace-runtime-backdrop" @click.self="promptProject = null; promptTemplatesOpen = false">
       <AppCard class="workspace-runtime-dialog">
-        <div class="card-heading"><div><span class="eyebrow">Project instructions</span><h3>{{ promptProject.name }} · AGENTS.md</h3><p>直接编辑项目根目录的 Agent 指令文件。</p></div><AppButton tone="quiet" @click="promptProject = null">关闭</AppButton></div>
+        <div class="card-heading"><div><span class="eyebrow">Project instructions</span><h3>{{ promptProject.name }} · AGENTS.md</h3><p>直接编辑项目根目录的 Agent 指令文件，也可以从模板库一键填入。</p></div><AppButton tone="quiet" @click="promptProject = null; promptTemplatesOpen = false">关闭</AppButton></div>
         <label class="field"><span>AGENTS.md 内容</span><textarea v-model="promptDraft" rows="14" spellcheck="false" placeholder="# 项目说明&#10;&#10;## 开发规则&#10;- ..." /><small>{{ promptBytes }} / {{ app.projectPromptSettings?.maxPromptBytes || 32768 }} bytes</small></label>
-        <div class="form-footer"><small>留空保存会删除项目根目录的 AGENTS.md。</small><AppButton tone="primary" @click="saveProjectPrompt">保存 AGENTS.md</AppButton></div>
+        <div class="form-footer">
+          <small>留空保存会删除项目根目录的 AGENTS.md；模板只填入编辑框，确认后仍需保存。</small>
+          <div class="form-footer-actions">
+            <AppButton tone="secondary" @click="openProjectPromptTemplates">使用模板</AppButton>
+            <AppButton tone="primary" @click="saveProjectPrompt">保存 AGENTS.md</AppButton>
+          </div>
+        </div>
       </AppCard>
     </div>
 
@@ -764,6 +783,14 @@ onMounted(async () => {
         <div class="form-footer"><small>填写 Cloudflare 域名时会同时配置穿透；项目已运行时 Tunnel 会立即启动。</small><AppButton tone="primary" @click="saveRuntimeConfig">保存配置</AppButton></div>
       </AppCard>
     </div>
+
+    <PromptTemplateDialog
+      :open="promptTemplatesOpen && Boolean(promptProject)"
+      :title="promptProject ? `${promptProject.name} · AGENTS.md 模板` : 'AGENTS.md 模板'"
+      target-label="AGENTS.md"
+      @close="promptTemplatesOpen = false"
+      @apply="applyProjectPromptTemplate"
+    />
 
     <RemoteFolderPicker :open="remotePickerOpen" :initial-path="remotePickerInitialPath" :title="remotePickerTitle" @close="remotePickerOpen = false" @select="applyRemoteFolder" />
   </div>
