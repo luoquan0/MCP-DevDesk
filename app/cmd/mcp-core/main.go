@@ -299,22 +299,27 @@ func envOrDefault(name, fallback string) string {
 	return fallback
 }
 
+func durationFromEnv(name string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	if duration, err := time.ParseDuration(value); err == nil && duration > 0 {
+		return duration
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return fallback
+}
+
 func splitEnvLines(value string) []string {
-	parts := strings.FieldsFunc(value, func(r rune) bool { return r == '\n' || r == '\r' || r == ',' || r == ';' })
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if part = strings.TrimSpace(part); part != "" {
-			result = append(result, part)
+	result := make([]string, 0)
+	for _, line := range strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			result = append(result, line)
 		}
 	}
 	return result
-}
-
-func durationFromEnv(name string, fallback time.Duration) time.Duration {
-	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
-		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
-			return parsed
-		}
-	}
-	return fallback
 }
