@@ -101,17 +101,20 @@ chore: publish next patch release [release]
 4. 安装 Node.js 环境。
 5. `npm ci` 安装前端依赖。
 6. 执行公开发布敏感信息检查。
-7. 执行完整 Windows 构建和测试：
+7. 读取 `tools/cloudflared-release.json` 中固定的 Cloudflare Windows amd64 版本与 SHA256，从 Cloudflare 官方 GitHub Release 下载该二进制，校验 SHA256 和 `--version` 后，仅在当前 Windows runner 工作区中覆盖 `cloudflared.exe` 作为 Portable 打包输入；该下载结果不会提交回源码。
+8. 执行完整 Windows 构建和测试：
 
 ```powershell
 .\build.ps1 -Arch amd64 -RunTests
 ```
 
-8. 为所有发布资产生成 SHA256。
-9. 将 `vX.Y.Z` Tag 指向实际构建提交。
-10. 创建 GitHub Release；若该 Release 已存在，则使用新构建资产覆盖对应文件并保持其为最新版本。
+9. 为所有发布资产生成 SHA256。
+10. 将 `vX.Y.Z` Tag 指向实际构建提交。
+11. 创建 GitHub Release；若该 Release 已存在，则使用新构建资产覆盖对应文件并保持其为最新版本。
 
 任何前置步骤失败，都不得继续产生不完整的正式 Release。
+
+`tools/cloudflared-release.json` 是 Portable 包内置 cloudflared 的可复现版本固定点。升级这个固定点时必须同时记录 Cloudflare 官方版本、Windows amd64 资产名和官方 Release SHA256；不要只改版本号而跳过摘要校验。
 
 ## 6. 正式发布资产
 
@@ -132,6 +135,8 @@ mcp-core-amd64.exe.sha256
 
 在线更新最关键的两个资产是 `MCP-DevDesk-Portable-amd64.zip` 和对应 `.sha256`。不要在没有同步修改客户端更新逻辑的情况下重命名它们。
 
+Portable ZIP 仍包含一个经过官方 SHA256 校验的 `cloudflared.exe`，用途是新解压安装、缺失文件恢复，以及兼容仍由旧版软件更新器执行的过渡更新。它不是软件版本更新时强制覆盖本机 cloudflared 的版本来源。
+
 ## 7. 客户端在线更新流程
 
 MCP DevDesk 的更新管理器通过 GitHub Releases 检查新版本：
@@ -146,9 +151,20 @@ MCP DevDesk 的更新管理器通过 GitHub Releases 检查新版本：
 8. 启动独立 `devdesk-updater.exe`。
 9. 主程序正常退出。
 10. 更新器等待并停止需要退出的 MCP / Tunnel / 独立实例进程。
-11. 替换程序文件并保留用户数据。
+11. 替换 MCP DevDesk 自己管理的程序文件；如果当前 cloudflared 目标已经存在，则保留现有文件，不用 ZIP 中的副本覆盖；只有目标缺失时才从 Portable 包恢复 `cloudflared.exe`。
 12. 重新启动新版本。
 13. 如果替换失败，恢复备份并重新启动旧版本。
+
+### cloudflared 与软件更新隔离
+
+`cloudflared.exe` 有独立的版本生命周期。软件更新和 Cloudflare 隧道程序更新必须分开：
+
+- “软件更新”不得覆盖已经存在的 `cloudflared.exe`，无论 Portable ZIP 内携带的版本更高、更低或相同。
+- 只有本机配置指向的 cloudflared 文件确实不存在时，软件更新器才把 ZIP 中的经过验证版本当作恢复副本写入。
+- 用户主动升级 cloudflared 时，只走“设置 -> 软件设置 -> Cloudflare Tunnel 客户端”的专用更新入口。该流程读取 Cloudflare 官方最新 Release、校验官方 `sha256:` digest、暂停相关 Tunnel、原子替换后再恢复连接。
+- 新版本发布包仍携带固定版本的 cloudflared，是为了新安装和过渡兼容，而不是为了在每次 MCP DevDesk 更新时把用户已经升级好的隧道程序降回打包版本。
+
+旧版 `devdesk-updater.exe` 曾把 Portable ZIP 内的 `cloudflared.exe` 无条件列入替换计划，因此从带有旧更新器的版本升级到首次包含本修复的版本时，实际执行安装的仍可能是旧更新器。为减少这一次过渡更新把较新 cloudflared 换成仓库旧二进制的风险，正式 Release 在打包前会按 `tools/cloudflared-release.json` 下载并校验 Cloudflare 官方固定版本。首次安装完新更新器后，后续软件更新将直接保留现有 cloudflared，不再参与替换。
 
 网络超时策略必须区分“小请求”和“大文件”：
 
@@ -169,8 +185,9 @@ MCP DevDesk 的更新管理器通过 GitHub Releases 检查新版本：
 - DPAPI 加密凭证
 - 项目配置
 - 用户日志和运行状态数据，除非代码本身有明确的数据迁移逻辑
+- 已经存在且由独立 Cloudflare 更新流程维护的 `cloudflared.exe`
 
-Portable ZIP 是程序文件来源，不应把用户运行目录当作发布内容打包覆盖。
+Portable ZIP 是程序文件来源，不应把用户运行目录当作发布内容打包覆盖。对 cloudflared 的唯一例外是“目标文件缺失时恢复一个可用副本”，不能把这一恢复逻辑当作普通软件更新中的版本同步。
 
 ## 9. GitHub 仓库公开性
 
@@ -192,8 +209,9 @@ Portable ZIP 是程序文件来源，不应把用户运行目录当作发布内�
 3. 没有未提交的关键修复只存在于某台本地电脑。
 4. 版本级别选择正确。
 5. `tools/check-public-release.ps1` 没有被绕过。
-6. Go / 前端 / Portable / smoke test 均应由工作流执行。
-7. 重要 Windows 专属行为已经实机验证，或明确记录仍需实机验证。
+6. `tools/cloudflared-release.json` 指向准备随 Portable 包发布的官方 Cloudflare Windows amd64 版本，并且 SHA256 与 Cloudflare Release 一致；如果本次 Release 是旧更新器向新更新器的过渡版本，优先把固定点刷新到当时官方最新稳定版。
+7. Go / 前端 / Portable / smoke test 均应由工作流执行。
+8. 重要 Windows 专属行为已经实机验证，或明确记录仍需实机验证。
 
 ## 11. 发版后验证清单
 
@@ -206,7 +224,7 @@ GitHub Actions 完成后检查：
 5. Release 不是 draft，也不是意外的 prerelease。
 6. 旧版本 MCP DevDesk 的“检查更新”能识别新版本。
 7. 下载和 SHA256 校验成功。
-8. 更新器自身有修改时，必须进行 Windows 的“更新 -> 退出旧版 -> 替换 -> 启动新版”实际验证。
+8. 更新器自身有修改时，必须进行 Windows 的“更新 -> 退出旧版 -> 替换 -> 启动新版”实际验证，并确认更新前已存在的 cloudflared 没有被新更新器覆盖。
 
 ## 12. 失败与重试
 
