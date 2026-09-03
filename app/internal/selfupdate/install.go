@@ -135,15 +135,18 @@ func Install(options Options) error {
 func buildReplacementPlan(options Options, root, currentExe string) ([]replacement, error) {
 	portable := strings.EqualFold(filepath.Dir(currentExe), root) && strings.EqualFold(filepath.Base(currentExe), "MCP-DevDesk.exe")
 	if portable {
-		return []replacement{
+		plan := []replacement{
 			{archiveName: "MCP-DevDesk.exe", target: currentExe},
 			{archiveName: "devdeskctl.exe", target: filepath.Join(root, "devdeskctl.exe")},
 			{archiveName: "mcp-core.exe", target: filepath.Join(root, "mcp-core.exe")},
 			{archiveName: "devdesk-updater.exe", target: filepath.Join(root, "devdesk-updater.exe")},
-			{archiveName: "cloudflared.exe", target: filepath.Join(root, "cloudflared.exe")},
 			{archiveName: "coding-tools-mcp.exe", target: filepath.Join(root, "coding-tools-mcp.exe")},
 			{archiveName: "README.md", target: filepath.Join(root, "README.md")},
-		}, nil
+		}
+		if err := appendReplacementIfMissing(&plan, "cloudflared.exe", filepath.Join(root, "cloudflared.exe"), root); err != nil {
+			return nil, err
+		}
+		return plan, nil
 	}
 
 	managerBase := filepath.Base(currentExe)
@@ -179,11 +182,45 @@ func buildReplacementPlan(options Options, root, currentExe string) ([]replaceme
 	appendTarget("mcp-core.exe", filepath.Join(distDir, "mcp-core.exe"))
 	appendTarget("mcp-core.exe", filepath.Join(distDir, "mcp-core-"+arch+".exe"))
 	appendTarget("coding-tools-mcp.exe", options.LegacyCoreTarget)
-	appendTarget("cloudflared.exe", options.CloudflaredTarget)
+	if err := appendReplacementIfMissing(&plan, "cloudflared.exe", options.CloudflaredTarget, root); err != nil {
+		return nil, err
+	}
 	if options.UpdaterTarget != "" {
 		appendTarget("devdesk-updater.exe", options.UpdaterTarget)
 	}
 	return plan, nil
+}
+
+func appendReplacementIfMissing(plan *[]replacement, archiveName, target, root string) error {
+	if strings.TrimSpace(target) == "" {
+		return nil
+	}
+	absolute, err := filepath.Abs(target)
+	if err != nil {
+		return fmt.Errorf("resolve %s target: %w", archiveName, err)
+	}
+	if !inside(root, absolute) {
+		return nil
+	}
+	for _, existing := range *plan {
+		if strings.EqualFold(existing.target, absolute) {
+			return nil
+		}
+	}
+	info, err := os.Stat(absolute)
+	if err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("%s target is a directory: %s", archiveName, absolute)
+		}
+		// cloudflared is maintained by its dedicated updater. Software updates
+		// must not overwrite an already installed runtime with the bundled copy.
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect %s target: %w", archiveName, err)
+	}
+	*plan = append(*plan, replacement{archiveName: archiveName, target: absolute})
+	return nil
 }
 
 func extractPackage(packagePath, destination string) error {
