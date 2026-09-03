@@ -4,15 +4,27 @@ package mcpcore
 
 import "testing"
 
-func TestScreenRegionFallbackSafe(t *testing.T) {
-	if screenRegionFallbackSafe(0, 0) {
-		t.Fatal("zero HWND must never allow desktop-region fallback")
+func TestScreenBackgroundRevealRequired(t *testing.T) {
+	if screenBackgroundRevealRequired(0, 0x20) {
+		t.Fatal("zero HWND must never request a temporary reveal")
 	}
-	if screenRegionFallbackSafe(0x10, 0x20) {
-		t.Fatal("background selected window must not allow desktop-region fallback")
+	if screenBackgroundRevealRequired(0x10, 0) {
+		t.Fatal("missing foreground window must not request a temporary reveal")
 	}
-	if !screenRegionFallbackSafe(0x10, 0x10) {
-		t.Fatal("foreground selected window should allow final desktop-region fallback")
+	if screenBackgroundRevealRequired(0x10, 0x10) {
+		t.Fatal("foreground selected window does not need a temporary reveal")
+	}
+	if !screenBackgroundRevealRequired(0x10, 0x20) {
+		t.Fatal("background selected window should use the target-safe temporary reveal path")
+	}
+}
+
+func TestScreenWindowBandInsertAfter(t *testing.T) {
+	if screenWindowBandInsertAfter(true) != ^uintptr(0) {
+		t.Fatal("topmost restore band must use HWND_TOPMOST")
+	}
+	if screenWindowBandInsertAfter(false) != ^uintptr(1) {
+		t.Fatal("normal restore band must use HWND_NOTOPMOST")
 	}
 }
 
