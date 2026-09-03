@@ -1,0 +1,169 @@
+name: Screen Vision Beta Prerelease
+
+on:
+  push:
+    branches:
+      - "build/screen-vision-0.12.34-beta.3"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-amd64-beta:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: build/screen-vision-0.12.34-beta.3
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Prepare beta version
+        shell: pwsh
+        run: |
+          $version = "0.12.34-beta.3"
+          $tag = "0.12.34-beta.3"
+          $versionPath = "app\internal\buildinfo\version.go"
+          $content = Get-Content -LiteralPath $versionPath -Raw -Encoding utf8
+          $content = $content -replace 'const Version = "[^"]+"', "const Version = `"$version`""
+          Set-Content -LiteralPath $versionPath -Value $content -Encoding utf8 -NoNewline
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- $versionPath
+          git commit -m "chore: prepare Screen Vision $version [skip release]"
+          $sha = (git rev-parse HEAD).Trim()
+          "BETA_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "BETA_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "BETA_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: |
+          Set-Location frontend
+          npm ci
+
+      - name: Guard public release secrets
+        shell: pwsh
+        run: .\tools\check-public-release.ps1
+
+      - name: Stage pinned cloudflared runtime
+        shell: pwsh
+        run: |
+          $pinPath = "tools\cloudflared-release.json"
+          $pin = Get-Content -LiteralPath $pinPath -Raw -Encoding utf8 | ConvertFrom-Json
+          $version = [string]$pin.version
+          $asset = [string]$pin.asset
+          $expected = ([string]$pin.sha256).ToLowerInvariant()
+          if ($version -notmatch '^\d{4}\.\d+\.\d+$') {
+            throw "Invalid cloudflared version in ${pinPath}: $version"
+          }
+          if ($asset -ne "cloudflared-windows-amd64.exe") {
+            throw "Unexpected cloudflared release asset in ${pinPath}: $asset"
+          }
+          if ($expected -notmatch '^[0-9a-f]{64}$') {
+            throw "Invalid cloudflared SHA256 in $pinPath"
+          }
+          $url = "https://github.com/cloudflare/cloudflared/releases/download/$version/$asset"
+          $temp = Join-Path $env:RUNNER_TEMP $asset
+          Invoke-WebRequest -Uri $url -OutFile $temp -UseBasicParsing
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $temp).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "cloudflared SHA256 mismatch: expected $expected, got $actual"
+          }
+          Copy-Item -LiteralPath $temp -Destination ".\cloudflared.exe" -Force
+          $versionOutput = (& .\cloudflared.exe --version 2>&1 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch [regex]::Escape($version)) {
+            throw "Bundled cloudflared version check failed: $versionOutput"
+          }
+          Write-Host "Bundling $versionOutput"
+
+      - name: Build and test
+        shell: pwsh
+        env:
+          MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: .\build.ps1 -Arch amd64 -RunTests
+
+      - name: Verify beta version
+        shell: pwsh
+        run: |
+          $source = Get-Content -LiteralPath "app\internal\buildinfo\version.go" -Raw -Encoding utf8
+          if ($source -notmatch [regex]::Escape("const Version = `"$env:BETA_VERSION`"")) {
+            throw "Beta version was not embedded in the source used for the build"
+          }
+
+      - name: Create SHA256 files
+        shell: pwsh
+        run: |
+          $assets = @(
+            "dist\MCP-DevDesk-amd64.exe",
+            "dist\MCP-DevDesk-Portable-amd64.zip",
+            "dist\devdesk-updater-amd64.exe",
+            "dist\devdeskctl-amd64.exe",
+            "dist\mcp-core-amd64.exe"
+          )
+          foreach ($asset in $assets) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
+            $name = Split-Path -Leaf $asset
+            Set-Content -LiteralPath ($asset + ".sha256") -Value ($hash + "  " + $name) -Encoding ASCII
+          }
+
+      - name: Publish beta tag
+        shell: pwsh
+        run: |
+          git tag -f "$env:BETA_TAG" "$env:BETA_SHA"
+          git push origin "refs/tags/$env:BETA_TAG" --force
+
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            "dist\MCP-DevDesk-amd64.exe",
+            "dist\MCP-DevDesk-amd64.exe.sha256",
+            "dist\MCP-DevDesk-Portable-amd64.zip",
+            "dist\MCP-DevDesk-Portable-amd64.zip.sha256",
+            "dist\devdesk-updater-amd64.exe",
+            "dist\devdesk-updater-amd64.exe.sha256",
+            "dist\devdeskctl-amd64.exe",
+            "dist\devdeskctl-amd64.exe.sha256",
+            "dist\mcp-core-amd64.exe",
+            "dist\mcp-core-amd64.exe.sha256"
+          )
+          $notes = @"
+          ## Screen Vision beta.3
+
+          这是仅供测试的开发预览版，不是正式稳定版。
+
+          - 修复“指定窗口”可能读到遮挡窗口的问题：截图严格绑定用户选择的 HWND + PID；后台窗口无法安全获取自身画面时会明确报错，不再返回桌面同坐标的其他窗口画面。
+          - 指定窗口捕获现在按 PrintWindow(full) → PrintWindow(classic) → 目标 Window DC 的顺序尝试；仅当前台窗口才允许最后的屏幕区域回退。
+          - “整个桌面”扩展为整机可见窗口模式：AI 可以列出当前可见顶层窗口、逐个读取任意可见窗口、读取当前窗口，同时保留多显示器虚拟桌面总览。
+          - 没有后台持续录屏，不保存截图历史，本版本仍不开放鼠标和键盘控制。
+          - DRM/受保护内容、UAC 安全桌面、最小化或部分硬件加速窗口仍可能黑屏或拒绝捕获。
+          - 正式稳定版仍保持 v0.12.33；本版只用于实机验证。
+          "@
+          gh release view "$env:BETA_TAG" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "$env:BETA_TAG" $assets --clobber
+            gh release edit "$env:BETA_TAG" --title "MCP DevDesk Screen Vision $env:BETA_VERSION" --notes "$notes" --prerelease
+          } else {
+            gh release create "$env:BETA_TAG" $assets `
+              --title "MCP DevDesk Screen Vision $env:BETA_VERSION" `
+              --notes "$notes" `
+              --prerelease `
+              --verify-tag
+          }
