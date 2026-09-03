@@ -71,7 +71,14 @@ func (policy screenVisionPolicy) allows(name string) bool {
 		}
 		return policy.windowID != "" && name == "screen_capture_window"
 	case "desktop":
-		return name == "screen_capture_desktop"
+		// Whole-computer mode is intentionally broader than a single desktop
+		// screenshot: the agent may enumerate visible top-level windows and read
+		// them individually, which also covers windows hidden behind others.
+		return name == "screen_list_windows" ||
+			name == "screen_get_active_window" ||
+			name == "screen_capture_window" ||
+			name == "screen_capture_active_window" ||
+			name == "screen_capture_desktop"
 	default:
 		return name == "screen_get_active_window" || name == "screen_capture_active_window"
 	}

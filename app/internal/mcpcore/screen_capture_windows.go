@@ -46,6 +46,7 @@ var (
 	procGetWindowRect            = screenUser32.NewProc("GetWindowRect")
 	procPrintWindow              = screenUser32.NewProc("PrintWindow")
 	procGetDC                    = screenUser32.NewProc("GetDC")
+	procGetWindowDC              = screenUser32.NewProc("GetWindowDC")
 	procReleaseDC                = screenUser32.NewProc("ReleaseDC")
 	procGetSystemMetrics         = screenUser32.NewProc("GetSystemMetrics")
 
@@ -209,25 +210,64 @@ func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error
 	}
 	defer procSelectObject.Call(memoryDC, previous)
 
-	method := "bitblt"
+	method := "bitblt-desktop"
 	captured := uintptr(0)
 	if hwnd != 0 {
+		// PrintWindow is the preferred path because it asks the selected HWND to
+		// render itself even when another application overlaps it. If the first
+		// mode is unsupported, retry the classic PrintWindow mode before falling
+		// back to the selected window's own DC.
 		captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, pwRenderFullContent)
 		if captured != 0 {
-			method = "print-window"
+			method = "print-window-full"
+		} else {
+			captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, 0)
+			if captured != 0 {
+				method = "print-window"
+			}
 		}
-	}
-	if captured == 0 {
+		if captured == 0 {
+			windowDC, _, _ := procGetWindowDC.Call(hwnd)
+			if windowDC != 0 {
+				ok, _, _ := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), windowDC, 0, 0, srcCopy|captureBLT)
+				procReleaseDC.Call(hwnd, windowDC)
+				if ok != 0 {
+					captured = 1
+					method = "window-dc"
+				}
+			}
+		}
+		if captured == 0 {
+			foreground, _, _ := procGetForegroundWindow.Call()
+			if !screenRegionFallbackSafe(hwnd, foreground) {
+				return screenCaptureFrame{}, errors.New("the selected window could not render its own pixels while it is in the background; refusing a desktop-region fallback because that could capture another window. Bring the selected window to the foreground and retry")
+			}
+			ok, _, callErr := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), screenDC, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
+			if ok == 0 {
+				return screenCaptureFrame{}, fmt.Errorf("foreground BitBlt failed: %v", callErr)
+			}
+			captured = 1
+			method = "screen-foreground-fallback"
+		}
+	} else {
 		ok, _, callErr := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), screenDC, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
 		if ok == 0 {
 			return screenCaptureFrame{}, fmt.Errorf("BitBlt failed: %v", callErr)
 		}
+		captured = 1
+	}
+	if captured == 0 {
+		return screenCaptureFrame{}, errors.New("screen capture did not produce pixels")
 	}
 	capturedImage, err := screenBitmapToNRGBA(screenDC, bitmap, rect.Width, rect.Height)
 	if err != nil {
 		return screenCaptureFrame{}, err
 	}
 	return screenCaptureFrame{Image: capturedImage, Bounds: rect, Method: method}, nil
+}
+
+func screenRegionFallbackSafe(hwnd, foreground uintptr) bool {
+	return hwnd != 0 && hwnd == foreground
 }
 
 func screenBitmapToNRGBA(dc, bitmap uintptr, width, height int) (*image.NRGBA, error) {
