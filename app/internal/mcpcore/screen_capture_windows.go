@@ -23,12 +23,22 @@ const (
 	dwmwaCloaked             = 14
 	processQueryLimitedInfo  = 0x1000
 	pwRenderFullContent      = 0x00000002
+	gwHwndPrev               = 3
+	gwlExStyle         int32 = -20
+	wsExTopmost              = 0x00000008
+	swpNoSize                = 0x0001
+	swpNoMove                = 0x0002
+	swpNoActivate            = 0x0010
+	swpNoOwnerZOrder         = 0x0200
+	swpNoSendChanging        = 0x0400
 	srcCopy                  = 0x00CC0020
 	captureBLT               = 0x40000000
 	dibRGBColors             = 0
 	biRGB                    = 0
 	maxScreenCapturePixels   = 40_000_000
 )
+
+const screenRevealWindowPosFlags = swpNoSize | swpNoMove | swpNoActivate | swpNoOwnerZOrder | swpNoSendChanging
 
 var (
 	screenUser32   = windows.NewLazySystemDLL("user32.dll")
@@ -40,6 +50,10 @@ var (
 	procIsWindow                 = screenUser32.NewProc("IsWindow")
 	procIsWindowVisible          = screenUser32.NewProc("IsWindowVisible")
 	procIsIconic                 = screenUser32.NewProc("IsIconic")
+	procGetWindow                = screenUser32.NewProc("GetWindow")
+	procGetWindowLongW           = screenUser32.NewProc("GetWindowLongW")
+	procSetWindowPos             = screenUser32.NewProc("SetWindowPos")
+	procSetForegroundWindow      = screenUser32.NewProc("SetForegroundWindow")
 	procGetWindowTextLengthW     = screenUser32.NewProc("GetWindowTextLengthW")
 	procGetWindowTextW           = screenUser32.NewProc("GetWindowTextW")
 	procGetWindowThreadProcessID = screenUser32.NewProc("GetWindowThreadProcessId")
@@ -60,6 +74,7 @@ var (
 	procGetDIBits              = screenGDI32.NewProc("GetDIBits")
 
 	procDwmGetWindowAttribute      = screenDWMAPI.NewProc("DwmGetWindowAttribute")
+	procDwmFlush                   = screenDWMAPI.NewProc("DwmFlush")
 	procOpenProcess                = screenKernel32.NewProc("OpenProcess")
 	procQueryFullProcessImageNameW = screenKernel32.NewProc("QueryFullProcessImageNameW")
 	procCloseHandle                = screenKernel32.NewProc("CloseHandle")
@@ -222,18 +237,41 @@ func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error
 
 	method := "bitblt-desktop"
 	captured := uintptr(0)
+	var backgroundRevealErr error
 	if hwnd != 0 {
-		// PrintWindow is the preferred path because it asks the selected HWND to
-		// render itself even when another application overlaps it. If the first
-		// mode is unsupported, retry the classic PrintWindow mode before falling
-		// back to the selected window's own DC.
-		captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, pwRenderFullContent)
-		if captured != 0 {
-			method = "print-window-full"
-		} else {
-			captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, 0)
+		foreground, _, _ := procGetForegroundWindow.Call()
+		if screenBackgroundRevealRequired(hwnd, foreground) {
+			// Specified-window mode is intentionally independent from the user's
+			// foreground application. Temporarily move the locked HWND to the top
+			// of the compositor without activating it, capture exactly its desktop
+			// pixels, and restore its original Z-order immediately afterwards.
+			// This lets the browser remain focused while VMware, utility windows,
+			// or other selected apps are captured from behind it, without falling
+			// back to an occluded rectangle that would contain browser pixels.
+			revealed, revealErr := captureBackgroundWindowByTemporaryReveal(memoryDC, screenDC, rect, hwnd, foreground)
+			if revealed {
+				if revealErr != nil {
+					return screenCaptureFrame{}, revealErr
+				}
+				captured = 1
+				method = "screen-background-reveal"
+			} else {
+				backgroundRevealErr = revealErr
+			}
+		}
+
+		if captured == 0 {
+			// Keep non-intrusive target-owned capture methods as a fallback when
+			// temporary compositor reveal is unavailable. They never read pixels
+			// from a different foreground application.
+			captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, pwRenderFullContent)
 			if captured != 0 {
-				method = "print-window"
+				method = "print-window-full"
+			} else {
+				captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, 0)
+				if captured != 0 {
+					method = "print-window"
+				}
 			}
 		}
 		if captured == 0 {
@@ -248,16 +286,18 @@ func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error
 			}
 		}
 		if captured == 0 {
-			foreground, _, _ := procGetForegroundWindow.Call()
-			if !screenRegionFallbackSafe(hwnd, foreground) {
-				return screenCaptureFrame{}, errors.New("the selected window could not render its own pixels while it is in the background; refusing a desktop-region fallback because that could capture another window. Bring the selected window to the foreground and retry")
+			if foreground != 0 && hwnd == foreground {
+				ok, _, callErr := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), screenDC, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
+				if ok == 0 {
+					return screenCaptureFrame{}, fmt.Errorf("foreground BitBlt failed: %v", callErr)
+				}
+				captured = 1
+				method = "screen-foreground-fallback"
+			} else if backgroundRevealErr != nil {
+				return screenCaptureFrame{}, fmt.Errorf("capture selected background window: %w", backgroundRevealErr)
+			} else {
+				return screenCaptureFrame{}, errors.New("selected background window could not be captured without reading pixels from another application")
 			}
-			ok, _, callErr := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), screenDC, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
-			if ok == 0 {
-				return screenCaptureFrame{}, fmt.Errorf("foreground BitBlt failed: %v", callErr)
-			}
-			captured = 1
-			method = "screen-foreground-fallback"
 		}
 	} else {
 		ok, _, callErr := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), screenDC, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
@@ -276,8 +316,97 @@ func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error
 	return screenCaptureFrame{Image: capturedImage, Bounds: rect, Method: method}, nil
 }
 
-func screenRegionFallbackSafe(hwnd, foreground uintptr) bool {
-	return hwnd != 0 && hwnd == foreground
+func screenBackgroundRevealRequired(hwnd, foreground uintptr) bool {
+	return hwnd != 0 && foreground != 0 && hwnd != foreground
+}
+
+func captureBackgroundWindowByTemporaryReveal(memoryDC, screenDC uintptr, rect screenRect, hwnd, foreground uintptr) (captured bool, err error) {
+	originalAbove, _, _ := procGetWindow.Call(hwnd, gwHwndPrev)
+	wasTopmost := screenWindowTopmost(hwnd)
+	originalAboveSameBand := false
+	if originalAbove != 0 {
+		valid, _, _ := procIsWindow.Call(originalAbove)
+		originalAboveSameBand = valid != 0 && screenWindowTopmost(originalAbove) == wasTopmost
+	}
+
+	if err := screenSetWindowPosition(hwnd, screenWindowBandInsertAfter(true)); err != nil {
+		return false, fmt.Errorf("temporarily reveal selected window: %w", err)
+	}
+	defer func() {
+		if restoreErr := restoreBackgroundWindowAfterReveal(hwnd, originalAbove, foreground, wasTopmost, originalAboveSameBand); restoreErr != nil {
+			if err == nil {
+				err = fmt.Errorf("restore selected window after background capture: %w", restoreErr)
+			} else {
+				err = fmt.Errorf("%v; restore selected window after background capture: %w", err, restoreErr)
+			}
+		}
+	}()
+
+	screenFlushDWM()
+	ok, _, callErr := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), screenDC, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
+	if ok == 0 {
+		return false, fmt.Errorf("background reveal BitBlt failed: %v", callErr)
+	}
+	return true, nil
+}
+
+func restoreBackgroundWindowAfterReveal(hwnd, originalAbove, foreground uintptr, wasTopmost, originalAboveSameBand bool) error {
+	var restoreErrors []string
+	if err := screenSetWindowPosition(hwnd, screenWindowBandInsertAfter(wasTopmost)); err != nil {
+		restoreErrors = append(restoreErrors, fmt.Sprintf("restore topmost state: %v", err))
+	}
+	if originalAboveSameBand && originalAbove != 0 {
+		valid, _, _ := procIsWindow.Call(originalAbove)
+		if valid != 0 && screenWindowTopmost(originalAbove) == wasTopmost {
+			if err := screenSetWindowPosition(hwnd, originalAbove); err != nil {
+				restoreErrors = append(restoreErrors, fmt.Sprintf("restore Z-order: %v", err))
+			}
+		}
+	}
+	screenFlushDWM()
+
+	// SWP_NOACTIVATE normally preserves foreground focus. If an application
+	// activates itself in reaction to the Z-order change, restore the browser
+	// or whichever application the user was working in as a best-effort step.
+	if foreground != 0 {
+		current, _, _ := procGetForegroundWindow.Call()
+		if current != foreground {
+			procSetForegroundWindow.Call(foreground)
+		}
+	}
+	if len(restoreErrors) > 0 {
+		return errors.New(strings.Join(restoreErrors, "; "))
+	}
+	return nil
+}
+
+func screenSetWindowPosition(hwnd, insertAfter uintptr) error {
+	ok, _, callErr := procSetWindowPos.Call(hwnd, insertAfter, 0, 0, 0, 0, uintptr(screenRevealWindowPosFlags))
+	if ok != 0 {
+		return nil
+	}
+	if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+		return callErr
+	}
+	return errors.New("SetWindowPos failed")
+}
+
+func screenWindowBandInsertAfter(topmost bool) uintptr {
+	if topmost {
+		return ^uintptr(0) // HWND_TOPMOST (-1)
+	}
+	return ^uintptr(1) // HWND_NOTOPMOST (-2)
+}
+
+func screenWindowTopmost(hwnd uintptr) bool {
+	style, _, _ := procGetWindowLongW.Call(hwnd, uintptr(uint32(gwlExStyle)))
+	return uint32(style)&wsExTopmost != 0
+}
+
+func screenFlushDWM() {
+	if err := procDwmFlush.Find(); err == nil {
+		procDwmFlush.Call()
+	}
 }
 
 func screenBitmapToNRGBA(dc, bitmap uintptr, width, height int) (*image.NRGBA, error) {
