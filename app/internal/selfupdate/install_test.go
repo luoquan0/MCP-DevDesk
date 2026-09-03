@@ -31,7 +31,7 @@ func TestPortableInstallReplacesProgramsAndPreservesData(t *testing.T) {
 	if err := Install(Options{PackagePath: packagePath, RootDir: root, CurrentExe: filepath.Join(root, "MCP-DevDesk.exe")}); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"MCP-DevDesk.exe", "devdeskctl.exe", "mcp-core.exe", "devdesk-updater.exe", "cloudflared.exe", "coding-tools-mcp.exe", "README.md"} {
+	for _, name := range []string{"MCP-DevDesk.exe", "devdeskctl.exe", "mcp-core.exe", "devdesk-updater.exe", "coding-tools-mcp.exe", "README.md"} {
 		raw, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)
@@ -40,12 +40,43 @@ func TestPortableInstallReplacesProgramsAndPreservesData(t *testing.T) {
 			t.Fatalf("%s=%q", name, raw)
 		}
 	}
+	cloudflared, err := os.ReadFile(filepath.Join(root, "cloudflared.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(cloudflared) != "old-cloudflared.exe" {
+		t.Fatalf("cloudflared was overwritten by software update: %q", cloudflared)
+	}
 	raw, err := os.ReadFile(dataFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(raw) != "keep-me" {
 		t.Fatalf("data file changed: %q", raw)
+	}
+}
+
+func TestPortableInstallSeedsCloudflaredWhenMissing(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"MCP-DevDesk.exe", "devdeskctl.exe", "mcp-core.exe", "devdesk-updater.exe", "coding-tools-mcp.exe", "README.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("old-"+name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	packagePath := filepath.Join(t.TempDir(), "update.zip")
+	createUpdateZip(t, packagePath, true)
+	originalRestart := restartProcess
+	restartProcess = func(_ string, _ []string) error { return nil }
+	t.Cleanup(func() { restartProcess = originalRestart })
+	if err := Install(Options{PackagePath: packagePath, RootDir: root, CurrentExe: filepath.Join(root, "MCP-DevDesk.exe")}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "cloudflared.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "new-cloudflared.exe" {
+		t.Fatalf("missing cloudflared was not restored from package: %q", raw)
 	}
 }
 
@@ -121,7 +152,7 @@ func TestDevelopmentInstallMapsPortablePayloadToDistLayout(t *testing.T) {
 		goCore: "new-mcp-core.exe",
 		filepath.Join(dist, "mcp-core-amd64.exe"): "new-mcp-core.exe",
 		legacyCore:    "new-coding-tools-mcp.exe",
-		cloudflared:   "new-cloudflared.exe",
+		cloudflared:   "old",
 		updaterTarget: "new-devdesk-updater.exe",
 	}
 	for target, want := range wants {
