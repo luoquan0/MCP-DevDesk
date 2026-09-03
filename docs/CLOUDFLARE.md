@@ -98,3 +98,13 @@ MCP 端口不再固定为 `8765`。用户在“项目与服务”页面修改端
 用户可以按 PID 关闭单个进程，也可以点击“同步到当前 MCP 端口”，清理当前 Tunnel 的旧连接并只启动一个正确连接。其他 Tunnel UUID 不会被自动关闭。
 
 为了避免泄露凭据，进程命令行中的 `--token` 会在 API 返回前替换为 `***`。
+
+## 8. cloudflared 版本维护边界
+
+`cloudflared.exe` 与 MCP DevDesk 主程序采用独立更新生命周期：
+
+- MCP DevDesk 的“软件更新”只更新管理器、MCP Core、CLI、更新器等自身程序文件。只要配置指向的 `cloudflared.exe` 已经存在，软件更新器就必须保留它，不能用 Portable ZIP 中的副本覆盖或降级。
+- 如果 cloudflared 文件确实缺失，软件更新器可以使用 Portable 包内的已验证副本恢复运行能力。
+- cloudflared 的正常升级由“Cloudflare Tunnel 客户端”专用更新功能负责。该功能读取 Cloudflare 官方最新 Release，要求 Windows amd64 资产带有 `sha256:` digest，下载后再次计算 SHA256，校验通过才执行原子替换。
+- 专用更新会先暂停受影响的 Tunnel / Watchdog，替换完成后恢复原先需要运行的连接，避免同时占用正在更新的可执行文件。
+- 正式 Portable Release 内置的 cloudflared 版本由 `tools/cloudflared-release.json` 固定，并由 Release 工作流从 Cloudflare 官方 Release 下载和校验。这个内置版本服务于新安装、文件缺失恢复和旧更新器过渡兼容，不代表每次软件更新都要把本机 cloudflared 同步回该版本。
