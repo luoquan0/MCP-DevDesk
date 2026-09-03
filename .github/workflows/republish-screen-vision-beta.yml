@@ -1,0 +1,94 @@
+name: Republish Screen Vision Beta
+
+on:
+  push:
+    branches:
+      - "ops/republish-screen-vision-beta-semver"
+
+permissions:
+  contents: write
+
+jobs:
+  republish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Republish updater-compatible beta
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD_TAG: screen-vision-v0.12.34-beta.1
+          NEW_TAG: 0.12.34-beta.1
+          TARGET_SHA: 3c6ce03049ed86bbbc785d26bd423fc40c907b00
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin
+          actual_old_sha="$(git rev-list -n 1 "$OLD_TAG")"
+          if [ "$actual_old_sha" != "$TARGET_SHA" ]; then
+            echo "Old beta tag points at $actual_old_sha, expected $TARGET_SHA" >&2
+            exit 1
+          fi
+
+          git tag -f "$NEW_TAG" "$TARGET_SHA"
+          git push origin "refs/tags/$NEW_TAG" --force
+
+          rm -rf release-assets
+          mkdir release-assets
+          gh release download "$OLD_TAG" --dir release-assets
+
+          cd release-assets
+          expected_assets=(
+            MCP-DevDesk-amd64.exe
+            MCP-DevDesk-amd64.exe.sha256
+            MCP-DevDesk-Portable-amd64.zip
+            MCP-DevDesk-Portable-amd64.zip.sha256
+            devdesk-updater-amd64.exe
+            devdesk-updater-amd64.exe.sha256
+            devdeskctl-amd64.exe
+            devdeskctl-amd64.exe.sha256
+            mcp-core-amd64.exe
+            mcp-core-amd64.exe.sha256
+          )
+          for asset in "${expected_assets[@]}"; do
+            test -f "$asset" || { echo "Missing beta asset: $asset" >&2; exit 1; }
+          done
+          sha256sum -c MCP-DevDesk-amd64.exe.sha256
+          sha256sum -c MCP-DevDesk-Portable-amd64.zip.sha256
+          sha256sum -c devdesk-updater-amd64.exe.sha256
+          sha256sum -c devdeskctl-amd64.exe.sha256
+          sha256sum -c mcp-core-amd64.exe.sha256
+          cd ..
+
+          notes=$(cat <<'EOF'
+          ## Screen Vision beta
+
+          这是仅供测试的开发预览版，不是正式稳定版。
+
+          此版本与此前 `screen-vision-v0.12.34-beta.1` 使用完全相同、已通过 Windows CI 和 SHA256 校验的二进制文件；仅将 GitHub Tag 改为更新器可正确识别的标准版本格式 `0.12.34-beta.1`。
+
+          - 新增 Windows 按需屏幕视觉 MCP 工具：列出窗口、读取当前窗口、截取指定窗口、当前窗口和桌面。
+          - 默认关闭；需要 Go MCP Core + trusted/dangerous 权限模式 + 设置页显式开启“屏幕视觉（测试）”。
+          - 无后台持续录屏；不保存截图历史；本版本不开放鼠标和键盘控制。
+          - 正式稳定版仍为 v0.12.33；测试确认后才会发布正式版本。
+          EOF
+          )
+
+          if gh release view "$NEW_TAG" >/dev/null 2>&1; then
+            gh release upload "$NEW_TAG" release-assets/* --clobber
+            gh release edit "$NEW_TAG" \
+              --title "MCP DevDesk Screen Vision 0.12.34-beta.1" \
+              --notes "$notes" \
+              --prerelease
+          else
+            gh release create "$NEW_TAG" release-assets/* \
+              --title "MCP DevDesk Screen Vision 0.12.34-beta.1" \
+              --notes "$notes" \
+              --prerelease \
+              --verify-tag
+          fi
