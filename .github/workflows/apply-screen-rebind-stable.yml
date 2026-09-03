@@ -1,0 +1,449 @@
+name: Apply Screen Vision HWND Rebind Patch
+
+on:
+  push:
+    branches:
+      - "fix/screen-vision-rebind-stable"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply patch
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import re
+
+          path = Path("app/internal/mcpcore/screen_minimized_windows.go")
+          text = path.read_text(encoding="utf-8")
+
+          old_constants = '''\tscreenRestorePoll       = 20 * time.Millisecond
+          \tscreenRestoreTimeout    = 760 * time.Millisecond
+          \tscreenInitialRenderWait = 220 * time.Millisecond
+          \tscreenRetryRenderWait   = 360 * time.Millisecond'''
+          new_constants = '''\tscreenRestorePoll          = 20 * time.Millisecond
+          \tscreenRestoreTimeout       = 760 * time.Millisecond
+          \tscreenRebindPoll           = 35 * time.Millisecond
+          \tscreenRebindInitialTimeout = 650 * time.Millisecond
+          \tscreenRebindFallbackTimeout = 1200 * time.Millisecond
+          \tscreenStableSamples        = 3
+          \tscreenPostStableRenderWait = 80 * time.Millisecond
+          \tscreenRetryRenderWait      = 180 * time.Millisecond'''
+          if old_constants not in text:
+              raise SystemExit("constants block not found")
+          text = text.replace(old_constants, new_constants, 1)
+
+          marker = '''func platformCaptureScreenWindowForVision(window screenWindow) (screenCaptureFrame, error) {'''
+          helpers = r'''func screenVisionRestoredIdentityMatches(original, candidate screenWindow) bool {
+          	if original.ProcessID == 0 || candidate.ProcessID != original.ProcessID {
+          		return false
+          	}
+          	if strings.TrimSpace(original.ProcessName) != "" && strings.TrimSpace(candidate.ProcessName) != "" && !strings.EqualFold(original.ProcessName, candidate.ProcessName) {
+          		return false
+          	}
+          	return true
+          }
+
+          func screenVisionChooseRestoredCandidate(original screenWindow, exact *screenWindow, replacements []screenWindow, allowSuspiciousExact bool) (screenWindow, error) {
+          	if exact != nil && !screenVisionBoundsNeedRepair(exact.Bounds, original.Bounds) {
+          		return *exact, nil
+          	}
+
+          	exactTitle := make([]screenWindow, 0, len(replacements))
+          	for _, candidate := range replacements {
+          		if strings.EqualFold(strings.TrimSpace(candidate.Title), strings.TrimSpace(original.Title)) {
+          			exactTitle = append(exactTitle, candidate)
+          		}
+          	}
+          	if len(exactTitle) == 1 {
+          		return exactTitle[0], nil
+          	}
+          	if len(exactTitle) > 1 {
+          		return screenWindow{}, fmt.Errorf("restored application exposed multiple main windows matching %q", original.Title)
+          	}
+          	if len(replacements) == 1 {
+          		return replacements[0], nil
+          	}
+          	if len(replacements) > 1 {
+          		return screenWindow{}, fmt.Errorf("restored application exposed %d possible main windows; refusing to guess", len(replacements))
+          	}
+          	if exact != nil && allowSuspiciousExact {
+          		return *exact, nil
+          	}
+          	return screenWindow{}, errors.New("restored application window is not ready yet")
+          }
+
+          func screenEnumerateRestoredWindowCandidate(original screenWindow, allowSuspiciousExact bool) (screenWindow, error) {
+          	var exact *screenWindow
+          	replacements := make([]screenWindow, 0, 4)
+          	callback := syscall.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
+          		if hwnd == 0 {
+          			return 1
+          		}
+          		valid, _, _ := procIsWindow.Call(hwnd)
+          		visible, _, _ := procIsWindowVisible.Call(hwnd)
+          		minimized, _, _ := procIsIconic.Call(hwnd)
+          		if valid == 0 || visible == 0 || minimized != 0 || screenWindowCloaked(hwnd) {
+          			return 1
+          		}
+          		var pid uint32
+          		procGetWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+          		if pid == 0 || pid != original.ProcessID {
+          			return 1
+          		}
+          		processName := screenProcessName(pid)
+          		candidate := screenWindow{
+          			ID:          fmt.Sprintf("0x%X", hwnd),
+          			Handle:      hwnd,
+          			Title:       strings.TrimSpace(screenWindowTitle(hwnd)),
+          			ProcessID:   pid,
+          			ProcessName: processName,
+          		}
+          		if candidate.Title == "" || !screenVisionRestoredIdentityMatches(original, candidate) {
+          			return 1
+          		}
+          		rect, err := screenWindowRect(hwnd)
+          		if err != nil {
+          			return 1
+          		}
+          		candidate.Bounds = rect
+          		if hwnd == original.Handle {
+          			copy := candidate
+          			exact = &copy
+          			return 1
+          		}
+          		owner, _, _ := procGetWindow.Call(hwnd, screenGWHwndOwner)
+          		exStyle, _, _ := procGetWindowLongW.Call(hwnd, uintptr(gwlExStyle))
+          		if !screenVisionHiddenWindowEligible(owner, uint32(exStyle), processName, rect) {
+          			return 1
+          		}
+          		replacements = append(replacements, candidate)
+          		return 1
+          	})
+          	ok, _, callErr := procEnumWindows.Call(callback, 0)
+          	if ok == 0 {
+          		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+          			return screenWindow{}, fmt.Errorf("re-enumerate restored application windows: %w", callErr)
+          		}
+          		return screenWindow{}, errors.New("re-enumerate restored application windows failed")
+          	}
+          	return screenVisionChooseRestoredCandidate(original, exact, replacements, allowSuspiciousExact)
+          }
+
+          func screenRectsStable(previous, current screenRect) bool {
+          	return screenAbs(previous.X-current.X) <= 1 &&
+          		screenAbs(previous.Y-current.Y) <= 1 &&
+          		screenAbs(previous.Width-current.Width) <= 1 &&
+          		screenAbs(previous.Height-current.Height) <= 1
+          }
+
+          func screenAbs(value int) int {
+          	if value < 0 {
+          		return -value
+          	}
+          	return value
+          }
+
+          func screenWaitForRestoredWindowStable(original screenWindow, placement screenWindowPlacement, placementOK bool, timeout time.Duration, allowSuspiciousExact bool) (screenWindow, error) {
+          	deadline := time.Now().Add(timeout)
+          	var lastHandle uintptr
+          	var lastBounds screenRect
+          	stableSamples := 0
+          	repairAttempted := make(map[uintptr]bool)
+          	var lastErr error
+
+          	for {
+          		candidate, err := screenEnumerateRestoredWindowCandidate(original, allowSuspiciousExact)
+          		if err != nil {
+          			lastErr = err
+          			stableSamples = 0
+          		} else {
+          			candidatePlacement := placement
+          			candidatePlacementOK := placementOK
+          			if candidate.Handle != original.Handle && !candidatePlacementOK {
+          				candidatePlacement, candidatePlacementOK = screenGetWindowPlacement(candidate.Handle)
+          			}
+          			if !repairAttempted[candidate.Handle] {
+          				if repairErr := screenRepairRestoredBounds(candidate.Handle, candidatePlacement, candidatePlacementOK); repairErr != nil {
+          					lastErr = repairErr
+          				} else {
+          					repairAttempted[candidate.Handle] = true
+          				}
+          			}
+
+          			rect, rectErr := screenWindowRect(candidate.Handle)
+          			if rectErr != nil {
+          				lastErr = rectErr
+          				stableSamples = 0
+          			} else if screenVisionBoundsNeedRepair(rect, original.Bounds) {
+          				lastErr = fmt.Errorf("restored window still has abnormal bounds %dx%d", rect.Width, rect.Height)
+          				stableSamples = 0
+          			} else {
+          				candidate.Bounds = rect
+          				candidate.Minimized = false
+          				candidate.Hidden = false
+          				if candidate.Handle == lastHandle && screenRectsStable(lastBounds, rect) {
+          					stableSamples++
+          				} else {
+          					lastHandle = candidate.Handle
+          					lastBounds = rect
+          					stableSamples = 1
+          				}
+          				if stableSamples >= screenStableSamples {
+          					screenFlushDWM()
+          					time.Sleep(screenRestorePoll)
+          					finalRect, finalErr := screenWindowRect(candidate.Handle)
+          					if finalErr == nil && screenRectsStable(rect, finalRect) {
+          						candidate.Bounds = finalRect
+          						return candidate, nil
+          					}
+          					stableSamples = 0
+          					if finalErr != nil {
+          						lastErr = finalErr
+          					}
+          				}
+          			}
+          		}
+
+          		if time.Now().After(deadline) {
+          			if lastErr != nil {
+          				return screenWindow{}, lastErr
+          			}
+          			return screenWindow{}, errors.New("restored application window did not become stable in time")
+          		}
+          		time.Sleep(screenRebindPoll)
+          	}
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit("platform capture marker not found")
+          text = text.replace(marker, helpers + marker, 1)
+
+          pattern = re.compile(r'''func captureDormantScreenWindow\(window screenWindow, wasHidden, wasMinimized bool\) \(frame screenCaptureFrame, err error\) \{.*?\n\}\n\nfunc screenWakeDormantWindowWithoutFocus\(hwnd, foreground uintptr\) error \{.*?\n\}\n''', re.S)
+          replacement = r'''func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized bool) (frame screenCaptureFrame, err error) {
+          	logicalWindow := window
+          	hwnd := window.Handle
+          	foreground, _, _ := procGetForegroundWindow.Call()
+          	originalAbove, _, _ := procGetWindow.Call(hwnd, gwHwndPrev)
+          	wasTopmost := screenWindowTopmost(hwnd)
+          	originalAboveSameBand := false
+          	if originalAbove != 0 {
+          		valid, _, _ := procIsWindow.Call(originalAbove)
+          		originalAboveSameBand = valid != 0 && screenWindowTopmost(originalAbove) == wasTopmost
+          	}
+          	placement, placementOK := screenGetWindowPlacement(hwnd)
+          	restoreHandle := hwnd
+
+          	touched := false
+          	defer func() {
+          		var restoreErrors []string
+          		if touched && restoreHandle != 0 {
+          			valid, _, _ := procIsWindow.Call(restoreHandle)
+          			if valid != 0 {
+          				if restoreErr := screenRestoreDormantWindow(restoreHandle, placement, placementOK, wasHidden, wasMinimized); restoreErr != nil {
+          					restoreErrors = append(restoreErrors, fmt.Sprintf("restore dormant window state: %v", restoreErr))
+          				}
+          			}
+          		}
+          		if restoreHandle != 0 {
+          			valid, _, _ := procIsWindow.Call(restoreHandle)
+          			if valid != 0 {
+          				if restoreErr := restoreBackgroundWindowAfterReveal(restoreHandle, originalAbove, foreground, wasTopmost, originalAboveSameBand); restoreErr != nil {
+          					restoreErrors = append(restoreErrors, fmt.Sprintf("restore selected window placement: %v", restoreErr))
+          				}
+          			}
+          		}
+          		screenRestoreForeground(foreground)
+          		if len(restoreErrors) > 0 {
+          			cleanupErr := errors.New(strings.Join(restoreErrors, "; "))
+          			if err == nil {
+          				err = cleanupErr
+          			} else {
+          				err = fmt.Errorf("%v; cleanup after dormant capture: %w", err, cleanupErr)
+          			}
+          		}
+          	}()
+
+          	touched = true
+          	screenRequestDormantWindowRestore(hwnd, foreground, swShowNoActivate)
+          	restored, restoreErr := screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, screenRebindInitialTimeout, false)
+          	if restoreErr != nil {
+          		valid, _, _ := procIsWindow.Call(hwnd)
+          		if valid != 0 {
+          			screenRequestDormantWindowRestore(hwnd, foreground, swRestore)
+          		}
+          		restored, restoreErr = screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, screenRebindFallbackTimeout, false)
+          	}
+          	if restoreErr != nil {
+          		// Final compatibility path: if the application never creates a replacement
+          		// HWND, allow the original HWND to be repaired from rcNormalPosition. The
+          		// capture still remains locked to the original PID and never substitutes
+          		// foreground pixels.
+          		restored, restoreErr = screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, 320*time.Millisecond, true)
+          	}
+          	if restoreErr != nil {
+          		return screenCaptureFrame{}, fmt.Errorf("temporarily restore hidden/minimized window: %w", restoreErr)
+          	}
+
+          	restoreHandle = restored.Handle
+          	window = restored
+          	screenRestoreForeground(foreground)
+          	screenFlushDWM()
+          	time.Sleep(screenPostStableRenderWait)
+          	frame, err = platformCaptureScreenWindow(window)
+          	if err != nil || screenImageLikelyBlank(frame.Image) {
+          		// A compositor/GPU surface can settle slightly after the outer window
+          		// geometry. Re-enumerate again in case the app replaced the HWND during
+          		// rendering, require stable geometry, then retry once.
+          		refreshed, settleErr := screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, 520*time.Millisecond, true)
+          		if settleErr == nil {
+          			restoreHandle = refreshed.Handle
+          			window = refreshed
+          		}
+          		screenRestoreForeground(foreground)
+          		screenFlushDWM()
+          		time.Sleep(screenRetryRenderWait)
+          		frame, err = platformCaptureScreenWindow(window)
+          	}
+          	if err != nil {
+          		return screenCaptureFrame{}, fmt.Errorf("capture temporarily restored hidden/minimized window: %w", err)
+          	}
+          	if screenImageLikelyBlank(frame.Image) {
+          		return screenCaptureFrame{}, errors.New("hidden/minimized window resumed and stabilized but still returned a blank frame; the application may destroy its main surface or suspend protected/GPU rendering while in the tray")
+          	}
+          	if wasHidden {
+          		frame.Method = "hidden-tray-rebind/" + frame.Method
+          	} else {
+          		frame.Method = "minimized-rebind/" + frame.Method
+          	}
+          	return frame, nil
+          }
+
+          func screenRequestDormantWindowRestore(hwnd, foreground uintptr, command uint32) {
+          	if hwnd == 0 {
+          		return
+          	}
+          	procShowWindowAsync.Call(hwnd, uintptr(command))
+          	screenRestoreForeground(foreground)
+          }
+          '''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f"capture/wake block replacement count={count}")
+
+          path.write_text(text, encoding="utf-8")
+
+          test_path = Path("app/internal/mcpcore/screen_minimized_windows_test.go")
+          tests = test_path.read_text(encoding="utf-8")
+          additions = r'''
+
+          func TestScreenVisionChooseRestoredCandidatePrefersReplacementForTinyOriginal(t *testing.T) {
+          	original := screenWindow{Handle: 0x10, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 1000, Height: 700}}
+          	exact := screenWindow{Handle: 0x10, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 158, Height: 26}}
+          	replacement := screenWindow{Handle: 0x20, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 1000, Height: 700}}
+          	got, err := screenVisionChooseRestoredCandidate(original, &exact, []screenWindow{replacement}, false)
+          	if err != nil {
+          		t.Fatal(err)
+          	}
+          	if got.Handle != replacement.Handle {
+          		t.Fatalf("restored handle = 0x%X, want replacement 0x%X", got.Handle, replacement.Handle)
+          	}
+          }
+
+          func TestScreenVisionChooseRestoredCandidateRejectsAmbiguousReplacement(t *testing.T) {
+          	original := screenWindow{Handle: 0x10, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 1000, Height: 700}}
+          	replacements := []screenWindow{
+          		{Handle: 0x20, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 1000, Height: 700}},
+          		{Handle: 0x30, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 900, Height: 650}},
+          	}
+          	if _, err := screenVisionChooseRestoredCandidate(original, nil, replacements, false); err == nil {
+          		t.Fatal("ambiguous replacement windows must be rejected")
+          	}
+          }
+
+          func TestScreenRectsStableAllowsOnlyTinyDWMJitter(t *testing.T) {
+          	base := screenRect{X: 100, Y: 80, Width: 1000, Height: 700}
+          	if !screenRectsStable(base, screenRect{X: 101, Y: 79, Width: 1001, Height: 699}) {
+          		t.Fatal("one-pixel DWM jitter should still count as stable")
+          	}
+          	if screenRectsStable(base, screenRect{X: 100, Y: 80, Width: 1010, Height: 700}) {
+          		t.Fatal("meaningful width change must reset stability")
+          	}
+          }
+          '''
+          if "TestScreenVisionChooseRestoredCandidatePrefersReplacementForTinyOriginal" not in tests:
+              tests += additions
+          test_path.write_text(tests, encoding="utf-8")
+
+          doc_path = Path("docs/SCREEN_VISION.md")
+          docs = doc_path.read_text(encoding="utf-8")
+          old = "读取最小化窗口时，DevDesk 会优先使用 `ShowWindowAsync(SW_SHOWNOACTIVATE)` 在不抢焦点的情况下临时恢复目标，等待应用重新渲染后走正常的目标安全捕获链，再使用无激活最小化方式恢复原状态；必要时才使用一次兼容性恢复并立即把原前台窗口切回。"
+          new = "读取最小化窗口时，DevDesk 会优先使用 `ShowWindowAsync(SW_SHOWNOACTIVATE)` 在不抢焦点的情况下临时恢复目标；恢复后会按原 PID/进程身份重新 `EnumWindows`，处理托盘程序销毁旧 HWND、重新创建主窗口的情况，并再次应用 Owner/ToolWindow/Cloaked 主窗口筛选。找到唯一目标后，不依赖单一固定延迟，而是轮询窗口矩形，要求尺寸/位置连续稳定并执行 `DwmFlush` 后才截图；最后再使用无激活方式恢复原来的隐藏/最小化状态和前台焦点。"
+          if old in docs:
+              docs = docs.replace(old, new, 1)
+          doc_path.write_text(docs, encoding="utf-8")
+          '@ | Set-Content -Path patch_screen_rebind.py -Encoding UTF8
+          python patch_screen_rebind.py
+
+      - name: Format Go
+        shell: pwsh
+        run: |
+          Set-Location app
+          gofmt -w internal/mcpcore/screen_minimized_windows.go internal/mcpcore/screen_minimized_windows_test.go
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: |
+          Set-Location frontend
+          npm ci
+
+      - name: Guard public repository secrets
+        shell: pwsh
+        run: .\tools\check-public-release.ps1
+
+      - name: Build and test
+        shell: pwsh
+        env:
+          MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: .\build.ps1 -Arch amd64 -RunTests
+
+      - name: Commit validated patch
+        shell: pwsh
+        run: |
+          Remove-Item patch_screen_rebind.py -ErrorAction SilentlyContinue
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/internal/mcpcore/screen_minimized_windows.go app/internal/mcpcore/screen_minimized_windows_test.go docs/SCREEN_VISION.md
+          if (git diff --cached --quiet) { exit 0 }
+          git commit -m "fix: rebind restored Screen Vision windows"
+          git push origin HEAD:${{ github.ref_name }}
