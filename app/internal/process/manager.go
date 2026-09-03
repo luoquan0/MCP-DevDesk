@@ -164,12 +164,19 @@ func mcpArguments(cfg model.Config, dataDir, baseURL, instructionsFile string) [
 			"--server-url", baseURL,
 			"--audit-path", filepath.Join(dataDir, "logs", "mcp-audit.jsonl"),
 			"--logging-config", filepath.Join(dataDir, "config.json"),
+			// Screen Vision is a machine-wide privacy boundary. Additional MCP
+			// instances keep their own operational config, but every Go core must
+			// read the primary DevDesk Screen Vision policy so a locked window
+			// cannot silently remain broader on another connected instance.
+			"--screen-vision-config", screenVisionConfigPath(dataDir),
 			"--file-scope", cfg.FileScope,
 		)
 		if strings.TrimSpace(instructionsFile) != "" {
 			args = append(args, "--instructions-file", instructionsFile)
 		}
 		if cfg.ScreenCaptureEnabled {
+			// Kept for direct/older Go core compatibility. New cores use the
+			// shared Screen Vision config above as the authoritative switch.
 			args = append(args, "--enable-screen-capture")
 		}
 		for _, root := range cfg.AllowedRoots {
@@ -186,6 +193,15 @@ func mcpArguments(cfg model.Config, dataDir, baseURL, instructionsFile string) [
 		args = append(args, "--allow-network")
 	}
 	return args
+}
+
+func screenVisionConfigPath(dataDir string) string {
+	cleaned := filepath.Clean(dataDir)
+	parent := filepath.Dir(cleaned)
+	if strings.EqualFold(filepath.Base(parent), "instances") {
+		return filepath.Join(filepath.Dir(parent), "config.json")
+	}
+	return filepath.Join(cleaned, "config.json")
 }
 
 func mcpEnvironment(cfg model.Config, values secrets.Values, baseURL string) []string {
