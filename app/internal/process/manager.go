@@ -169,6 +169,9 @@ func mcpArguments(cfg model.Config, dataDir, baseURL, instructionsFile string) [
 		if strings.TrimSpace(instructionsFile) != "" {
 			args = append(args, "--instructions-file", instructionsFile)
 		}
+		if cfg.ScreenCaptureEnabled {
+			args = append(args, "--enable-screen-capture")
+		}
 		for _, root := range cfg.AllowedRoots {
 			if strings.TrimSpace(root) != "" {
 				args = append(args, "--allowed-root", root)

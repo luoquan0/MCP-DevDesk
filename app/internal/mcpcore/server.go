@@ -44,6 +44,7 @@ type Options struct {
 	AllowedOrigins          []string
 	PermissionMode          string
 	AllowNetwork            bool
+	ScreenCaptureEnabled    bool
 	AuditPath               string
 	LoggingConfig           string
 	FileScope               string
@@ -62,6 +63,7 @@ type Server struct {
 	allowedOrigins          map[string]struct{}
 	permissionMode          string
 	allowNetwork            bool
+	screenCaptureEnabled    bool
 	toolProfile             string
 	audit                   *auditLogger
 	commands                *commandManager
@@ -215,6 +217,9 @@ func New(options Options) (*Server, error) {
 	tools = append(tools, previewFileTools()...)
 	tools = append(tools, gitTools()...)
 	tools = append(tools, permissionTools()...)
+	if options.ScreenCaptureEnabled && (options.PermissionMode == "trusted" || options.PermissionMode == "dangerous") {
+		tools = append(tools, screenTools()...)
+	}
 	compatibility := compatibilityTools()
 	if options.ToolProfile == "read-only" {
 		compatibility = filterTools(compatibility, func(tool Tool) bool {
@@ -250,6 +255,7 @@ func New(options Options) (*Server, error) {
 		allowedOrigins:          allowedOrigins,
 		permissionMode:          options.PermissionMode,
 		allowNetwork:            options.AllowNetwork,
+		screenCaptureEnabled:    options.ScreenCaptureEnabled,
 		toolProfile:             options.ToolProfile,
 		audit:                   newAuditLogger(options.AuditPath, options.LoggingConfig),
 		fileScope:               options.FileScope,

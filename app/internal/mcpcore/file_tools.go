@@ -197,19 +197,20 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 	switch name {
 	case "server_info":
 		return map[string]any{
-			"name":            s.name,
-			"version":         s.version,
-			"protocolVersion": ProtocolVersion,
-			"transport":       "streamable-http",
-			"coreMode":        "go",
-			"workspace":       s.workspace,
-			"toolCount":       len(s.tools),
-			"permissionMode":  s.permissionMode,
-			"toolProfile":     s.toolProfile,
-			"allowNetwork":    s.allowNetwork,
-			"fileScope":       s.fileScope,
-			"oauthEnabled":    s.oauth != nil,
-			"uptimeSeconds":   s.uptimeSeconds(),
+			"name":                 s.name,
+			"version":              s.version,
+			"protocolVersion":      ProtocolVersion,
+			"transport":            "streamable-http",
+			"coreMode":             "go",
+			"workspace":            s.workspace,
+			"toolCount":            len(s.tools),
+			"permissionMode":       s.permissionMode,
+			"toolProfile":          s.toolProfile,
+			"allowNetwork":         s.allowNetwork,
+			"screenCaptureEnabled": s.screenCaptureEnabled,
+			"fileScope":            s.fileScope,
+			"oauthEnabled":         s.oauth != nil,
+			"uptimeSeconds":        s.uptimeSeconds(),
 		}, nil
 	case "get_workspace":
 		root, err := s.workspaceRoot()
@@ -266,6 +267,8 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 		return s.executeGitTool(name, arguments)
 	case "permission_status", "request_permissions":
 		return s.executePermissionTool(name, arguments)
+	case "screen_list_windows", "screen_get_active_window", "screen_capture_window", "screen_capture_active_window", "screen_capture_desktop":
+		return s.executeScreenTool(name, arguments)
 	case "check_exec_environment", "get_default_cwd", "set_default_cwd", "list_files", "git_blame", "write_image", "save_chatgpt_image", "view_image":
 		return s.executeCompatibilityTool(name, arguments)
 	default:

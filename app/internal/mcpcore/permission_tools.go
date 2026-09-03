@@ -32,7 +32,7 @@ func permissionTools() []Tool {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"capability":  map[string]any{"type": "string", "enum": []string{"read", "write", "delete", "command", "network"}},
+					"capability":  map[string]any{"type": "string", "enum": []string{"read", "write", "delete", "command", "network", "screen"}},
 					"permission":  map[string]any{"type": "string", "enum": []string{"network", "destructive_command", "long_timeout", "sensitive_env", "shell_expansion", "inline_script", "privileged_executable", "write_generated_or_ignored"}, "description": "Legacy permission category."},
 					"reason":      map[string]any{"type": "string", "maxLength": 500},
 					"tool_name":   map[string]any{"type": "string"},
@@ -77,7 +77,11 @@ func (s *Server) executePermissionTool(name string, arguments map[string]any) (m
 		}
 		if !allowed {
 			result["requiredMode"] = requiredMode
-			result["message"] = fmt.Sprintf("Open MCP DevDesk Security settings and switch permission mode to %s. The Go core does not self-escalate.", requiredMode)
+			if capability == "screen" && !s.screenCaptureEnabled {
+				result["message"] = "Open MCP DevDesk Security settings and enable Screen Vision. Screen capture is explicit opt-in and the Go core does not self-enable it."
+			} else {
+				result["message"] = fmt.Sprintf("Open MCP DevDesk Security settings and switch permission mode to %s. The Go core does not self-escalate.", requiredMode)
+			}
 		}
 		return result, nil
 	default:
@@ -102,18 +106,19 @@ func legacyPermissionCapability(permission string) string {
 
 func (s *Server) permissionStatus() map[string]any {
 	capabilities := map[string]bool{}
-	for _, capability := range []string{"read", "write", "delete", "command", "network"} {
+	for _, capability := range []string{"read", "write", "delete", "command", "network", "screen"} {
 		capabilities[capability], _ = s.capabilityAllowed(capability)
 	}
 	return map[string]any{
-		"permissionMode": s.permissionMode,
-		"toolProfile":    s.toolProfile,
-		"allowNetwork":   s.allowNetwork,
-		"fileScope":      s.fileScope,
-		"allowedRoots":   append([]string(nil), s.allowedRoots...),
-		"capabilities":   capabilities,
-		"workspaceBound": s.fileScope == "workspace",
-		"selfEscalation": false,
+		"permissionMode":       s.permissionMode,
+		"toolProfile":          s.toolProfile,
+		"allowNetwork":         s.allowNetwork,
+		"screenCaptureEnabled": s.screenCaptureEnabled,
+		"fileScope":            s.fileScope,
+		"allowedRoots":         append([]string(nil), s.allowedRoots...),
+		"capabilities":         capabilities,
+		"workspaceBound":       s.fileScope == "workspace",
+		"selfEscalation":       false,
 	}
 }
 
@@ -127,6 +132,8 @@ func (s *Server) capabilityAllowed(capability string) (bool, string) {
 		return s.permissionMode == "trusted" || s.permissionMode == "dangerous", "trusted"
 	case "network":
 		return s.allowNetwork && (s.permissionMode == "trusted" || s.permissionMode == "dangerous"), "trusted"
+	case "screen":
+		return s.screenCaptureEnabled && (s.permissionMode == "trusted" || s.permissionMode == "dangerous"), "trusted"
 	default:
 		return false, "trusted"
 	}

@@ -30,6 +30,7 @@ func main() {
 	fileScope := flag.String("file-scope", envOrDefault("CODING_TOOLS_MCP_FILE_SCOPE", "workspace"), "workspace, roots, or computer")
 	flag.Var(&allowedRoots, "allowed-root", "additional allowed root directory; may be repeated")
 	allowNetwork := flag.Bool("allow-network", false, "allow command sessions to use network-capable tools")
+	screenCapture := flag.Bool("enable-screen-capture", false, "enable opt-in on-demand Windows screen vision tools")
 	oauthMode := flag.Bool("oauth-mode", false, "enable OAuth 2.1 authorization")
 	dataDir := flag.String("data-dir", "", "data directory for OAuth clients and audit logs")
 	serverURL := flag.String("server-url", os.Getenv("CODING_TOOLS_MCP_SERVER_URL"), "public server base URL used for OAuth metadata")
@@ -118,6 +119,7 @@ func main() {
 		ManagedInstructionsFile: strings.TrimSpace(*instructionsFile),
 		PermissionMode:          *permissionMode,
 		AllowNetwork:            *allowNetwork,
+		ScreenCaptureEnabled:    *screenCapture,
 		AuditPath:               resolvedAuditPath,
 		LoggingConfig:           strings.TrimSpace(*loggingConfig),
 		FileScope:               *fileScope,
