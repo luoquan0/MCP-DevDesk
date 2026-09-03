@@ -60,8 +60,3 @@ replace("app/internal/config/store.go",
 replace("frontend/src/types/api.ts",
     "  allowNetwork: boolean;\n  fileScope: FileScope;",
     "  allowNetwork: boolean;\n  screenCaptureEnabled: boolean;\n  fileScope: FileScope;")
-
-# Stable release workflow must never consume beta/rc tags.
-replace(".github/workflows/release.yml",
-    "    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.head_commit.message, '[release]')",
-    "    if: github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')) || contains(github.event.head_commit.message, '[release]')")
