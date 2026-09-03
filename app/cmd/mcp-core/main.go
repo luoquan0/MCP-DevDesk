@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -132,6 +133,13 @@ func main() {
 		log.Fatal(err)
 	}
 	defer core.Close()
+	if *screenCapture {
+		mode, windowID, windowProcessID, policyErr := loadScreenVisionPolicy(*loggingConfig)
+		if policyErr != nil {
+			log.Printf("load Screen Vision policy: %v; using current-window mode", policyErr)
+		}
+		core.ConfigureScreenVision(mode, windowID, windowProcessID)
+	}
 	address := net.JoinHostPort(*host, strconv.Itoa(*port))
 	server := &http.Server{
 		Addr:              address,
@@ -172,6 +180,32 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+type persistedScreenVisionConfig struct {
+	ScreenCaptureMode            string `json:"screenCaptureMode"`
+	ScreenCaptureWindowID        string `json:"screenCaptureWindowId"`
+	ScreenCaptureWindowProcessID uint32 `json:"screenCaptureWindowProcessId"`
+}
+
+func loadScreenVisionPolicy(configPath string) (string, string, uint32, error) {
+	mode := "active"
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return mode, "", 0, nil
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		return mode, "", 0, err
+	}
+	var config persistedScreenVisionConfig
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return mode, "", 0, err
+	}
+	if strings.TrimSpace(config.ScreenCaptureMode) != "" {
+		mode = config.ScreenCaptureMode
+	}
+	return mode, strings.TrimSpace(config.ScreenCaptureWindowID), config.ScreenCaptureWindowProcessID, nil
 }
 
 type statusRecorder struct {

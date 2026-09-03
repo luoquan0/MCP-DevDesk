@@ -63,6 +63,7 @@ type Release struct {
 	CurrentVersion   string    `json:"currentVersion"`
 	LatestVersion    string    `json:"latestVersion"`
 	UpdateAvailable  bool      `json:"updateAvailable"`
+	InstallReason    string    `json:"installReason,omitempty"`
 	TagName          string    `json:"tagName"`
 	Name             string    `json:"name"`
 	Notes            string    `json:"notes"`
@@ -303,10 +304,12 @@ func (m *Manager) Check(ctx context.Context) (Release, error) {
 	}
 
 	latest := strings.TrimPrefix(strings.TrimSpace(best.TagName), "v")
+	updateAvailable, installReason := updateAvailability(m.version, latest, settings.Channel)
 	return Release{
 		CurrentVersion:   m.version,
 		LatestVersion:    latest,
-		UpdateAvailable:  compareVersions(latest, m.version) > 0,
+		UpdateAvailable:  updateAvailable,
+		InstallReason:    installReason,
 		TagName:          best.TagName,
 		Name:             strings.TrimSpace(best.Name),
 		Notes:            truncate(best.Body, 20000),
@@ -731,6 +734,21 @@ func validateGitHubDownloadURL(raw string) error {
 		return fmt.Errorf("release asset host %q is not a GitHub host", host)
 	}
 	return nil
+}
+
+func updateAvailability(current, latest, channel string) (bool, string) {
+	comparison := compareVersions(latest, current)
+	if comparison > 0 {
+		return true, "upgrade"
+	}
+	if strings.EqualFold(strings.TrimSpace(channel), "stable") && isPrereleaseVersion(current) && comparison != 0 {
+		return true, "switch-to-stable"
+	}
+	return false, ""
+}
+
+func isPrereleaseVersion(value string) bool {
+	return parseVersion(value).prerelease != ""
 }
 
 func compareVersions(left, right string) int {

@@ -2,6 +2,23 @@ export type PermissionMode = "safe" | "trusted" | "dangerous";
 export type FileScope = "workspace" | "roots" | "computer";
 export type ToolProfile = "full" | "read-only" | "compat-readonly-all";
 export type CoreMode = "legacy" | "go";
+export type ScreenCaptureMode = "active" | "window" | "desktop";
+
+export interface ScreenWindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ScreenWindowInfo {
+  id: string;
+  title: string;
+  processId: number;
+  processName?: string;
+  bounds: ScreenWindowBounds;
+  active: boolean;
+}
 
 export interface ProcessStatus {
   name: string;
@@ -104,6 +121,12 @@ export interface Config {
   permissionMode: PermissionMode;
   allowNetwork: boolean;
   screenCaptureEnabled: boolean;
+  screenCaptureMode: ScreenCaptureMode;
+  screenCaptureWindowId: string;
+  screenCaptureWindowProcessId: number;
+  screenCaptureWindowTitle: string;
+  screenCaptureWindowProcess: string;
+  screenWindows?: ScreenWindowInfo[];
   fileScope: FileScope;
   domain: string;
   tunnelName: string;

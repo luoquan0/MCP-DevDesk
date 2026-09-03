@@ -22,6 +22,7 @@ import (
 	"mcp-devdesk/internal/config"
 	instancestore "mcp-devdesk/internal/instances"
 	devlogging "mcp-devdesk/internal/logging"
+	"mcp-devdesk/internal/mcpcore"
 	"mcp-devdesk/internal/model"
 	processmanager "mcp-devdesk/internal/process"
 	projectstore "mcp-devdesk/internal/projects"
@@ -567,7 +568,11 @@ func (a *App) SwitchWorkspace(ctx context.Context, workspace string) error {
 }
 
 func (a *App) Config() model.PublicConfig {
-	return a.config.Get().Public()
+	public := a.config.Get().Public()
+	if windows, err := mcpcore.ListScreenWindows(); err == nil {
+		public.ScreenWindows = windows
+	}
+	return public
 }
 
 func (a *App) WebControlPasswordConfigured() bool {

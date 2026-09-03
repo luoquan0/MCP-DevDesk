@@ -4,136 +4,173 @@ import "time"
 
 const CurrentConfigVersion = 1
 
+type ScreenRect struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+type ScreenWindowInfo struct {
+	ID          string     `json:"id"`
+	Title       string     `json:"title"`
+	ProcessID   uint32     `json:"processId"`
+	ProcessName string     `json:"processName,omitempty"`
+	Bounds      ScreenRect `json:"bounds"`
+	Active      bool       `json:"active"`
+}
+
 type Config struct {
-	Version                 int      `json:"version"`
-	Workspace               string   `json:"workspace"`
-	AllowedRoots            []string `json:"allowedRoots"`
-	MCPHost                 string   `json:"mcpHost"`
-	MCPPort                 int      `json:"mcpPort"`
-	AdminHost               string   `json:"adminHost"`
-	AdminPort               int      `json:"adminPort"`
-	WebControlEnabled       bool     `json:"webControlEnabled"`
-	WebControlPort          int      `json:"webControlPort"`
-	WebControlLANEnabled    bool     `json:"webControlLanEnabled"`
-	WebControlAuthEnabled   bool     `json:"webControlAuthEnabled"`
-	PermissionMode          string   `json:"permissionMode"`
-	FileScope               string   `json:"fileScope"`
-	ToolProfile             string   `json:"toolProfile"`
-	AllowNetwork            bool     `json:"allowNetwork"`
-	ScreenCaptureEnabled    bool     `json:"screenCaptureEnabled"`
-	Domain                  string   `json:"domain"`
-	TunnelName              string   `json:"tunnelName"`
-	TunnelID                string   `json:"tunnelId"`
-	ProxyAddress            string   `json:"proxyAddress"`
-	ProxyUsername           string   `json:"proxyUsername"`
-	ProxyPassword           string   `json:"proxyPassword,omitempty"`
-	AutoStart               bool     `json:"autoStart"`
-	Watchdog                bool     `json:"watchdog"`
-	CoreMode                string   `json:"coreMode"`
-	CoreExecutable          string   `json:"coreExecutable"`
-	GoCoreExecutable        string   `json:"goCoreExecutable"`
-	CloudflaredExecutable   string   `json:"cloudflaredExecutable"`
-	OpenBrowserOnStart      bool     `json:"openBrowserOnStart"`
-	HideChildProcessWindows bool     `json:"hideChildProcessWindows"`
-	LoggingEnabled          bool     `json:"loggingEnabled"`
+	Version                      int      `json:"version"`
+	Workspace                    string   `json:"workspace"`
+	AllowedRoots                 []string `json:"allowedRoots"`
+	MCPHost                      string   `json:"mcpHost"`
+	MCPPort                      int      `json:"mcpPort"`
+	AdminHost                    string   `json:"adminHost"`
+	AdminPort                    int      `json:"adminPort"`
+	WebControlEnabled            bool     `json:"webControlEnabled"`
+	WebControlPort               int      `json:"webControlPort"`
+	WebControlLANEnabled         bool     `json:"webControlLanEnabled"`
+	WebControlAuthEnabled        bool     `json:"webControlAuthEnabled"`
+	PermissionMode               string   `json:"permissionMode"`
+	FileScope                    string   `json:"fileScope"`
+	ToolProfile                  string   `json:"toolProfile"`
+	AllowNetwork                 bool     `json:"allowNetwork"`
+	ScreenCaptureEnabled         bool     `json:"screenCaptureEnabled"`
+	ScreenCaptureMode            string   `json:"screenCaptureMode"`
+	ScreenCaptureWindowID        string   `json:"screenCaptureWindowId"`
+	ScreenCaptureWindowProcessID uint32   `json:"screenCaptureWindowProcessId"`
+	ScreenCaptureWindowTitle     string   `json:"screenCaptureWindowTitle"`
+	ScreenCaptureWindowProcess   string   `json:"screenCaptureWindowProcess"`
+	Domain                       string   `json:"domain"`
+	TunnelName                   string   `json:"tunnelName"`
+	TunnelID                     string   `json:"tunnelId"`
+	ProxyAddress                 string   `json:"proxyAddress"`
+	ProxyUsername                string   `json:"proxyUsername"`
+	ProxyPassword                string   `json:"proxyPassword,omitempty"`
+	AutoStart                    bool     `json:"autoStart"`
+	Watchdog                     bool     `json:"watchdog"`
+	CoreMode                     string   `json:"coreMode"`
+	CoreExecutable               string   `json:"coreExecutable"`
+	GoCoreExecutable             string   `json:"goCoreExecutable"`
+	CloudflaredExecutable        string   `json:"cloudflaredExecutable"`
+	OpenBrowserOnStart           bool     `json:"openBrowserOnStart"`
+	HideChildProcessWindows      bool     `json:"hideChildProcessWindows"`
+	LoggingEnabled               bool     `json:"loggingEnabled"`
 }
 
 type PublicConfig struct {
-	Version                 int      `json:"version"`
-	Workspace               string   `json:"workspace"`
-	AllowedRoots            []string `json:"allowedRoots"`
-	MCPHost                 string   `json:"mcpHost"`
-	MCPPort                 int      `json:"mcpPort"`
-	AdminHost               string   `json:"adminHost"`
-	AdminPort               int      `json:"adminPort"`
-	WebControlEnabled       bool     `json:"webControlEnabled"`
-	WebControlPort          int      `json:"webControlPort"`
-	WebControlLANEnabled    bool     `json:"webControlLanEnabled"`
-	WebControlAuthEnabled   bool     `json:"webControlAuthEnabled"`
-	PermissionMode          string   `json:"permissionMode"`
-	FileScope               string   `json:"fileScope"`
-	ToolProfile             string   `json:"toolProfile"`
-	AllowNetwork            bool     `json:"allowNetwork"`
-	ScreenCaptureEnabled    bool     `json:"screenCaptureEnabled"`
-	Domain                  string   `json:"domain"`
-	TunnelName              string   `json:"tunnelName"`
-	TunnelID                string   `json:"tunnelId"`
-	ProxyAddress            string   `json:"proxyAddress"`
-	ProxyUsername           string   `json:"proxyUsername"`
-	HasProxyPassword        bool     `json:"hasProxyPassword"`
-	AutoStart               bool     `json:"autoStart"`
-	Watchdog                bool     `json:"watchdog"`
-	CoreMode                string   `json:"coreMode"`
-	CoreExecutable          string   `json:"coreExecutable"`
-	GoCoreExecutable        string   `json:"goCoreExecutable"`
-	CloudflaredExecutable   string   `json:"cloudflaredExecutable"`
-	OpenBrowserOnStart      bool     `json:"openBrowserOnStart"`
-	HideChildProcessWindows bool     `json:"hideChildProcessWindows"`
-	LoggingEnabled          bool     `json:"loggingEnabled"`
+	Version                      int                `json:"version"`
+	Workspace                    string             `json:"workspace"`
+	AllowedRoots                 []string           `json:"allowedRoots"`
+	MCPHost                      string             `json:"mcpHost"`
+	MCPPort                      int                `json:"mcpPort"`
+	AdminHost                    string             `json:"adminHost"`
+	AdminPort                    int                `json:"adminPort"`
+	WebControlEnabled            bool               `json:"webControlEnabled"`
+	WebControlPort               int                `json:"webControlPort"`
+	WebControlLANEnabled         bool               `json:"webControlLanEnabled"`
+	WebControlAuthEnabled        bool               `json:"webControlAuthEnabled"`
+	PermissionMode               string             `json:"permissionMode"`
+	FileScope                    string             `json:"fileScope"`
+	ToolProfile                  string             `json:"toolProfile"`
+	AllowNetwork                 bool               `json:"allowNetwork"`
+	ScreenCaptureEnabled         bool               `json:"screenCaptureEnabled"`
+	ScreenCaptureMode            string             `json:"screenCaptureMode"`
+	ScreenCaptureWindowID        string             `json:"screenCaptureWindowId"`
+	ScreenCaptureWindowProcessID uint32             `json:"screenCaptureWindowProcessId"`
+	ScreenCaptureWindowTitle     string             `json:"screenCaptureWindowTitle"`
+	ScreenCaptureWindowProcess   string             `json:"screenCaptureWindowProcess"`
+	ScreenWindows                []ScreenWindowInfo `json:"screenWindows,omitempty"`
+	Domain                       string             `json:"domain"`
+	TunnelName                   string             `json:"tunnelName"`
+	TunnelID                     string             `json:"tunnelId"`
+	ProxyAddress                 string             `json:"proxyAddress"`
+	ProxyUsername                string             `json:"proxyUsername"`
+	HasProxyPassword             bool               `json:"hasProxyPassword"`
+	AutoStart                    bool               `json:"autoStart"`
+	Watchdog                     bool               `json:"watchdog"`
+	CoreMode                     string             `json:"coreMode"`
+	CoreExecutable               string             `json:"coreExecutable"`
+	GoCoreExecutable             string             `json:"goCoreExecutable"`
+	CloudflaredExecutable        string             `json:"cloudflaredExecutable"`
+	OpenBrowserOnStart           bool               `json:"openBrowserOnStart"`
+	HideChildProcessWindows      bool               `json:"hideChildProcessWindows"`
+	LoggingEnabled               bool               `json:"loggingEnabled"`
 }
 
 func (c Config) Public() PublicConfig {
 	return PublicConfig{
-		Version:                 c.Version,
-		Workspace:               c.Workspace,
-		AllowedRoots:            append([]string(nil), c.AllowedRoots...),
-		MCPHost:                 c.MCPHost,
-		MCPPort:                 c.MCPPort,
-		AdminHost:               c.AdminHost,
-		AdminPort:               c.AdminPort,
-		WebControlEnabled:       c.WebControlEnabled,
-		WebControlPort:          c.WebControlPort,
-		WebControlLANEnabled:    c.WebControlLANEnabled,
-		WebControlAuthEnabled:   c.WebControlAuthEnabled,
-		PermissionMode:          c.PermissionMode,
-		FileScope:               c.FileScope,
-		ToolProfile:             c.ToolProfile,
-		AllowNetwork:            c.AllowNetwork,
-		ScreenCaptureEnabled:    c.ScreenCaptureEnabled,
-		Domain:                  c.Domain,
-		TunnelName:              c.TunnelName,
-		TunnelID:                c.TunnelID,
-		ProxyAddress:            c.ProxyAddress,
-		ProxyUsername:           c.ProxyUsername,
-		HasProxyPassword:        c.ProxyPassword != "",
-		AutoStart:               c.AutoStart,
-		Watchdog:                c.Watchdog,
-		CoreMode:                c.CoreMode,
-		CoreExecutable:          c.CoreExecutable,
-		GoCoreExecutable:        c.GoCoreExecutable,
-		CloudflaredExecutable:   c.CloudflaredExecutable,
-		OpenBrowserOnStart:      c.OpenBrowserOnStart,
-		HideChildProcessWindows: c.HideChildProcessWindows,
-		LoggingEnabled:          c.LoggingEnabled,
+		Version:                      c.Version,
+		Workspace:                    c.Workspace,
+		AllowedRoots:                 append([]string(nil), c.AllowedRoots...),
+		MCPHost:                      c.MCPHost,
+		MCPPort:                      c.MCPPort,
+		AdminHost:                    c.AdminHost,
+		AdminPort:                    c.AdminPort,
+		WebControlEnabled:            c.WebControlEnabled,
+		WebControlPort:               c.WebControlPort,
+		WebControlLANEnabled:         c.WebControlLANEnabled,
+		WebControlAuthEnabled:        c.WebControlAuthEnabled,
+		PermissionMode:               c.PermissionMode,
+		FileScope:                    c.FileScope,
+		ToolProfile:                  c.ToolProfile,
+		AllowNetwork:                 c.AllowNetwork,
+		ScreenCaptureEnabled:         c.ScreenCaptureEnabled,
+		ScreenCaptureMode:            c.ScreenCaptureMode,
+		ScreenCaptureWindowID:        c.ScreenCaptureWindowID,
+		ScreenCaptureWindowProcessID: c.ScreenCaptureWindowProcessID,
+		ScreenCaptureWindowTitle:     c.ScreenCaptureWindowTitle,
+		ScreenCaptureWindowProcess:   c.ScreenCaptureWindowProcess,
+		Domain:                       c.Domain,
+		TunnelName:                   c.TunnelName,
+		TunnelID:                     c.TunnelID,
+		ProxyAddress:                 c.ProxyAddress,
+		ProxyUsername:                c.ProxyUsername,
+		HasProxyPassword:             c.ProxyPassword != "",
+		AutoStart:                    c.AutoStart,
+		Watchdog:                     c.Watchdog,
+		CoreMode:                     c.CoreMode,
+		CoreExecutable:               c.CoreExecutable,
+		GoCoreExecutable:             c.GoCoreExecutable,
+		CloudflaredExecutable:        c.CloudflaredExecutable,
+		OpenBrowserOnStart:           c.OpenBrowserOnStart,
+		HideChildProcessWindows:      c.HideChildProcessWindows,
+		LoggingEnabled:               c.LoggingEnabled,
 	}
 }
 
 type ConfigUpdate struct {
-	Workspace               *string   `json:"workspace"`
-	AllowedRoots            *[]string `json:"allowedRoots"`
-	MCPPort                 *int      `json:"mcpPort"`
-	AdminPort               *int      `json:"adminPort"`
-	WebControlEnabled       *bool     `json:"webControlEnabled"`
-	WebControlPort          *int      `json:"webControlPort"`
-	WebControlLANEnabled    *bool     `json:"webControlLanEnabled"`
-	WebControlAuthEnabled   *bool     `json:"webControlAuthEnabled"`
-	PermissionMode          *string   `json:"permissionMode"`
-	FileScope               *string   `json:"fileScope"`
-	ToolProfile             *string   `json:"toolProfile"`
-	AllowNetwork            *bool     `json:"allowNetwork"`
-	ScreenCaptureEnabled    *bool     `json:"screenCaptureEnabled"`
-	Domain                  *string   `json:"domain"`
-	TunnelName              *string   `json:"tunnelName"`
-	ProxyAddress            *string   `json:"proxyAddress"`
-	ProxyUsername           *string   `json:"proxyUsername"`
-	ProxyPassword           *string   `json:"proxyPassword"`
-	AutoStart               *bool     `json:"autoStart"`
-	Watchdog                *bool     `json:"watchdog"`
-	CoreMode                *string   `json:"coreMode"`
-	ConfirmCoreSwitch       bool      `json:"confirmCoreSwitch"`
-	OpenBrowserOnStart      *bool     `json:"openBrowserOnStart"`
-	HideChildProcessWindows *bool     `json:"hideChildProcessWindows"`
-	LoggingEnabled          *bool     `json:"loggingEnabled"`
+	Workspace                    *string   `json:"workspace"`
+	AllowedRoots                 *[]string `json:"allowedRoots"`
+	MCPPort                      *int      `json:"mcpPort"`
+	AdminPort                    *int      `json:"adminPort"`
+	WebControlEnabled            *bool     `json:"webControlEnabled"`
+	WebControlPort               *int      `json:"webControlPort"`
+	WebControlLANEnabled         *bool     `json:"webControlLanEnabled"`
+	WebControlAuthEnabled        *bool     `json:"webControlAuthEnabled"`
+	PermissionMode               *string   `json:"permissionMode"`
+	FileScope                    *string   `json:"fileScope"`
+	ToolProfile                  *string   `json:"toolProfile"`
+	AllowNetwork                 *bool     `json:"allowNetwork"`
+	ScreenCaptureEnabled         *bool     `json:"screenCaptureEnabled"`
+	ScreenCaptureMode            *string   `json:"screenCaptureMode"`
+	ScreenCaptureWindowID        *string   `json:"screenCaptureWindowId"`
+	ScreenCaptureWindowProcessID *uint32   `json:"screenCaptureWindowProcessId"`
+	ScreenCaptureWindowTitle     *string   `json:"screenCaptureWindowTitle"`
+	ScreenCaptureWindowProcess   *string   `json:"screenCaptureWindowProcess"`
+	Domain                       *string   `json:"domain"`
+	TunnelName                   *string   `json:"tunnelName"`
+	ProxyAddress                 *string   `json:"proxyAddress"`
+	ProxyUsername                *string   `json:"proxyUsername"`
+	ProxyPassword                *string   `json:"proxyPassword"`
+	AutoStart                    *bool     `json:"autoStart"`
+	Watchdog                     *bool     `json:"watchdog"`
+	CoreMode                     *string   `json:"coreMode"`
+	ConfirmCoreSwitch            bool      `json:"confirmCoreSwitch"`
+	OpenBrowserOnStart           *bool     `json:"openBrowserOnStart"`
+	HideChildProcessWindows      *bool     `json:"hideChildProcessWindows"`
+	LoggingEnabled               *bool     `json:"loggingEnabled"`
 }
 
 type ProcessStatus struct {
