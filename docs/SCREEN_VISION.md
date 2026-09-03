@@ -64,7 +64,7 @@ Screen Vision 是 MCP DevDesk 的 Windows 屏幕视觉实验功能。它让已�
 
 桌面总览使用虚拟桌面 `BitBlt`，代表用户当前肉眼看到的多显示器合成画面。与此同时，“整个桌面”模式还允许 AI 使用 `screen_list_windows` + `screen_capture_window` 自己查看其他已打开的可读取应用，因此“整个桌面”不是只能看到最前面的窗口。
 
-窗口枚举会保留仍有顶层窗体的已最小化应用，并额外尝试识别“隐藏到系统托盘但仍保留主 HWND”的应用；隐藏候选会排除有 Owner 的辅助窗体、`WS_EX_TOOLWINDOW` 和尺寸过小的内部窗口，不会把纯后台服务或无顶层窗体进程伪装成可截图目标。对于 Windows 最小化后常见的 158×26 一类图标矩形，DevDesk 会优先读取 `GetWindowPlacement` 的正常窗口尺寸。读取最小化/托盘目标时，会使用 `ShowWindowAsync(SW_SHOWNOACTIVATE)` 尝试无焦点恢复；若恢复后仍停留在异常小尺寸，则按正常窗口位置修复尺寸，等待重新渲染后走目标安全捕获链，并最终恢复原来的最小化/隐藏状态和用户前台窗口。整个过程失败时直接报错，绝不改抓当前 Edge/Chrome。若目标应用进入托盘时直接销毁主 HWND，或彻底停止 GPU/DRM 渲染，Windows 本身就没有可恢复画面，此时仍会明确失败。
+窗口枚举会保留仍有顶层窗体的已最小化应用，并额外尝试识别“隐藏到系统托盘但仍保留主 HWND”的应用；隐藏候选会排除有 Owner 的辅助窗体、`WS_EX_TOOLWINDOW` 和尺寸过小的内部窗口，不会把纯后台服务或无顶层窗体进程伪装成可截图目标。对于 Windows 最小化后常见的 158×26 一类图标矩形，DevDesk 会优先读取 `GetWindowPlacement` 的正常窗口尺寸。读取最小化/托盘目标时，会使用 `ShowWindowAsync(SW_SHOWNOACTIVATE)` 尝试无焦点恢复；恢复动作之后会重新 `EnumWindows`，按原 PID + 进程名重新绑定真正的主 HWND，并再次应用 Owner、`WS_EX_TOOLWINDOW`、DWM Cloaked 和正常尺寸筛选。如果出现多个不能唯一判断的主窗口会直接失败，不会猜测目标。找到唯一窗口后，DevDesk 会轮询窗口矩形，要求位置和尺寸连续多次稳定，并在 `DwmFlush` 后再次确认稳定才截图，而不是只依赖固定延迟；最后恢复原来的最小化/隐藏状态和用户前台窗口。整个过程失败时直接报错，绝不改抓当前 Edge/Chrome。若目标应用进入托盘时直接销毁主 HWND，或彻底停止 GPU/DRM 渲染，Windows 本身就没有可恢复画面，此时仍会明确失败。
 
 Windows 自身的保护边界仍然生效。UAC 安全桌面、DRM/受保护内容、部分硬件加速窗口或其他 Windows Desktop 上的窗口可能返回黑屏、旧画面或无法捕获。这些情况不会通过降低 MCP 权限边界绕过。
 
