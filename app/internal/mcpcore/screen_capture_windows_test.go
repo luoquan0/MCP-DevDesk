@@ -2,7 +2,10 @@
 
 package mcpcore
 
-import "testing"
+import (
+	"image"
+	"testing"
+)
 
 func TestScreenBackgroundRevealRequired(t *testing.T) {
 	if screenBackgroundRevealRequired(0, 0x20) {
@@ -25,6 +28,24 @@ func TestScreenWindowBandInsertAfter(t *testing.T) {
 	}
 	if screenWindowBandInsertAfter(false) != ^uintptr(1) {
 		t.Fatal("normal restore band must use HWND_NOTOPMOST")
+	}
+}
+
+func TestScreenImageLikelyBlank(t *testing.T) {
+	black := image.NewNRGBA(image.Rect(0, 0, 320, 200))
+	if !screenImageLikelyBlank(black) {
+		t.Fatal("near-black capture should be treated as a likely hardware blank frame")
+	}
+
+	visible := image.NewNRGBA(image.Rect(0, 0, 320, 200))
+	for offset := 0; offset < len(visible.Pix); offset += 4 {
+		visible.Pix[offset] = 220
+		visible.Pix[offset+1] = 220
+		visible.Pix[offset+2] = 220
+		visible.Pix[offset+3] = 0xff
+	}
+	if screenImageLikelyBlank(visible) {
+		t.Fatal("normal visible capture must not be treated as blank")
 	}
 }
 
