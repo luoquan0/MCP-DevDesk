@@ -73,3 +73,50 @@ func TestScreenVisionBoundsNeedRepair(t *testing.T) {
 		t.Fatal("already-normal restored bounds should not be moved/resized")
 	}
 }
+
+func TestScreenVisionChooseRestoredCandidatePrefersReplacementForTinyOriginal(t *testing.T) {
+	original := screenWindow{Handle: 0x10, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 1000, Height: 700}}
+	exact := screenWindow{Handle: 0x10, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 158, Height: 26}}
+	replacement := screenWindow{Handle: 0x20, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 1000, Height: 700}}
+	got, err := screenVisionChooseRestoredCandidate(original, &exact, []screenWindow{replacement}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Handle != replacement.Handle {
+		t.Fatalf("restored handle = 0x%X, want replacement 0x%X", got.Handle, replacement.Handle)
+	}
+}
+
+func TestScreenVisionChooseRestoredCandidateRejectsAmbiguousReplacement(t *testing.T) {
+	original := screenWindow{Handle: 0x10, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 1000, Height: 700}}
+	replacements := []screenWindow{
+		{Handle: 0x20, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 1000, Height: 700}},
+		{Handle: 0x30, Title: "v2rayN", ProcessID: 55, ProcessName: "v2rayN.exe", Bounds: screenRect{Width: 900, Height: 650}},
+	}
+	if _, err := screenVisionChooseRestoredCandidate(original, nil, replacements, false); err == nil {
+		t.Fatal("ambiguous replacement windows must be rejected")
+	}
+}
+
+func TestScreenRectsStableAllowsOnlyTinyDWMJitter(t *testing.T) {
+	base := screenRect{X: 100, Y: 80, Width: 1000, Height: 700}
+	if !screenRectsStable(base, screenRect{X: 101, Y: 79, Width: 1001, Height: 699}) {
+		t.Fatal("one-pixel DWM jitter should still count as stable")
+	}
+	if screenRectsStable(base, screenRect{X: 100, Y: 80, Width: 1010, Height: 700}) {
+		t.Fatal("meaningful width change must reset stability")
+	}
+}
+
+func TestScreenVisionRestoredIdentityRequiresResolvedProcessName(t *testing.T) {
+	original := screenWindow{ProcessID: 55, ProcessName: "v2rayN.exe"}
+	if screenVisionRestoredIdentityMatches(original, screenWindow{ProcessID: 55}) {
+		t.Fatal("replacement with an unresolved process name must not inherit a known target identity")
+	}
+	if !screenVisionRestoredIdentityMatches(original, screenWindow{ProcessID: 55, ProcessName: "V2RAYN.EXE"}) {
+		t.Fatal("same PID and process name should preserve identity case-insensitively")
+	}
+	if screenVisionRestoredIdentityMatches(original, screenWindow{ProcessID: 56, ProcessName: "v2rayN.exe"}) {
+		t.Fatal("different PID must never be rebound")
+	}
+}

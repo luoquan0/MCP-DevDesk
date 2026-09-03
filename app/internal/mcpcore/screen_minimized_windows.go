@@ -12,18 +12,22 @@ import (
 )
 
 const (
-	swHide                  = 0
-	swShowNoActivate        = 4
-	swMinimize              = 6
-	swShowMinNoActive       = 7
-	swRestore               = 9
-	screenGWHwndOwner       = 4
-	screenWSExToolWindow    = 0x00000080
-	screenSWPNoZOrder       = 0x0004
-	screenRestorePoll       = 20 * time.Millisecond
-	screenRestoreTimeout    = 760 * time.Millisecond
-	screenInitialRenderWait = 220 * time.Millisecond
-	screenRetryRenderWait   = 360 * time.Millisecond
+	swHide                      = 0
+	swShowNoActivate            = 4
+	swMinimize                  = 6
+	swShowMinNoActive           = 7
+	swRestore                   = 9
+	screenGWHwndOwner           = 4
+	screenWSExToolWindow        = 0x00000080
+	screenSWPNoZOrder           = 0x0004
+	screenRestorePoll           = 20 * time.Millisecond
+	screenRestoreTimeout        = 760 * time.Millisecond
+	screenRebindPoll            = 35 * time.Millisecond
+	screenRebindInitialTimeout  = 650 * time.Millisecond
+	screenRebindFallbackTimeout = 1200 * time.Millisecond
+	screenStableSamples         = 3
+	screenPostStableRenderWait  = 80 * time.Millisecond
+	screenRetryRenderWait       = 180 * time.Millisecond
 )
 
 var (
@@ -222,6 +226,187 @@ func screenPlacementNormalBounds(placement screenWindowPlacement, ok bool) (scre
 	return bounds, true
 }
 
+func screenVisionRestoredIdentityMatches(original, candidate screenWindow) bool {
+	if original.ProcessID == 0 || candidate.ProcessID != original.ProcessID {
+		return false
+	}
+	if strings.TrimSpace(original.ProcessName) != "" && !strings.EqualFold(strings.TrimSpace(original.ProcessName), strings.TrimSpace(candidate.ProcessName)) {
+		return false
+	}
+	return true
+}
+
+func screenVisionChooseRestoredCandidate(original screenWindow, exact *screenWindow, replacements []screenWindow, allowSuspiciousExact bool) (screenWindow, error) {
+	if exact != nil && !screenVisionBoundsNeedRepair(exact.Bounds, original.Bounds) {
+		return *exact, nil
+	}
+
+	exactTitle := make([]screenWindow, 0, len(replacements))
+	for _, candidate := range replacements {
+		if strings.EqualFold(strings.TrimSpace(candidate.Title), strings.TrimSpace(original.Title)) {
+			exactTitle = append(exactTitle, candidate)
+		}
+	}
+	if len(exactTitle) == 1 {
+		return exactTitle[0], nil
+	}
+	if len(exactTitle) > 1 {
+		return screenWindow{}, fmt.Errorf("restored application exposed multiple main windows matching %q", original.Title)
+	}
+	if len(replacements) == 1 {
+		return replacements[0], nil
+	}
+	if len(replacements) > 1 {
+		return screenWindow{}, fmt.Errorf("restored application exposed %d possible main windows; refusing to guess", len(replacements))
+	}
+	if exact != nil && allowSuspiciousExact {
+		return *exact, nil
+	}
+	return screenWindow{}, errors.New("restored application window is not ready yet")
+}
+
+func screenEnumerateRestoredWindowCandidate(original screenWindow, allowSuspiciousExact bool) (screenWindow, error) {
+	var exact *screenWindow
+	replacements := make([]screenWindow, 0, 4)
+	callback := syscall.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
+		if hwnd == 0 {
+			return 1
+		}
+		valid, _, _ := procIsWindow.Call(hwnd)
+		visible, _, _ := procIsWindowVisible.Call(hwnd)
+		minimized, _, _ := procIsIconic.Call(hwnd)
+		if valid == 0 || visible == 0 || minimized != 0 || screenWindowCloaked(hwnd) {
+			return 1
+		}
+		var pid uint32
+		procGetWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+		if pid == 0 || pid != original.ProcessID {
+			return 1
+		}
+		processName := screenProcessName(pid)
+		candidate := screenWindow{
+			ID:          fmt.Sprintf("0x%X", hwnd),
+			Handle:      hwnd,
+			Title:       strings.TrimSpace(screenWindowTitle(hwnd)),
+			ProcessID:   pid,
+			ProcessName: processName,
+		}
+		if candidate.Title == "" || !screenVisionRestoredIdentityMatches(original, candidate) {
+			return 1
+		}
+		rect, err := screenWindowRect(hwnd)
+		if err != nil {
+			return 1
+		}
+		candidate.Bounds = rect
+		if hwnd == original.Handle {
+			copy := candidate
+			exact = &copy
+			return 1
+		}
+		owner, _, _ := procGetWindow.Call(hwnd, screenGWHwndOwner)
+		exStyle, _, _ := procGetWindowLongW.Call(hwnd, uintptr(gwlExStyle))
+		if !screenVisionHiddenWindowEligible(owner, uint32(exStyle), processName, rect) {
+			return 1
+		}
+		replacements = append(replacements, candidate)
+		return 1
+	})
+	ok, _, callErr := procEnumWindows.Call(callback, 0)
+	if ok == 0 {
+		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+			return screenWindow{}, fmt.Errorf("re-enumerate restored application windows: %w", callErr)
+		}
+		return screenWindow{}, errors.New("re-enumerate restored application windows failed")
+	}
+	return screenVisionChooseRestoredCandidate(original, exact, replacements, allowSuspiciousExact)
+}
+
+func screenRectsStable(previous, current screenRect) bool {
+	return screenAbs(previous.X-current.X) <= 1 &&
+		screenAbs(previous.Y-current.Y) <= 1 &&
+		screenAbs(previous.Width-current.Width) <= 1 &&
+		screenAbs(previous.Height-current.Height) <= 1
+}
+
+func screenAbs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func screenWaitForRestoredWindowStable(original screenWindow, placement screenWindowPlacement, placementOK bool, timeout time.Duration, allowSuspiciousExact bool) (screenWindow, error) {
+	deadline := time.Now().Add(timeout)
+	var lastHandle uintptr
+	var lastBounds screenRect
+	stableSamples := 0
+	repairAttempted := make(map[uintptr]bool)
+	var lastErr error
+
+	for {
+		candidate, err := screenEnumerateRestoredWindowCandidate(original, allowSuspiciousExact)
+		if err != nil {
+			lastErr = err
+			stableSamples = 0
+		} else {
+			candidatePlacement := placement
+			candidatePlacementOK := placementOK
+			if candidate.Handle != original.Handle && !candidatePlacementOK {
+				candidatePlacement, candidatePlacementOK = screenGetWindowPlacement(candidate.Handle)
+			}
+			if !repairAttempted[candidate.Handle] {
+				if repairErr := screenRepairRestoredBounds(candidate.Handle, candidatePlacement, candidatePlacementOK); repairErr != nil {
+					lastErr = repairErr
+				} else {
+					repairAttempted[candidate.Handle] = true
+				}
+			}
+
+			rect, rectErr := screenWindowRect(candidate.Handle)
+			if rectErr != nil {
+				lastErr = rectErr
+				stableSamples = 0
+			} else if screenVisionBoundsNeedRepair(rect, original.Bounds) {
+				lastErr = fmt.Errorf("restored window still has abnormal bounds %dx%d", rect.Width, rect.Height)
+				stableSamples = 0
+			} else {
+				candidate.Bounds = rect
+				candidate.Minimized = false
+				candidate.Hidden = false
+				if candidate.Handle == lastHandle && screenRectsStable(lastBounds, rect) {
+					stableSamples++
+				} else {
+					lastHandle = candidate.Handle
+					lastBounds = rect
+					stableSamples = 1
+				}
+				if stableSamples >= screenStableSamples {
+					screenFlushDWM()
+					time.Sleep(screenRestorePoll)
+					finalRect, finalErr := screenWindowRect(candidate.Handle)
+					if finalErr == nil && screenRectsStable(rect, finalRect) {
+						candidate.Bounds = finalRect
+						return candidate, nil
+					}
+					stableSamples = 0
+					if finalErr != nil {
+						lastErr = finalErr
+					}
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return screenWindow{}, lastErr
+			}
+			return screenWindow{}, errors.New("restored application window did not become stable in time")
+		}
+		time.Sleep(screenRebindPoll)
+	}
+}
+
 func platformCaptureScreenWindowForVision(window screenWindow) (screenCaptureFrame, error) {
 	if window.Handle == 0 {
 		return screenCaptureFrame{}, errors.New("window handle is invalid")
@@ -239,6 +424,7 @@ func platformCaptureScreenWindowForVision(window screenWindow) (screenCaptureFra
 }
 
 func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized bool) (frame screenCaptureFrame, err error) {
+	logicalWindow := window
 	hwnd := window.Handle
 	foreground, _, _ := procGetForegroundWindow.Call()
 	originalAbove, _, _ := procGetWindow.Call(hwnd, gwHwndPrev)
@@ -249,18 +435,28 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 		originalAboveSameBand = valid != 0 && screenWindowTopmost(originalAbove) == wasTopmost
 	}
 	placement, placementOK := screenGetWindowPlacement(hwnd)
+	restoreHandle := hwnd
 
 	touched := false
 	defer func() {
 		var restoreErrors []string
-		if touched {
-			if restoreErr := screenRestoreDormantWindow(hwnd, placement, placementOK, wasHidden, wasMinimized); restoreErr != nil {
-				restoreErrors = append(restoreErrors, fmt.Sprintf("restore dormant window state: %v", restoreErr))
+		if touched && restoreHandle != 0 {
+			valid, _, _ := procIsWindow.Call(restoreHandle)
+			if valid != 0 {
+				if restoreErr := screenRestoreDormantWindow(restoreHandle, placement, placementOK, wasHidden, wasMinimized); restoreErr != nil {
+					restoreErrors = append(restoreErrors, fmt.Sprintf("restore dormant window state: %v", restoreErr))
+				}
 			}
 		}
-		if restoreErr := restoreBackgroundWindowAfterReveal(hwnd, originalAbove, foreground, wasTopmost, originalAboveSameBand); restoreErr != nil {
-			restoreErrors = append(restoreErrors, fmt.Sprintf("restore selected window placement: %v", restoreErr))
+		if restoreHandle != 0 {
+			valid, _, _ := procIsWindow.Call(restoreHandle)
+			if valid != 0 {
+				if restoreErr := restoreBackgroundWindowAfterReveal(restoreHandle, originalAbove, foreground, wasTopmost, originalAboveSameBand); restoreErr != nil {
+					restoreErrors = append(restoreErrors, fmt.Sprintf("restore selected window placement: %v", restoreErr))
+				}
+			}
 		}
+		screenRestoreForeground(foreground)
 		if len(restoreErrors) > 0 {
 			cleanupErr := errors.New(strings.Join(restoreErrors, "; "))
 			if err == nil {
@@ -272,23 +468,42 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 	}()
 
 	touched = true
-	if err := screenWakeDormantWindowWithoutFocus(hwnd, foreground); err != nil {
-		return screenCaptureFrame{}, fmt.Errorf("temporarily restore hidden/minimized window: %w", err)
+	screenRequestDormantWindowRestore(hwnd, foreground, swShowNoActivate)
+	restored, restoreErr := screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, screenRebindInitialTimeout, false)
+	if restoreErr != nil {
+		valid, _, _ := procIsWindow.Call(hwnd)
+		if valid != 0 {
+			screenRequestDormantWindowRestore(hwnd, foreground, swRestore)
+		}
+		restored, restoreErr = screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, screenRebindFallbackTimeout, false)
 	}
-	if err := screenRepairRestoredBounds(hwnd, placement, placementOK); err != nil {
-		return screenCaptureFrame{}, fmt.Errorf("restore normal window bounds: %w", err)
+	if restoreErr != nil {
+		// Final compatibility path: if the application never creates a replacement
+		// HWND, allow the original HWND to be repaired from rcNormalPosition. The
+		// capture still remains locked to the original PID and never substitutes
+		// foreground pixels.
+		restored, restoreErr = screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, 320*time.Millisecond, true)
 	}
-	window.Minimized = false
-	window.Hidden = false
+	if restoreErr != nil {
+		return screenCaptureFrame{}, fmt.Errorf("temporarily restore hidden/minimized window: %w", restoreErr)
+	}
 
+	restoreHandle = restored.Handle
+	window = restored
+	screenRestoreForeground(foreground)
 	screenFlushDWM()
-	time.Sleep(screenInitialRenderWait)
+	time.Sleep(screenPostStableRenderWait)
 	frame, err = platformCaptureScreenWindow(window)
 	if err != nil || screenImageLikelyBlank(frame.Image) {
-		// Tray/GPU apps can need one extra show/render cycle after their real main
-		// HWND is restored. Retry without ever substituting foreground pixels.
-		_ = screenWakeDormantWindowWithoutFocus(hwnd, foreground)
-		_ = screenRepairRestoredBounds(hwnd, placement, placementOK)
+		// A compositor/GPU surface can settle slightly after the outer window
+		// geometry. Re-enumerate again in case the app replaced the HWND during
+		// rendering, require stable geometry, then retry once.
+		refreshed, settleErr := screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, 520*time.Millisecond, true)
+		if settleErr == nil {
+			restoreHandle = refreshed.Handle
+			window = refreshed
+		}
+		screenRestoreForeground(foreground)
 		screenFlushDWM()
 		time.Sleep(screenRetryRenderWait)
 		frame, err = platformCaptureScreenWindow(window)
@@ -297,34 +512,22 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 		return screenCaptureFrame{}, fmt.Errorf("capture temporarily restored hidden/minimized window: %w", err)
 	}
 	if screenImageLikelyBlank(frame.Image) {
-		return screenCaptureFrame{}, errors.New("hidden/minimized window resumed but still returned a blank frame; the application may destroy its main surface or suspend protected/GPU rendering while in the tray")
+		return screenCaptureFrame{}, errors.New("hidden/minimized window resumed and stabilized but still returned a blank frame; the application may destroy its main surface or suspend protected/GPU rendering while in the tray")
 	}
 	if wasHidden {
-		frame.Method = "hidden-tray-restore/" + frame.Method
+		frame.Method = "hidden-tray-rebind/" + frame.Method
 	} else {
-		frame.Method = "minimized-restore/" + frame.Method
+		frame.Method = "minimized-rebind/" + frame.Method
 	}
 	return frame, nil
 }
 
-func screenWakeDormantWindowWithoutFocus(hwnd, foreground uintptr) error {
-	procShowWindowAsync.Call(hwnd, swShowNoActivate)
-	screenRestoreForeground(foreground)
-	if screenWaitForWindowReady(hwnd, screenRestoreTimeout) {
-		screenRestoreForeground(foreground)
-		return nil
+func screenRequestDormantWindowRestore(hwnd, foreground uintptr, command uint32) {
+	if hwnd == 0 {
+		return
 	}
-
-	// Some GPU/tray applications ignore SW_SHOWNOACTIVATE while iconic. SW_RESTORE
-	// is a compatibility fallback; immediately return focus to the user's original
-	// foreground window before waiting for rendering/capture.
-	procShowWindowAsync.Call(hwnd, swRestore)
+	procShowWindowAsync.Call(hwnd, uintptr(command))
 	screenRestoreForeground(foreground)
-	if screenWaitForWindowReady(hwnd, screenRestoreTimeout) {
-		screenRestoreForeground(foreground)
-		return nil
-	}
-	return errors.New("Windows/application did not expose a restorable main window in time")
 }
 
 func screenRepairRestoredBounds(hwnd uintptr, placement screenWindowPlacement, placementOK bool) error {
