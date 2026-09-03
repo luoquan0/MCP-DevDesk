@@ -15,6 +15,7 @@ const form = reactive({
   permissionMode: "safe" as PermissionMode,
   fileScope: "workspace" as FileScope,
   allowNetwork: false,
+  screenCaptureEnabled: false,
   allowedRootsText: "",
 });
 
@@ -23,6 +24,7 @@ watch(() => app.config, (config) => {
   form.permissionMode = config.permissionMode;
   form.fileScope = config.fileScope;
   form.allowNetwork = config.allowNetwork;
+  form.screenCaptureEnabled = config.screenCaptureEnabled ?? false;
   form.allowedRootsText = (config.allowedRoots ?? []).join("\n");
 }, { immediate: true, deep: true });
 
@@ -33,6 +35,19 @@ const modes = [
 ];
 
 async function savePermissions() {
+  if (form.screenCaptureEnabled && form.permissionMode === "safe") {
+    ui.toast("无法启用屏幕视觉", "屏幕画面可能包含敏感信息，请先选择“信任模式”或“危险模式”。", "warning");
+    return;
+  }
+  if (form.screenCaptureEnabled && !app.config?.screenCaptureEnabled) {
+    const accepted = await ui.ask({
+      title: "启用屏幕视觉（测试）",
+      message: "启用后，已连接并获得授权的 MCP 客户端可以按需获取当前窗口或桌面截图。截图仅在工具被调用时生成，不持续录屏、不保存历史；但画面仍可能包含聊天、账号、文件名等敏感内容。",
+      confirmLabel: "确认启用",
+      danger: true,
+    });
+    if (!accepted) return;
+  }
   if (form.permissionMode === "dangerous" || form.fileScope === "computer") {
     const accepted = await ui.ask({
       title: "应用高风险权限",
@@ -47,6 +62,7 @@ async function savePermissions() {
       permissionMode: form.permissionMode,
       fileScope: form.fileScope,
       allowNetwork: form.permissionMode !== "safe" ? true : form.allowNetwork,
+      screenCaptureEnabled: form.screenCaptureEnabled,
       allowedRoots: form.allowedRootsText.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
     });
     if (app.status?.mcp.running) await app.serviceAction("restart");
@@ -62,7 +78,7 @@ async function savePermissions() {
       <div>
         <span class="eyebrow">Permission & security</span>
         <h2>权限与安全</h2>
-        <p>控制远程 MCP 会话能够运行的命令、访问的路径和网络能力。</p>
+        <p>控制远程 MCP 会话能够运行的命令、访问的路径、网络能力和屏幕视觉。</p>
       </div>
       <AppButton tone="primary" icon="shield" :loading="app.actionPending === 'save-config'" @click="savePermissions">保存权限</AppButton>
     </div>
@@ -115,6 +131,24 @@ async function savePermissions() {
           <div><AppIcon name="terminal" :size="16" /><span>内联脚本与 Shell 展开</span><StatusPill :tone="form.permissionMode === 'safe' ? 'neutral' : 'success'">{{ form.permissionMode === 'safe' ? '限制' : '允许' }}</StatusPill></div>
           <div><AppIcon name="warning" :size="16" /><span>高风险命令</span><StatusPill :tone="form.permissionMode === 'dangerous' ? 'danger' : 'neutral'">{{ form.permissionMode === 'dangerous' ? '不拦截' : '受保护' }}</StatusPill></div>
         </div>
+      </AppCard>
+
+      <AppCard>
+        <div class="card-heading">
+          <div><span class="eyebrow">Screen Vision · Experimental</span><h3>屏幕视觉（测试）</h3></div>
+          <StatusPill :tone="form.screenCaptureEnabled ? 'warning' : 'neutral'">{{ form.screenCaptureEnabled ? '已启用' : '已关闭' }}</StatusPill>
+        </div>
+        <ToggleSwitch
+          v-model="form.screenCaptureEnabled"
+          label="允许 AI 按需读取窗口画面"
+          :description="form.permissionMode === 'safe' ? '需要先切换到信任模式或危险模式。' : '仅在 MCP 工具主动调用时截图；空闲时不录屏、不启动持续捕获。'"
+        />
+        <div class="capability-list">
+          <div><AppIcon name="monitor" :size="16" /><span>指定窗口 / 当前窗口 / 整个桌面</span><StatusPill :tone="form.screenCaptureEnabled ? 'warning' : 'neutral'">{{ form.screenCaptureEnabled ? '按需可读' : '不可读' }}</StatusPill></div>
+          <div><AppIcon name="shield" :size="16" /><span>截图历史</span><StatusPill tone="success">不保存</StatusPill></div>
+          <div><AppIcon name="terminal" :size="16" /><span>鼠标与键盘控制</span><StatusPill tone="neutral">本测试版未开放</StatusPill></div>
+        </div>
+        <p class="field-hint">当前测试功能仅由 Go MCP Core 提供。部分受保护、DRM、最小化或硬件加速窗口可能返回黑屏；关闭本开关后不会暴露这些视觉工具。</p>
       </AppCard>
     </section>
   </section>
