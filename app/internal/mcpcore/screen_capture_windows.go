@@ -39,6 +39,7 @@ var (
 	procEnumWindows              = screenUser32.NewProc("EnumWindows")
 	procIsWindow                 = screenUser32.NewProc("IsWindow")
 	procIsWindowVisible          = screenUser32.NewProc("IsWindowVisible")
+	procIsIconic                 = screenUser32.NewProc("IsIconic")
 	procGetWindowTextLengthW     = screenUser32.NewProc("GetWindowTextLengthW")
 	procGetWindowTextW           = screenUser32.NewProc("GetWindowTextW")
 	procGetWindowThreadProcessID = screenUser32.NewProc("GetWindowThreadProcessId")
@@ -99,7 +100,8 @@ func platformListScreenWindows() ([]screenWindow, error) {
 		}
 		valid, _, _ := procIsWindow.Call(hwnd)
 		visible, _, _ := procIsWindowVisible.Call(hwnd)
-		if valid == 0 || visible == 0 || screenWindowCloaked(hwnd) {
+		minimized, _, _ := procIsIconic.Call(hwnd)
+		if !screenWindowStateSelectable(valid, visible, minimized) || screenWindowCloaked(hwnd) {
 			return 1
 		}
 		title := screenWindowTitle(hwnd)
@@ -131,6 +133,10 @@ func platformListScreenWindows() ([]screenWindow, error) {
 		return nil, errors.New("enumerate windows failed")
 	}
 	return result, nil
+}
+
+func screenWindowStateSelectable(valid, visible, minimized uintptr) bool {
+	return valid != 0 && visible != 0 && minimized == 0
 }
 
 func platformActiveScreenWindow() (screenWindow, error) {
@@ -165,6 +171,10 @@ func platformCaptureScreenWindow(window screenWindow) (screenCaptureFrame, error
 	valid, _, _ := procIsWindow.Call(window.Handle)
 	if valid == 0 {
 		return screenCaptureFrame{}, errors.New("window is no longer available")
+	}
+	minimized, _, _ := procIsIconic.Call(window.Handle)
+	if minimized != 0 {
+		return screenCaptureFrame{}, errors.New("selected window is minimized; restore it and refresh the window list before capturing")
 	}
 	rect, err := screenWindowRect(window.Handle)
 	if err != nil {
