@@ -601,8 +601,8 @@ onMounted(() => {
         <div class="toggle-list">
           <ToggleSwitch
             :model-value="Boolean(app.desktop?.startupEnabled)"
-            label="Windows 登录时后台运行"
-            description="在当前用户登录后启动托盘与本地管理服务。"
+            label="开机自启动"
+            description="当前 Windows 用户登录后自动在后台启动 MCP DevDesk 到系统托盘，不弹出主界面；可随时关闭。"
             @update:model-value="setStartup"
           />
         </div>
@@ -611,6 +611,7 @@ onMounted(() => {
           <div><span>渲染引擎</span><strong>{{ app.desktop?.renderEngine || 'WebView2' }}</strong></div>
           <div><span>WebView2</span><strong>{{ app.desktop?.runtimeVersion || '--' }}</strong></div>
           <div><span>系统托盘</span><strong>{{ app.desktop?.trayAvailable ? '可用' : '不可用' }}</strong></div>
+          <div><span>开机自启动</span><strong>{{ app.desktop?.startupEnabled ? '已开启' : '已关闭' }}</strong></div>
           <div><span>单实例</span><strong>{{ app.desktop?.singleInstance ? '启用' : '关闭' }}</strong></div>
         </div>
       </AppCard>

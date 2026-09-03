@@ -19,6 +19,9 @@ func ListScreenWindows() ([]model.ScreenWindowInfo, error) {
 		if windows[i].Active != windows[j].Active {
 			return windows[i].Active
 		}
+		if windows[i].Hidden != windows[j].Hidden {
+			return !windows[i].Hidden
+		}
 		if windows[i].Minimized != windows[j].Minimized {
 			return !windows[i].Minimized
 		}
@@ -39,6 +42,7 @@ func ListScreenWindows() ([]model.ScreenWindowInfo, error) {
 			},
 			Active:    window.Active,
 			Minimized: window.Minimized,
+			Hidden:    window.Hidden,
 		})
 	}
 	return result, nil

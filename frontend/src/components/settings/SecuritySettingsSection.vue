@@ -53,7 +53,7 @@ const modes = [
 ];
 
 const screenModes: Array<{ id: ScreenCaptureMode; title: string; subtitle: string; icon: string }> = [
-  { id: "window", title: "指定窗口", subtitle: "锁定一个目标，后台或最小化也尝试读取它", icon: "lock" },
+  { id: "window", title: "指定窗口", subtitle: "锁定一个目标，后台、最小化或托盘隐藏也尝试读取它", icon: "lock" },
   { id: "active", title: "当前窗口", subtitle: "只读取你当前正在看的前台内容", icon: "monitor" },
   { id: "desktop", title: "整个桌面", subtitle: "AI 可自行查看当前打开的软件窗口", icon: "overview" },
 ];
@@ -329,7 +329,7 @@ async function savePermissions() {
           <div class="screen-window-picker-heading">
             <div>
               <strong>选择允许读取的窗口</strong>
-              <small>目标用窗口 ID + 进程 ID 锁定。后台和已最小化的应用窗口都会显示；读取最小化目标时会在后台无焦点恢复一帧、截图后再恢复最小化。纯服务或没有顶层窗体的进程不会显示。窗口关闭或身份变化后必须重新选择。</small>
+              <small>目标用窗口 ID + 进程 ID 锁定。后台、已最小化以及仍保留主窗体的托盘应用都会显示；读取休眠目标时会在后台无焦点恢复一帧，截图后恢复原来的最小化/隐藏状态。纯服务或已经销毁主窗体的进程不会显示。窗口关闭或身份变化后必须重新选择。</small>
             </div>
             <AppButton tone="secondary" icon="refresh" compact :loading="screenWindowsLoading" :disabled="screenVisionSaving" @click="refreshScreenWindows">刷新窗口</AppButton>
           </div>
@@ -344,7 +344,8 @@ async function savePermissions() {
                 <template v-if="!selectedScreenWindow"> · 当前不可用，请恢复目标窗口、刷新后重新选择</template>
               </small>
             </div>
-            <StatusPill v-if="selectedScreenWindow?.minimized" tone="warning">最小化 · 已锁定</StatusPill>
+            <StatusPill v-if="selectedScreenWindow?.hidden" tone="warning">托盘/隐藏 · 已锁定</StatusPill>
+            <StatusPill v-else-if="selectedScreenWindow?.minimized" tone="warning">最小化 · 已锁定</StatusPill>
             <StatusPill v-else :tone="selectedScreenWindow ? 'success' : 'danger'">{{ selectedScreenWindow ? '已锁定' : '已失效' }}</StatusPill>
           </div>
 
@@ -366,15 +367,16 @@ async function savePermissions() {
               <span class="screen-window-option-icon"><AppIcon name="monitor" :size="18" /></span>
               <span class="screen-window-option-copy">
                 <strong>{{ window.title }}</strong>
-                <small>{{ window.processName || '未知进程' }} · PID {{ window.processId }} · {{ window.minimized ? '已最小化' : window.bounds.width + '×' + window.bounds.height }}</small>
+                <small>{{ window.processName || '未知进程' }} · PID {{ window.processId }} · {{ window.hidden ? '托盘/隐藏' : window.minimized ? '已最小化' : window.bounds.width + '×' + window.bounds.height }} · {{ window.bounds.width }}×{{ window.bounds.height }}</small>
               </span>
               <StatusPill v-if="window.active" tone="info">当前前台</StatusPill>
+              <StatusPill v-else-if="window.hidden" tone="warning">托盘/隐藏</StatusPill>
               <StatusPill v-else-if="window.minimized" tone="warning">已最小化</StatusPill>
               <span class="screen-window-radio"><i /></span>
             </button>
             <div v-if="!filteredScreenWindows.length" class="screen-window-empty">
               <AppIcon name="monitor" :size="22" />
-              <span>{{ screenWindowsLoading ? '正在读取 Windows 窗口…' : '没有找到匹配的可截图应用窗口。纯后台服务或没有顶层窗体的进程不会出现在这里。' }}</span>
+              <span>{{ screenWindowsLoading ? '正在读取 Windows 窗口…' : '没有找到匹配的可截图应用窗口。最小化和部分托盘应用会显示，但纯后台服务或已经销毁主窗体的进程不会出现在这里。' }}</span>
             </div>
           </div>
         </div>
@@ -384,7 +386,7 @@ async function savePermissions() {
           <div><AppIcon name="shield" :size="16" /><span>截图历史</span><StatusPill tone="success">不保存</StatusPill></div>
           <div><AppIcon name="terminal" :size="16" /><span>鼠标与键盘控制</span><StatusPill tone="neutral">未开放</StatusPill></div>
         </div>
-        <p class="field-hint">当前测试功能仅由 Go MCP Core 提供。指定窗口可在后台读取，必要时会做一次不激活目标的临时合成捕获；个别程序可能出现极短的层级刷新。最小化窗口暂不支持；受保护、DRM 或部分硬件窗口仍可能无法读取。</p>
+        <p class="field-hint">当前测试功能仅由 Go MCP Core 提供。指定窗口可在后台读取；最小化/托盘窗口会尝试临时无焦点恢复并在截图后恢复原状态。个别程序可能出现极短的层级刷新；如果应用在进托盘后销毁主窗体，或 DRM/GPU 渲染拒绝恢复，仍会明确失败而不会改抓前台窗口。</p>
       </AppCard>
     </section>
   </section>

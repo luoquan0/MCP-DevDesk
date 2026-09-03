@@ -38,6 +38,7 @@ type screenWindow struct {
 	Bounds      screenRect `json:"bounds"`
 	Active      bool       `json:"active"`
 	Minimized   bool       `json:"minimized"`
+	Hidden      bool       `json:"hidden"`
 }
 
 type screenCaptureFrame struct {
@@ -73,7 +74,7 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_list_windows",
 			Title:       "List App Windows",
-			Description: "List captureable top-level Windows application windows, including minimized apps. Screen Vision is explicit opt-in and this tool never starts continuous recording.",
+			Description: "List captureable top-level Windows application windows, including minimized apps and tray-hidden main windows when Windows keeps a restorable top-level surface. Screen Vision is explicit opt-in and this tool never starts continuous recording.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -92,7 +93,7 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_capture_window",
 			Title:       "Capture Window",
-			Description: "Capture one explicitly selected Windows application window on demand, including a background or minimized target when Windows allows it, and return a PNG image to the MCP client. Minimized targets are temporarily restored without focus and returned to minimized state. Nothing is saved to disk.",
+			Description: "Capture one explicitly selected Windows application window on demand, including a background, minimized, or tray-hidden target when Windows keeps a restorable main surface. Dormant targets are temporarily restored without focus and returned to their prior state. Nothing is saved to disk.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -146,6 +147,9 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 		sort.SliceStable(filtered, func(i, j int) bool {
 			if filtered[i].Active != filtered[j].Active {
 				return filtered[i].Active
+			}
+			if filtered[i].Hidden != filtered[j].Hidden {
+				return !filtered[i].Hidden
 			}
 			if filtered[i].Minimized != filtered[j].Minimized {
 				return !filtered[i].Minimized
@@ -333,7 +337,12 @@ func screenFrameResult(frame screenCaptureFrame, maxWidth int, window *screenWin
 		"continuous":        false,
 	}
 	if window != nil {
-		result["window"] = *window
+		capturedWindow := *window
+		// Report the bounds that actually produced the image. In particular, a
+		// minimized icon rectangle (for example 158x26) must not survive in the
+		// response after the real window was restored and captured at full size.
+		capturedWindow.Bounds = frame.Bounds
+		result["window"] = capturedWindow
 	}
 	return result, nil
 }
