@@ -1,0 +1,42 @@
+name: Screen Vision Bootstrap
+
+on:
+  push:
+    branches:
+      - "feature/screen-vision-prerelease"
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: contains(github.event.head_commit.message, 'bootstrap screen vision integration')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feature/screen-vision-prerelease
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+
+      - name: Apply integration patch
+        shell: pwsh
+        run: |
+          python .\tools\apply-screen-vision-dev.py
+          gofmt -w .\app\internal\mcpcore\screen_tools.go .\app\internal\mcpcore\screen_capture_windows.go .\app\internal\mcpcore\screen_capture_other.go .\app\internal\mcpcore\server.go .\app\internal\mcpcore\file_tools.go .\app\internal\mcpcore\permission_tools.go .\app\cmd\mcp-core\main.go .\app\internal\process\manager.go .\app\internal\model\types.go .\app\internal\config\store.go
+          git diff --check
+
+      - name: Commit integration
+        shell: pwsh
+        run: |
+          git rm .github/workflows/dev-screen-vision-bootstrap.yml tools/apply-screen-vision-dev.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: integrate opt-in screen vision settings"
+          git push origin HEAD:feature/screen-vision-prerelease
