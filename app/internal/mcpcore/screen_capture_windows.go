@@ -240,14 +240,41 @@ func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error
 	var backgroundRevealErr error
 	if hwnd != 0 {
 		foreground, _, _ := procGetForegroundWindow.Call()
-		if screenBackgroundRevealRequired(hwnd, foreground) {
-			// Specified-window mode is intentionally independent from the user's
-			// foreground application. Temporarily move the locked HWND to the top
-			// of the compositor without activating it, capture exactly its desktop
-			// pixels, and restore its original Z-order immediately afterwards.
-			// This lets the browser remain focused while VMware, utility windows,
-			// or other selected apps are captured from behind it, without falling
-			// back to an occluded rectangle that would contain browser pixels.
+
+		// Start with methods owned by the selected HWND. They can capture many
+		// normal background windows without touching the user's Z-order at all.
+		captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, pwRenderFullContent)
+		if captured != 0 && !screenCapturedBitmapLikelyBlank(screenDC, bitmap, rect.Width, rect.Height) {
+			method = "print-window-full"
+		} else {
+			captured = 0
+		}
+		if captured == 0 {
+			captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, 0)
+			if captured != 0 && !screenCapturedBitmapLikelyBlank(screenDC, bitmap, rect.Width, rect.Height) {
+				method = "print-window"
+			} else {
+				captured = 0
+			}
+		}
+		if captured == 0 {
+			windowDC, _, _ := procGetWindowDC.Call(hwnd)
+			if windowDC != 0 {
+				ok, _, _ := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), windowDC, 0, 0, srcCopy|captureBLT)
+				procReleaseDC.Call(hwnd, windowDC)
+				if ok != 0 && !screenCapturedBitmapLikelyBlank(screenDC, bitmap, rect.Width, rect.Height) {
+					captured = 1
+					method = "window-dc"
+				}
+			}
+		}
+
+		// VMware and other compositor-heavy windows commonly report successful
+		// PrintWindow calls while returning black client pixels. When the locked
+		// target is behind the user's browser and the nonintrusive paths were not
+		// usable, reveal only that HWND without activating it, capture one frame,
+		// then restore the original Z-order immediately.
+		if captured == 0 && screenBackgroundRevealRequired(hwnd, foreground) {
 			revealed, revealErr := captureBackgroundWindowByTemporaryReveal(memoryDC, screenDC, rect, hwnd, foreground)
 			if revealed {
 				if revealErr != nil {
@@ -260,31 +287,6 @@ func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error
 			}
 		}
 
-		if captured == 0 {
-			// Keep non-intrusive target-owned capture methods as a fallback when
-			// temporary compositor reveal is unavailable. They never read pixels
-			// from a different foreground application.
-			captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, pwRenderFullContent)
-			if captured != 0 {
-				method = "print-window-full"
-			} else {
-				captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, 0)
-				if captured != 0 {
-					method = "print-window"
-				}
-			}
-		}
-		if captured == 0 {
-			windowDC, _, _ := procGetWindowDC.Call(hwnd)
-			if windowDC != 0 {
-				ok, _, _ := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), windowDC, 0, 0, srcCopy|captureBLT)
-				procReleaseDC.Call(hwnd, windowDC)
-				if ok != 0 {
-					captured = 1
-					method = "window-dc"
-				}
-			}
-		}
 		if captured == 0 {
 			if foreground != 0 && hwnd == foreground {
 				ok, _, callErr := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), screenDC, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
@@ -407,6 +409,52 @@ func screenFlushDWM() {
 	if err := procDwmFlush.Find(); err == nil {
 		procDwmFlush.Call()
 	}
+}
+
+func screenCapturedBitmapLikelyBlank(dc, bitmap uintptr, width, height int) bool {
+	capturedImage, err := screenBitmapToNRGBA(dc, bitmap, width, height)
+	if err != nil {
+		return false
+	}
+	return screenImageLikelyBlank(capturedImage)
+}
+
+func screenImageLikelyBlank(capturedImage *image.NRGBA) bool {
+	if capturedImage == nil {
+		return false
+	}
+	bounds := capturedImage.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	if width < 32 || height < 32 {
+		return false
+	}
+
+	left := bounds.Min.X + width/8
+	right := bounds.Max.X - width/8
+	top := bounds.Min.Y + height/5
+	bottom := bounds.Max.Y - height/10
+	stepX := width / 32
+	stepY := height / 24
+	if stepX < 1 {
+		stepX = 1
+	}
+	if stepY < 1 {
+		stepY = 1
+	}
+
+	samples := 0
+	nearBlack := 0
+	for y := top; y < bottom; y += stepY {
+		for x := left; x < right; x += stepX {
+			color := capturedImage.NRGBAAt(x, y)
+			samples++
+			if color.R <= 8 && color.G <= 8 && color.B <= 8 {
+				nearBlack++
+			}
+		}
+	}
+	return samples >= 64 && nearBlack*100 >= samples*98
 }
 
 func screenBitmapToNRGBA(dc, bitmap uintptr, width, height int) (*image.NRGBA, error) {
