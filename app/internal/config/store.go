@@ -16,7 +16,10 @@ import (
 	secretstore "mcp-devdesk/internal/secrets"
 )
 
-var domainPattern = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
+var (
+	domainPattern         = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
+	screenWindowIDPattern = regexp.MustCompile(`(?i)^0x[0-9a-f]+$`)
+)
 
 const protectedProxyPasswordPrefix = "dpapi:v1:"
 
@@ -84,6 +87,7 @@ func (s *Store) defaults() model.Config {
 		FileScope:               "workspace",
 		ToolProfile:             "full",
 		AllowNetwork:            true,
+		ScreenCaptureMode:       "active",
 		TunnelName:              "mcp-devdesk",
 		AutoStart:               false,
 		Watchdog:                true,
@@ -149,6 +153,9 @@ func (s *Store) normalize(cfg *model.Config) {
 	if cfg.ToolProfile == "" {
 		cfg.ToolProfile = "full"
 	}
+	if cfg.ScreenCaptureMode == "" {
+		cfg.ScreenCaptureMode = "active"
+	}
 	if cfg.TunnelName == "" {
 		cfg.TunnelName = "mcp-devdesk"
 	}
@@ -176,6 +183,10 @@ func (s *Store) normalize(cfg *model.Config) {
 	cfg.TunnelName = strings.TrimSpace(cfg.TunnelName)
 	cfg.ProxyAddress = strings.TrimSpace(cfg.ProxyAddress)
 	cfg.ProxyUsername = strings.TrimSpace(cfg.ProxyUsername)
+	cfg.ScreenCaptureMode = strings.ToLower(strings.TrimSpace(cfg.ScreenCaptureMode))
+	cfg.ScreenCaptureWindowID = strings.TrimSpace(cfg.ScreenCaptureWindowID)
+	cfg.ScreenCaptureWindowTitle = strings.TrimSpace(cfg.ScreenCaptureWindowTitle)
+	cfg.ScreenCaptureWindowProcess = strings.TrimSpace(cfg.ScreenCaptureWindowProcess)
 
 	// Dangerous and trusted modes always support networking. Safe mode keeps
 	// the explicit toggle so users can selectively allow package downloads.
@@ -304,6 +315,20 @@ func Validate(cfg model.Config) error {
 	case "full", "read-only", "compat-readonly-all":
 	default:
 		return errors.New("unsupported tool profile")
+	}
+	switch cfg.ScreenCaptureMode {
+	case "active", "window", "desktop":
+	default:
+		return errors.New("screenCaptureMode must be active, window, or desktop")
+	}
+	if cfg.ScreenCaptureWindowID != "" && !screenWindowIDPattern.MatchString(cfg.ScreenCaptureWindowID) {
+		return errors.New("screenCaptureWindowId must be a hexadecimal Windows handle")
+	}
+	if len(cfg.ScreenCaptureWindowTitle) > 500 {
+		return errors.New("screenCaptureWindowTitle is too long")
+	}
+	if len(cfg.ScreenCaptureWindowProcess) > 260 {
+		return errors.New("screenCaptureWindowProcess is too long")
 	}
 	switch cfg.CoreMode {
 	case "legacy", "go":
@@ -452,6 +477,21 @@ func applyUpdate(cfg *model.Config, update model.ConfigUpdate) {
 	}
 	if update.ScreenCaptureEnabled != nil {
 		cfg.ScreenCaptureEnabled = *update.ScreenCaptureEnabled
+	}
+	if update.ScreenCaptureMode != nil {
+		cfg.ScreenCaptureMode = *update.ScreenCaptureMode
+	}
+	if update.ScreenCaptureWindowID != nil {
+		cfg.ScreenCaptureWindowID = *update.ScreenCaptureWindowID
+	}
+	if update.ScreenCaptureWindowProcessID != nil {
+		cfg.ScreenCaptureWindowProcessID = *update.ScreenCaptureWindowProcessID
+	}
+	if update.ScreenCaptureWindowTitle != nil {
+		cfg.ScreenCaptureWindowTitle = *update.ScreenCaptureWindowTitle
+	}
+	if update.ScreenCaptureWindowProcess != nil {
+		cfg.ScreenCaptureWindowProcess = *update.ScreenCaptureWindowProcess
 	}
 	if update.Domain != nil {
 		cfg.Domain = *update.Domain

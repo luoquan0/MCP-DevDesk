@@ -22,11 +22,11 @@ func TestScreenVisionSettingsPersistAndNormalize(t *testing.T) {
 	title := "Project - Visual Studio Code"
 	process := "Code.exe"
 	updated, err := store.Update(model.ConfigUpdate{
-		ScreenCaptureMode:          &mode,
-		ScreenCaptureWindowID:      &windowID,
+		ScreenCaptureMode:            &mode,
+		ScreenCaptureWindowID:        &windowID,
 		ScreenCaptureWindowProcessID: &processID,
-		ScreenCaptureWindowTitle:   &title,
-		ScreenCaptureWindowProcess: &process,
+		ScreenCaptureWindowTitle:     &title,
+		ScreenCaptureWindowProcess:   &process,
 	})
 	if err != nil {
 		t.Fatal(err)

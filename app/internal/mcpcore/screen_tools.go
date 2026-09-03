@@ -121,6 +121,9 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 	if err := s.requireScreenCapturePermission(); err != nil {
 		return nil, err
 	}
+	if err := s.enforceScreenVisionToolPolicy(name); err != nil {
+		return nil, err
+	}
 	switch name {
 	case "screen_list_windows":
 		var args screenListArgs
@@ -171,12 +174,20 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 		if err := decodeToolArguments(arguments, &args); err != nil {
 			return nil, err
 		}
+		windowArgument, err := s.screenVisionWindowArgument(args.Window)
+		if err != nil {
+			return nil, err
+		}
+		args.Window = windowArgument
 		windows, err := platformListScreenWindows()
 		if err != nil {
 			return nil, err
 		}
 		window, err := resolveScreenWindow(windows, args.Window)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.validateScreenVisionWindow(window); err != nil {
 			return nil, err
 		}
 		frame, err := platformCaptureScreenWindow(window)
