@@ -19,6 +19,7 @@ type ScreenWindowInfo struct {
 	Bounds      ScreenRect `json:"bounds"`
 	Active      bool       `json:"active"`
 	Minimized   bool       `json:"minimized"`
+	Hidden      bool       `json:"hidden"`
 }
 
 type Config struct {

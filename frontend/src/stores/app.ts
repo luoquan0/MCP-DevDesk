@@ -588,7 +588,7 @@ export const useAppStore = defineStore("app", {
         method: "PUT",
         body: { enabled } as unknown as BodyInit,
       });
-      ui.toast(enabled ? "已启用登录时启动" : "已关闭登录时启动", "该设置仅影响当前 Windows 用户。", "success");
+      ui.toast(enabled ? "开机自启动已开启" : "开机自启动已关闭", "在当前 Windows 用户登录后生效，并以后台托盘方式启动。", "success");
     },
   },
 });
