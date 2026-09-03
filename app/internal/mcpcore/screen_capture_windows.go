@@ -24,7 +24,7 @@ const (
 	processQueryLimitedInfo  = 0x1000
 	pwRenderFullContent      = 0x00000002
 	gwHwndPrev               = 3
-	gwlExStyle         int32 = -20
+	gwlExStyle               = 0xFFFFFFEC
 	wsExTopmost              = 0x00000008
 	swpNoSize                = 0x0001
 	swpNoMove                = 0x0002
@@ -401,7 +401,7 @@ func screenWindowBandInsertAfter(topmost bool) uintptr {
 }
 
 func screenWindowTopmost(hwnd uintptr) bool {
-	style, _, _ := procGetWindowLongW.Call(hwnd, uintptr(uint32(gwlExStyle)))
+	style, _, _ := procGetWindowLongW.Call(hwnd, uintptr(gwlExStyle))
 	return uint32(style)&wsExTopmost != 0
 }
 
