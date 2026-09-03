@@ -1,0 +1,42 @@
+# Screen Vision（实验性）
+
+Screen Vision 是 MCP DevDesk 的 Windows 屏幕视觉实验功能。它让已授权的 MCP 客户端在需要时读取当前电脑上的可见窗口或桌面截图，用于分析 UI、错误提示、网页状态和开发工具画面。
+
+## 设计边界
+
+- 当前仅支持 Windows，并且仅由 Go MCP Core 提供。
+- 默认关闭；只有用户在“设置 → 权限与安全 → 屏幕视觉（测试）”中显式开启后才会暴露视觉工具。
+- 需要 `trusted` 或 `dangerous` 权限模式；`safe` 模式不会暴露屏幕视觉工具。
+- 没有后台录屏线程。客户端没有调用视觉工具时不会持续抓取屏幕。
+- 每次截图仅在内存中生成、按需缩放并编码成 PNG，通过 MCP 响应返回；MCP DevDesk 不把截图历史保存到磁盘。
+- 本实验版本不提供鼠标点击、键盘输入或自动控制电脑能力。
+- Cloudflare/OAuth 远程连接一旦获得 MCP 授权，也可能调用这些视觉工具，因此只应在完全可信的客户端连接上启用。
+
+## MCP 工具
+
+| 工具 | 用途 |
+| --- | --- |
+| `screen_list_windows` | 列出当前可见的顶层应用窗口，可按标题或进程名筛选。 |
+| `screen_get_active_window` | 读取当前前台窗口的标题、进程、尺寸等元数据，不截图。 |
+| `screen_capture_window` | 按窗口 ID、精确标题或唯一标题片段截取指定窗口。 |
+| `screen_capture_active_window` | 截取当前前台窗口。 |
+| `screen_capture_desktop` | 截取 Windows 虚拟桌面（包括多显示器范围）。 |
+
+截图工具默认把返回宽度限制在 1920 像素，客户端也可以在 320–4096 之间指定 `maxWidth`。如果 PNG 仍超过 MCP 图像大小限制，工具会要求客户端降低 `maxWidth`，避免无限增大内存和网络开销。
+
+## Windows 捕获方式
+
+指定窗口优先使用 `PrintWindow`，失败时回退到屏幕 `BitBlt`；桌面截图使用虚拟桌面 `BitBlt`。这使第一版不需要常驻录屏会话，也不会在关闭功能后留下捕获线程。
+
+Windows 自身的保护边界仍然生效。UAC 安全桌面、DRM/受保护内容、部分硬件加速窗口、最小化窗口或其他 Windows Desktop 上的窗口可能返回黑屏、旧画面或无法捕获。这些情况不会通过降低 MCP 权限边界绕过。
+
+## 测试步骤
+
+1. 使用包含 Screen Vision 的测试版，并确保项目使用 **Go MCP Core**。
+2. 打开“设置 → 权限与安全”，选择“信任模式”或“危险模式”。
+3. 开启“允许 AI 按需读取窗口画面”，确认隐私提示并保存；若 MCP 正在运行，DevDesk 会重启 MCP 服务。
+4. 在已连接的 MCP 客户端中先调用 `screen_list_windows`，确认能看到希望测试的窗口。
+5. 调用 `screen_capture_window` 或 `screen_capture_active_window`，确认客户端收到 PNG 图像并能理解画面。
+6. 测试完成后关闭 Screen Vision；MCP 重启后视觉工具应从工具列表消失。
+
+建议重点反馈：窗口是否能被正确列出、截图是否黑屏、DPI/多显示器下截图范围是否正确、截图延迟、开启/关闭后的空闲资源占用，以及所使用的 Windows 版本和目标应用。
