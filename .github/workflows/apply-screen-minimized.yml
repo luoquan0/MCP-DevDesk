@@ -26,7 +26,12 @@ jobs:
 
       - name: Apply patch
         shell: pwsh
-        run: python .\tools\apply-screen-minimized.py
+        run: |
+          $patchPath = "tools\apply-screen-minimized.py"
+          $patchContent = Get-Content -LiteralPath $patchPath -Raw -Encoding utf8
+          $patchContent = $patchContent.Replace('\t\t\tsort.SliceStable', '\t\tsort.SliceStable')
+          Set-Content -LiteralPath $patchPath -Value $patchContent -Encoding utf8 -NoNewline
+          python .\tools\apply-screen-minimized.py
 
       - name: Setup Go
         uses: actions/setup-go@v5
