@@ -1,0 +1,74 @@
+name: Fix WINDOWPLACEMENT ABI
+
+on:
+  push:
+    branches:
+      - "fix/screen-vision-tray-autostart-ui"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply ABI fix
+        shell: pwsh
+        run: python .\tools\fix-window-placement-abi.py
+
+      - name: Format Go
+        shell: pwsh
+        run: |
+          gofmt -w app/internal/mcpcore/screen_minimized_windows.go
+          gofmt -w app/internal/mcpcore/screen_minimized_windows_test.go
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: |
+          Set-Location frontend
+          npm ci
+
+      - name: Guard public repository secrets
+        shell: pwsh
+        run: .\tools\check-public-release.ps1
+
+      - name: Build and test
+        shell: pwsh
+        env:
+          MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: .\build.ps1 -Arch amd64 -RunTests
+
+      - name: Commit validated ABI fix
+        shell: pwsh
+        run: |
+          Remove-Item .\tools\fix-window-placement-abi.py -Force
+          Remove-Item .\.github\workflows\fix-window-placement-abi.yml -Force
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --exit-code && exit 1
+          git commit -m "fix: use correct WINDOWPLACEMENT layout"
+          git push origin HEAD:${{ github.ref_name }}
