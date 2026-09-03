@@ -30,13 +30,13 @@ type screenRect struct {
 }
 
 type screenWindow struct {
-	ID          string `json:"id"`
-	Handle      uintptr `json:"-"`
-	Title       string `json:"title"`
-	ProcessID   uint32 `json:"processId"`
-	ProcessName string `json:"processName,omitempty"`
+	ID          string     `json:"id"`
+	Handle      uintptr    `json:"-"`
+	Title       string     `json:"title"`
+	ProcessID   uint32     `json:"processId"`
+	ProcessName string     `json:"processName,omitempty"`
 	Bounds      screenRect `json:"bounds"`
-	Active      bool `json:"active"`
+	Active      bool       `json:"active"`
 }
 
 type screenCaptureFrame struct {

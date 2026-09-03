@@ -20,6 +20,7 @@ type Config struct {
 	FileScope               string   `json:"fileScope"`
 	ToolProfile             string   `json:"toolProfile"`
 	AllowNetwork            bool     `json:"allowNetwork"`
+	ScreenCaptureEnabled    bool     `json:"screenCaptureEnabled"`
 	Domain                  string   `json:"domain"`
 	TunnelName              string   `json:"tunnelName"`
 	TunnelID                string   `json:"tunnelId"`
@@ -53,6 +54,7 @@ type PublicConfig struct {
 	FileScope               string   `json:"fileScope"`
 	ToolProfile             string   `json:"toolProfile"`
 	AllowNetwork            bool     `json:"allowNetwork"`
+	ScreenCaptureEnabled    bool     `json:"screenCaptureEnabled"`
 	Domain                  string   `json:"domain"`
 	TunnelName              string   `json:"tunnelName"`
 	TunnelID                string   `json:"tunnelId"`
@@ -87,6 +89,7 @@ func (c Config) Public() PublicConfig {
 		FileScope:               c.FileScope,
 		ToolProfile:             c.ToolProfile,
 		AllowNetwork:            c.AllowNetwork,
+		ScreenCaptureEnabled:    c.ScreenCaptureEnabled,
 		Domain:                  c.Domain,
 		TunnelName:              c.TunnelName,
 		TunnelID:                c.TunnelID,
@@ -118,6 +121,7 @@ type ConfigUpdate struct {
 	FileScope               *string   `json:"fileScope"`
 	ToolProfile             *string   `json:"toolProfile"`
 	AllowNetwork            *bool     `json:"allowNetwork"`
+	ScreenCaptureEnabled    *bool     `json:"screenCaptureEnabled"`
 	Domain                  *string   `json:"domain"`
 	TunnelName              *string   `json:"tunnelName"`
 	ProxyAddress            *string   `json:"proxyAddress"`

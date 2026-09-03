@@ -15,52 +15,52 @@ import (
 )
 
 const (
-	smXVirtualScreen          = 76
-	smYVirtualScreen          = 77
-	smCXVirtualScreen         = 78
-	smCYVirtualScreen         = 79
-	dwmwaExtendedFrameBounds  = 9
-	dwmwaCloaked              = 14
-	processQueryLimitedInfo   = 0x1000
-	pwRenderFullContent       = 0x00000002
-	srcCopy                   = 0x00CC0020
-	captureBLT                = 0x40000000
-	dibRGBColors              = 0
-	biRGB                     = 0
-	maxScreenCapturePixels    = 40_000_000
+	smXVirtualScreen         = 76
+	smYVirtualScreen         = 77
+	smCXVirtualScreen        = 78
+	smCYVirtualScreen        = 79
+	dwmwaExtendedFrameBounds = 9
+	dwmwaCloaked             = 14
+	processQueryLimitedInfo  = 0x1000
+	pwRenderFullContent      = 0x00000002
+	srcCopy                  = 0x00CC0020
+	captureBLT               = 0x40000000
+	dibRGBColors             = 0
+	biRGB                    = 0
+	maxScreenCapturePixels   = 40_000_000
 )
 
 var (
-	screenUser32 = windows.NewLazySystemDLL("user32.dll")
-	screenGDI32 = windows.NewLazySystemDLL("gdi32.dll")
-	screenDWMAPI = windows.NewLazySystemDLL("dwmapi.dll")
+	screenUser32   = windows.NewLazySystemDLL("user32.dll")
+	screenGDI32    = windows.NewLazySystemDLL("gdi32.dll")
+	screenDWMAPI   = windows.NewLazySystemDLL("dwmapi.dll")
 	screenKernel32 = windows.NewLazySystemDLL("kernel32.dll")
 
-	procEnumWindows = screenUser32.NewProc("EnumWindows")
-	procIsWindow = screenUser32.NewProc("IsWindow")
-	procIsWindowVisible = screenUser32.NewProc("IsWindowVisible")
-	procGetWindowTextLengthW = screenUser32.NewProc("GetWindowTextLengthW")
-	procGetWindowTextW = screenUser32.NewProc("GetWindowTextW")
+	procEnumWindows              = screenUser32.NewProc("EnumWindows")
+	procIsWindow                 = screenUser32.NewProc("IsWindow")
+	procIsWindowVisible          = screenUser32.NewProc("IsWindowVisible")
+	procGetWindowTextLengthW     = screenUser32.NewProc("GetWindowTextLengthW")
+	procGetWindowTextW           = screenUser32.NewProc("GetWindowTextW")
 	procGetWindowThreadProcessID = screenUser32.NewProc("GetWindowThreadProcessId")
-	procGetForegroundWindow = screenUser32.NewProc("GetForegroundWindow")
-	procGetWindowRect = screenUser32.NewProc("GetWindowRect")
-	procPrintWindow = screenUser32.NewProc("PrintWindow")
-	procGetDC = screenUser32.NewProc("GetDC")
-	procReleaseDC = screenUser32.NewProc("ReleaseDC")
-	procGetSystemMetrics = screenUser32.NewProc("GetSystemMetrics")
+	procGetForegroundWindow      = screenUser32.NewProc("GetForegroundWindow")
+	procGetWindowRect            = screenUser32.NewProc("GetWindowRect")
+	procPrintWindow              = screenUser32.NewProc("PrintWindow")
+	procGetDC                    = screenUser32.NewProc("GetDC")
+	procReleaseDC                = screenUser32.NewProc("ReleaseDC")
+	procGetSystemMetrics         = screenUser32.NewProc("GetSystemMetrics")
 
-	procCreateCompatibleDC = screenGDI32.NewProc("CreateCompatibleDC")
-	procDeleteDC = screenGDI32.NewProc("DeleteDC")
+	procCreateCompatibleDC     = screenGDI32.NewProc("CreateCompatibleDC")
+	procDeleteDC               = screenGDI32.NewProc("DeleteDC")
 	procCreateCompatibleBitmap = screenGDI32.NewProc("CreateCompatibleBitmap")
-	procSelectObject = screenGDI32.NewProc("SelectObject")
-	procDeleteObject = screenGDI32.NewProc("DeleteObject")
-	procBitBlt = screenGDI32.NewProc("BitBlt")
-	procGetDIBits = screenGDI32.NewProc("GetDIBits")
+	procSelectObject           = screenGDI32.NewProc("SelectObject")
+	procDeleteObject           = screenGDI32.NewProc("DeleteObject")
+	procBitBlt                 = screenGDI32.NewProc("BitBlt")
+	procGetDIBits              = screenGDI32.NewProc("GetDIBits")
 
-	procDwmGetWindowAttribute = screenDWMAPI.NewProc("DwmGetWindowAttribute")
-	procOpenProcess = screenKernel32.NewProc("OpenProcess")
+	procDwmGetWindowAttribute      = screenDWMAPI.NewProc("DwmGetWindowAttribute")
+	procOpenProcess                = screenKernel32.NewProc("OpenProcess")
 	procQueryFullProcessImageNameW = screenKernel32.NewProc("QueryFullProcessImageNameW")
-	procCloseHandle = screenKernel32.NewProc("CloseHandle")
+	procCloseHandle                = screenKernel32.NewProc("CloseHandle")
 )
 
 type winRect struct {

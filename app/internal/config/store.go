@@ -450,6 +450,9 @@ func applyUpdate(cfg *model.Config, update model.ConfigUpdate) {
 	if update.AllowNetwork != nil {
 		cfg.AllowNetwork = *update.AllowNetwork
 	}
+	if update.ScreenCaptureEnabled != nil {
+		cfg.ScreenCaptureEnabled = *update.ScreenCaptureEnabled
+	}
 	if update.Domain != nil {
 		cfg.Domain = *update.Domain
 	}

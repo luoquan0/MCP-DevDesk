@@ -103,6 +103,7 @@ export interface Config {
   toolProfile: ToolProfile;
   permissionMode: PermissionMode;
   allowNetwork: boolean;
+  screenCaptureEnabled: boolean;
   fileScope: FileScope;
   domain: string;
   tunnelName: string;
