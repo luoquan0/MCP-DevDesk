@@ -27,10 +27,15 @@ func TestConfigureScreenVisionFiltersToolsByMode(t *testing.T) {
 			notWanted: []string{"screen_get_active_window", "screen_capture_active_window", "screen_capture_desktop"},
 		},
 		{
-			name:      "desktop",
-			mode:      "desktop",
-			want:      []string{"screen_capture_desktop"},
-			notWanted: []string{"screen_list_windows", "screen_capture_window", "screen_get_active_window", "screen_capture_active_window"},
+			name: "desktop",
+			mode: "desktop",
+			want: []string{
+				"screen_list_windows",
+				"screen_get_active_window",
+				"screen_capture_window",
+				"screen_capture_active_window",
+				"screen_capture_desktop",
+			},
 		},
 	}
 
@@ -90,6 +95,30 @@ func TestSpecifiedWindowModeWithoutTargetDoesNotAdvertiseCapture(t *testing.T) {
 	}
 	if containsTool(server.tools, "screen_capture_window") {
 		t.Fatal("capture must not be advertised before a specified target is selected")
+	}
+}
+
+func TestDesktopModeAllowsWindowInspection(t *testing.T) {
+	server, err := New(Options{Workspace: t.TempDir(), PermissionMode: "trusted", ScreenCaptureEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	server.ConfigureScreenVision("desktop", "", 0)
+
+	for _, name := range []string{
+		"screen_list_windows",
+		"screen_get_active_window",
+		"screen_capture_window",
+		"screen_capture_active_window",
+		"screen_capture_desktop",
+	} {
+		if err := server.enforceScreenVisionToolPolicy(name); err != nil {
+			t.Fatalf("desktop mode should allow %s: %v", name, err)
+		}
+	}
+	if got, err := server.screenVisionWindowArgument("0x99"); err != nil || got != "0x99" {
+		t.Fatalf("desktop mode must not lock arbitrary visible window selection: got %q, %v", got, err)
 	}
 }
 
