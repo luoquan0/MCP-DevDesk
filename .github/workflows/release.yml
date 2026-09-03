@@ -158,10 +158,10 @@ jobs:
           $asset = [string]$pin.asset
           $expected = ([string]$pin.sha256).ToLowerInvariant()
           if ($version -notmatch '^\d{4}\.\d+\.\d+$') {
-            throw "Invalid cloudflared version in $pinPath: $version"
+            throw "Invalid cloudflared version in ${pinPath}: $version"
           }
           if ($asset -ne "cloudflared-windows-amd64.exe") {
-            throw "Unexpected cloudflared release asset in $pinPath: $asset"
+            throw "Unexpected cloudflared release asset in ${pinPath}: $asset"
           }
           if ($expected -notmatch '^[0-9a-f]{64}$') {
             throw "Invalid cloudflared SHA256 in $pinPath"
