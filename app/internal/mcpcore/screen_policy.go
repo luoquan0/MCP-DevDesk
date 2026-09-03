@@ -43,7 +43,7 @@ func (s *Server) ConfigureScreenVision(mode, windowID string, windowProcessID ui
 			continue
 		}
 		delete(tool.InputSchema, "required")
-		tool.Description = "Capture only the Windows application window selected in MCP DevDesk. Omit window to use the locked target; another window id is rejected. Nothing is saved to disk."
+		tool.Description = "Capture only the Windows application window selected in MCP DevDesk, including when it is behind another app or minimized. Minimized targets are temporarily restored without focus and minimized again. Omit window to use the locked target; another window id is rejected. Nothing is saved to disk."
 		if properties, ok := tool.InputSchema["properties"].(map[string]any); ok {
 			if windowProperty, ok := properties["window"].(map[string]any); ok {
 				windowProperty["description"] = "Optional. Screen Vision is locked to the window selected in MCP DevDesk; another window id is rejected."
@@ -72,8 +72,8 @@ func (policy screenVisionPolicy) allows(name string) bool {
 		return policy.windowID != "" && name == "screen_capture_window"
 	case "desktop":
 		// Whole-computer mode is intentionally broader than a single desktop
-		// screenshot: the agent may enumerate visible top-level windows and read
-		// them individually, which also covers windows hidden behind others.
+		// screenshot: the agent may enumerate top-level application windows, including
+		// minimized targets, and read them individually when Windows allows it.
 		return name == "screen_list_windows" ||
 			name == "screen_get_active_window" ||
 			name == "screen_capture_window" ||

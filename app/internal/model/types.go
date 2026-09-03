@@ -18,6 +18,7 @@ type ScreenWindowInfo struct {
 	ProcessName string     `json:"processName,omitempty"`
 	Bounds      ScreenRect `json:"bounds"`
 	Active      bool       `json:"active"`
+	Minimized   bool       `json:"minimized"`
 }
 
 type Config struct {

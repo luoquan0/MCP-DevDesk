@@ -7,17 +7,20 @@ import (
 	"mcp-devdesk/internal/model"
 )
 
-// ListScreenWindows returns only visible top-level window metadata. It never
-// captures pixels and is used by the local DevDesk manager so the user can
-// explicitly choose a target for specified-window Screen Vision mode.
+// ListScreenWindows returns captureable top-level app-window metadata, including
+// minimized apps. It never captures pixels and is used by the local DevDesk manager
+// so the user can explicitly choose a target for specified-window Screen Vision mode.
 func ListScreenWindows() ([]model.ScreenWindowInfo, error) {
-	windows, err := platformListScreenWindows()
+	windows, err := platformListScreenWindowsForVision()
 	if err != nil {
 		return nil, err
 	}
 	sort.SliceStable(windows, func(i, j int) bool {
 		if windows[i].Active != windows[j].Active {
 			return windows[i].Active
+		}
+		if windows[i].Minimized != windows[j].Minimized {
+			return !windows[i].Minimized
 		}
 		return strings.ToLower(windows[i].Title) < strings.ToLower(windows[j].Title)
 	})
@@ -34,7 +37,8 @@ func ListScreenWindows() ([]model.ScreenWindowInfo, error) {
 				Width:  window.Bounds.Width,
 				Height: window.Bounds.Height,
 			},
-			Active: window.Active,
+			Active:    window.Active,
+			Minimized: window.Minimized,
 		})
 	}
 	return result, nil

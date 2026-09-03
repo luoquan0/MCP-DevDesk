@@ -53,7 +53,7 @@ const modes = [
 ];
 
 const screenModes: Array<{ id: ScreenCaptureMode; title: string; subtitle: string; icon: string }> = [
-  { id: "window", title: "指定窗口", subtitle: "锁定一个目标，浏览器在前面也读取它", icon: "lock" },
+  { id: "window", title: "指定窗口", subtitle: "锁定一个目标，后台或最小化也尝试读取它", icon: "lock" },
   { id: "active", title: "当前窗口", subtitle: "只读取你当前正在看的前台内容", icon: "monitor" },
   { id: "desktop", title: "整个桌面", subtitle: "AI 可自行查看当前打开的软件窗口", icon: "overview" },
 ];
@@ -329,7 +329,7 @@ async function savePermissions() {
           <div class="screen-window-picker-heading">
             <div>
               <strong>选择允许读取的窗口</strong>
-              <small>目标用窗口 ID + 进程 ID 锁定。它可以位于 Edge/Chrome 等窗口背后，不需要保持前台；最小化窗口暂不支持。窗口关闭或身份变化后必须重新选择。</small>
+              <small>目标用窗口 ID + 进程 ID 锁定。后台和已最小化的应用窗口都会显示；读取最小化目标时会在后台无焦点恢复一帧、截图后再恢复最小化。纯服务或没有顶层窗体的进程不会显示。窗口关闭或身份变化后必须重新选择。</small>
             </div>
             <AppButton tone="secondary" icon="refresh" compact :loading="screenWindowsLoading" :disabled="screenVisionSaving" @click="refreshScreenWindows">刷新窗口</AppButton>
           </div>
@@ -344,7 +344,8 @@ async function savePermissions() {
                 <template v-if="!selectedScreenWindow"> · 当前不可用，请恢复目标窗口、刷新后重新选择</template>
               </small>
             </div>
-            <StatusPill :tone="selectedScreenWindow ? 'success' : 'danger'">{{ selectedScreenWindow ? '已锁定' : '已失效' }}</StatusPill>
+            <StatusPill v-if="selectedScreenWindow?.minimized" tone="warning">最小化 · 已锁定</StatusPill>
+            <StatusPill v-else :tone="selectedScreenWindow ? 'success' : 'danger'">{{ selectedScreenWindow ? '已锁定' : '已失效' }}</StatusPill>
           </div>
 
           <label class="screen-window-search">
@@ -365,14 +366,15 @@ async function savePermissions() {
               <span class="screen-window-option-icon"><AppIcon name="monitor" :size="18" /></span>
               <span class="screen-window-option-copy">
                 <strong>{{ window.title }}</strong>
-                <small>{{ window.processName || '未知进程' }} · PID {{ window.processId }} · {{ window.bounds.width }}×{{ window.bounds.height }}</small>
+                <small>{{ window.processName || '未知进程' }} · PID {{ window.processId }} · {{ window.minimized ? '已最小化' : window.bounds.width + '×' + window.bounds.height }}</small>
               </span>
               <StatusPill v-if="window.active" tone="info">当前前台</StatusPill>
+              <StatusPill v-else-if="window.minimized" tone="warning">已最小化</StatusPill>
               <span class="screen-window-radio"><i /></span>
             </button>
             <div v-if="!filteredScreenWindows.length" class="screen-window-empty">
               <AppIcon name="monitor" :size="22" />
-              <span>{{ screenWindowsLoading ? '正在读取 Windows 窗口…' : '没有找到匹配窗口。若目标已最小化，请先恢复窗口再刷新。' }}</span>
+              <span>{{ screenWindowsLoading ? '正在读取 Windows 窗口…' : '没有找到匹配的可截图应用窗口。纯后台服务或没有顶层窗体的进程不会出现在这里。' }}</span>
             </div>
           </div>
         </div>

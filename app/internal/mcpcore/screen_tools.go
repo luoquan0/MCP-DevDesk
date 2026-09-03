@@ -37,6 +37,7 @@ type screenWindow struct {
 	ProcessName string     `json:"processName,omitempty"`
 	Bounds      screenRect `json:"bounds"`
 	Active      bool       `json:"active"`
+	Minimized   bool       `json:"minimized"`
 }
 
 type screenCaptureFrame struct {
@@ -71,8 +72,8 @@ func screenTools() []Tool {
 	return []Tool{
 		{
 			Name:        "screen_list_windows",
-			Title:       "List Visible Windows",
-			Description: "List visible top-level Windows application windows. Screen Vision is explicit opt-in and this tool never starts continuous recording.",
+			Title:       "List App Windows",
+			Description: "List captureable top-level Windows application windows, including minimized apps. Screen Vision is explicit opt-in and this tool never starts continuous recording.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -91,7 +92,7 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_capture_window",
 			Title:       "Capture Window",
-			Description: "Capture one explicitly selected Windows application window on demand and return a PNG image to the MCP client. Nothing is saved to disk.",
+			Description: "Capture one explicitly selected Windows application window on demand, including a background or minimized target when Windows allows it, and return a PNG image to the MCP client. Minimized targets are temporarily restored without focus and returned to minimized state. Nothing is saved to disk.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -130,7 +131,7 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 		if err := decodeToolArguments(arguments, &args); err != nil {
 			return nil, err
 		}
-		windows, err := platformListScreenWindows()
+		windows, err := platformListScreenWindowsForVision()
 		if err != nil {
 			return nil, err
 		}
@@ -145,6 +146,9 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 		sort.SliceStable(filtered, func(i, j int) bool {
 			if filtered[i].Active != filtered[j].Active {
 				return filtered[i].Active
+			}
+			if filtered[i].Minimized != filtered[j].Minimized {
+				return !filtered[i].Minimized
 			}
 			return strings.ToLower(filtered[i].Title) < strings.ToLower(filtered[j].Title)
 		})
@@ -179,7 +183,7 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 			return nil, err
 		}
 		args.Window = windowArgument
-		windows, err := platformListScreenWindows()
+		windows, err := platformListScreenWindowsForVision()
 		if err != nil {
 			return nil, err
 		}
@@ -190,7 +194,7 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 		if err := s.validateScreenVisionWindow(window); err != nil {
 			return nil, err
 		}
-		frame, err := platformCaptureScreenWindow(window)
+		frame, err := platformCaptureScreenWindowForVision(window)
 		if err != nil {
 			return nil, err
 		}
@@ -204,7 +208,7 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 		if err != nil {
 			return nil, err
 		}
-		frame, err := platformCaptureScreenWindow(window)
+		frame, err := platformCaptureScreenWindowForVision(window)
 		if err != nil {
 			return nil, err
 		}
@@ -263,7 +267,7 @@ func resolveScreenWindow(windows []screenWindow, value string) (screenWindow, er
 		return matches[0], nil
 	}
 	if len(matches) == 0 {
-		return screenWindow{}, fmt.Errorf("no visible window matches %q", value)
+		return screenWindow{}, fmt.Errorf("no app window matches %q", value)
 	}
 	candidates := make([]string, 0, len(matches))
 	for i, match := range matches {

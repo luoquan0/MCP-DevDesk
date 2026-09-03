@@ -18,6 +18,7 @@ export interface ScreenWindowInfo {
   processName?: string;
   bounds: ScreenWindowBounds;
   active: boolean;
+  minimized: boolean;
 }
 
 export interface ProcessStatus {
