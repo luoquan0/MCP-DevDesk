@@ -32,6 +32,7 @@ func main() {
 	flag.Var(&allowedRoots, "allowed-root", "additional allowed root directory; may be repeated")
 	allowNetwork := flag.Bool("allow-network", false, "allow command sessions to use network-capable tools")
 	screenCapture := flag.Bool("enable-screen-capture", false, "enable opt-in on-demand Windows screen vision tools")
+	screenVisionConfig := flag.String("screen-vision-config", "", "authoritative MCP DevDesk Screen Vision config shared by all instances")
 	oauthMode := flag.Bool("oauth-mode", false, "enable OAuth 2.1 authorization")
 	dataDir := flag.String("data-dir", "", "data directory for OAuth clients and audit logs")
 	serverURL := flag.String("server-url", os.Getenv("CODING_TOOLS_MCP_SERVER_URL"), "public server base URL used for OAuth metadata")
@@ -112,6 +113,39 @@ func main() {
 		}
 	}
 
+	screenVisionEnabled := *screenCapture
+	screenVisionMode := "active"
+	screenVisionWindowID := ""
+	var screenVisionWindowProcessID uint32
+	if policyPath := strings.TrimSpace(*screenVisionConfig); policyPath != "" {
+		enabled, mode, windowID, windowProcessID, policyErr := loadScreenVisionPolicy(policyPath)
+		if policyErr != nil {
+			// The shared policy is a privacy boundary. Never broaden a failed
+			// specified-window policy into current-window capture just because its
+			// config file could not be read.
+			log.Printf("load authoritative Screen Vision policy: %v; Screen Vision disabled", policyErr)
+			screenVisionEnabled = false
+		} else {
+			screenVisionEnabled = enabled
+			screenVisionMode = mode
+			screenVisionWindowID = windowID
+			screenVisionWindowProcessID = windowProcessID
+		}
+	} else if *screenCapture && strings.TrimSpace(*loggingConfig) != "" {
+		// Compatibility for older launchers that used the per-instance logging
+		// config as the Screen Vision policy source. Read failure is still
+		// fail-closed instead of silently falling back to the foreground window.
+		_, mode, windowID, windowProcessID, policyErr := loadScreenVisionPolicy(*loggingConfig)
+		if policyErr != nil {
+			log.Printf("load Screen Vision policy: %v; Screen Vision disabled", policyErr)
+			screenVisionEnabled = false
+		} else {
+			screenVisionMode = mode
+			screenVisionWindowID = windowID
+			screenVisionWindowProcessID = windowProcessID
+		}
+	}
+
 	core, err := mcpcore.New(mcpcore.Options{
 		Name:                    "mcp-devdesk-go-core",
 		Version:                 buildinfo.Version,
@@ -120,7 +154,7 @@ func main() {
 		ManagedInstructionsFile: strings.TrimSpace(*instructionsFile),
 		PermissionMode:          *permissionMode,
 		AllowNetwork:            *allowNetwork,
-		ScreenCaptureEnabled:    *screenCapture,
+		ScreenCaptureEnabled:    screenVisionEnabled,
 		AuditPath:               resolvedAuditPath,
 		LoggingConfig:           strings.TrimSpace(*loggingConfig),
 		FileScope:               *fileScope,
@@ -133,12 +167,9 @@ func main() {
 		log.Fatal(err)
 	}
 	defer core.Close()
-	if *screenCapture {
-		mode, windowID, windowProcessID, policyErr := loadScreenVisionPolicy(*loggingConfig)
-		if policyErr != nil {
-			log.Printf("load Screen Vision policy: %v; using current-window mode", policyErr)
-		}
-		core.ConfigureScreenVision(mode, windowID, windowProcessID)
+	if screenVisionEnabled {
+		core.ConfigureScreenVision(screenVisionMode, screenVisionWindowID, screenVisionWindowProcessID)
+		log.Printf("Screen Vision policy active: mode=%s window=%s pid=%d", screenVisionMode, screenVisionWindowID, screenVisionWindowProcessID)
 	}
 	address := net.JoinHostPort(*host, strconv.Itoa(*port))
 	server := &http.Server{
@@ -183,29 +214,30 @@ func main() {
 }
 
 type persistedScreenVisionConfig struct {
+	ScreenCaptureEnabled         bool   `json:"screenCaptureEnabled"`
 	ScreenCaptureMode            string `json:"screenCaptureMode"`
 	ScreenCaptureWindowID        string `json:"screenCaptureWindowId"`
 	ScreenCaptureWindowProcessID uint32 `json:"screenCaptureWindowProcessId"`
 }
 
-func loadScreenVisionPolicy(configPath string) (string, string, uint32, error) {
-	mode := "active"
+func loadScreenVisionPolicy(configPath string) (bool, string, string, uint32, error) {
 	configPath = strings.TrimSpace(configPath)
 	if configPath == "" {
-		return mode, "", 0, nil
+		return false, "", "", 0, errors.New("Screen Vision config path is empty")
 	}
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
-		return mode, "", 0, err
+		return false, "", "", 0, err
 	}
 	var config persistedScreenVisionConfig
 	if err := json.Unmarshal(raw, &config); err != nil {
-		return mode, "", 0, err
+		return false, "", "", 0, err
 	}
-	if strings.TrimSpace(config.ScreenCaptureMode) != "" {
-		mode = config.ScreenCaptureMode
+	mode := strings.TrimSpace(config.ScreenCaptureMode)
+	if mode == "" {
+		mode = "active"
 	}
-	return mode, strings.TrimSpace(config.ScreenCaptureWindowID), config.ScreenCaptureWindowProcessID, nil
+	return config.ScreenCaptureEnabled, mode, strings.TrimSpace(config.ScreenCaptureWindowID), config.ScreenCaptureWindowProcessID, nil
 }
 
 type statusRecorder struct {

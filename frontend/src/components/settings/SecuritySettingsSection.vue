@@ -75,6 +75,34 @@ const screenVisionReady = computed(() => {
   return Boolean(form.screenCaptureWindowId && selectedScreenWindow.value);
 });
 
+async function reloadRunningScreenVisionCores(wasEnabled: boolean, willBeEnabled: boolean) {
+  if (!wasEnabled && !willBeEnabled) return;
+  await app.loadInstances();
+  const runningManagedGoInstances = app.instances.filter((instance) =>
+    instance.id !== "primary" && instance.coreMode === "go" && instance.mcp.running);
+  const failures: string[] = [];
+
+  for (const instance of runningManagedGoInstances) {
+    try {
+      await app.instanceAction(instance.id, "restart");
+    } catch (error) {
+      failures.push(`${instance.name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (app.status?.mcp.running && app.config?.coreMode === "go") {
+    try {
+      await app.serviceAction("restart");
+    } catch (error) {
+      failures.push(`主实例: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (failures.length) {
+    throw new Error(`屏幕视觉策略已保存，但以下运行中的 Go MCP 实例未能重新加载：${failures.join("；")}`);
+  }
+}
+
 async function persistScreenVision(update: Partial<Config>) {
   if (screenVisionSaving.value) return;
   const wasEnabled = Boolean(app.config?.screenCaptureEnabled);
@@ -82,10 +110,11 @@ async function persistScreenVision(update: Partial<Config>) {
   screenVisionSaving.value = true;
   try {
     await app.saveConfig(update);
-    if (app.status?.mcp.running && (wasEnabled || willBeEnabled)) await app.serviceAction("restart");
+    await reloadRunningScreenVisionCores(wasEnabled, willBeEnabled);
     await app.loadConfig();
     syncScreenVision(app.config);
   } catch (error) {
+    await app.loadConfig().catch(() => null);
     syncScreenVision(app.config);
     ui.toast("屏幕视觉设置失败", error instanceof Error ? error.message : String(error), "danger");
   } finally {
@@ -176,6 +205,7 @@ async function savePermissions() {
     });
     if (!accepted) return;
   }
+  const wasScreenVisionEnabled = Boolean(app.config?.screenCaptureEnabled);
   try {
     await app.saveConfig({
       permissionMode: form.permissionMode,
@@ -189,9 +219,10 @@ async function savePermissions() {
       screenCaptureWindowProcess: form.screenCaptureWindowProcess,
       allowedRoots: form.allowedRootsText.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
     });
-    if (app.status?.mcp.running) await app.serviceAction("restart");
+    await reloadRunningScreenVisionCores(wasScreenVisionEnabled, form.screenCaptureEnabled);
     await app.loadConfig();
   } catch (error) {
+    await app.loadConfig().catch(() => null);
     ui.toast("权限保存失败", error instanceof Error ? error.message : String(error), "danger");
   }
 }
@@ -263,7 +294,7 @@ async function savePermissions() {
           <div>
             <span class="eyebrow">Screen Vision · Experimental</span>
             <h3>屏幕视觉（测试）</h3>
-            <p>选择 AI 能读取的画面范围。模式和开关会立即保存；如果 MCP 正在运行，会自动重启加载新策略。</p>
+            <p>选择 AI 能读取的画面范围。屏幕视觉是整台 DevDesk 的统一隐私策略；模式和开关会立即保存，并让所有正在运行的 Go MCP 实例重新加载。</p>
           </div>
           <StatusPill :tone="screenVisionReady ? 'warning' : form.screenCaptureEnabled ? 'info' : 'neutral'">
             {{ screenVisionReady ? `已启用 · ${selectedScreenMode.title}` : form.screenCaptureEnabled ? '等待目标' : '已关闭' }}
@@ -298,7 +329,7 @@ async function savePermissions() {
           <div class="screen-window-picker-heading">
             <div>
               <strong>选择允许读取的窗口</strong>
-              <small>目标用窗口 ID + 进程 ID 锁定。窗口关闭或身份变化后必须重新选择，避免误读到别的程序。</small>
+              <small>目标用窗口 ID + 进程 ID 锁定。最小化窗口不会列出；请先恢复目标窗口再刷新。窗口关闭或身份变化后必须重新选择。</small>
             </div>
             <AppButton tone="secondary" icon="refresh" compact :loading="screenWindowsLoading" :disabled="screenVisionSaving" @click="refreshScreenWindows">刷新窗口</AppButton>
           </div>
@@ -310,7 +341,7 @@ async function savePermissions() {
               <small>
                 {{ selectedScreenWindow?.processName || form.screenCaptureWindowProcess || '未知进程' }}
                 · {{ form.screenCaptureWindowId }}
-                <template v-if="!selectedScreenWindow"> · 当前不可用，请刷新后重新选择</template>
+                <template v-if="!selectedScreenWindow"> · 当前不可用，请恢复目标窗口、刷新后重新选择</template>
               </small>
             </div>
             <StatusPill :tone="selectedScreenWindow ? 'success' : 'danger'">{{ selectedScreenWindow ? '已锁定' : '已失效' }}</StatusPill>
@@ -341,7 +372,7 @@ async function savePermissions() {
             </button>
             <div v-if="!filteredScreenWindows.length" class="screen-window-empty">
               <AppIcon name="monitor" :size="22" />
-              <span>{{ screenWindowsLoading ? '正在读取 Windows 窗口…' : '没有找到匹配窗口，尝试刷新或清空搜索条件。' }}</span>
+              <span>{{ screenWindowsLoading ? '正在读取 Windows 窗口…' : '没有找到匹配窗口。若目标已最小化，请先恢复窗口再刷新。' }}</span>
             </div>
           </div>
         </div>
@@ -351,7 +382,7 @@ async function savePermissions() {
           <div><AppIcon name="shield" :size="16" /><span>截图历史</span><StatusPill tone="success">不保存</StatusPill></div>
           <div><AppIcon name="terminal" :size="16" /><span>鼠标与键盘控制</span><StatusPill tone="neutral">未开放</StatusPill></div>
         </div>
-        <p class="field-hint">当前测试功能仅由 Go MCP Core 提供。部分受保护、DRM、最小化或硬件加速窗口可能返回黑屏；关闭本开关后视觉工具会从 MCP 工具列表中移除。</p>
+        <p class="field-hint">当前测试功能仅由 Go MCP Core 提供。最小化窗口不会作为指定目标；部分受保护、DRM 或硬件加速窗口仍可能无法读取。关闭本开关后视觉工具会从所有 Go MCP 实例的工具列表中移除。</p>
       </AppCard>
     </section>
   </section>
