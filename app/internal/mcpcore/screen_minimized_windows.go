@@ -44,6 +44,7 @@ type screenWindowPlacement struct {
 	MinPosition    screenPlacementPoint
 	MaxPosition    screenPlacementPoint
 	NormalPosition winRect
+	DevicePosition winRect
 }
 
 // platformListScreenWindowsForVision includes normal, minimized, and selected
@@ -335,12 +336,38 @@ func screenRepairRestoredBounds(hwnd uintptr, placement screenWindowPlacement, p
 	if currentErr == nil && !screenVisionBoundsNeedRepair(current, normal) {
 		return nil
 	}
-	flags := uintptr(screenSWPNoZOrder | swpNoActivate | swpNoOwnerZOrder | swpNoSendChanging)
+
+	// WINDOWPLACEMENT coordinates are workspace coordinates for normal top-level
+	// app windows. Restore them with SetWindowPlacement itself; Microsoft warns
+	// against feeding rcNormalPosition directly into SetWindowPos.
+	if placementOK {
+		repairedPlacement := placement
+		repairedPlacement.Length = uint32(unsafe.Sizeof(screenWindowPlacement{}))
+		repairedPlacement.ShowCmd = swShowNoActivate
+		ok, _, callErr := procSetWindowPlacement.Call(hwnd, uintptr(unsafe.Pointer(&repairedPlacement)))
+		if ok == 0 {
+			if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+				return callErr
+			}
+			return errors.New("SetWindowPlacement failed while restoring normal placement")
+		}
+		screenFlushDWM()
+		time.Sleep(screenRestorePoll)
+		current, currentErr = screenWindowRect(hwnd)
+		if currentErr == nil && !screenVisionBoundsNeedRepair(current, normal) {
+			return nil
+		}
+	}
+
+	// If an application keeps an abnormal icon-sized surface even after its
+	// placement is restored, repair only width/height. SWP_NOMOVE deliberately
+	// avoids interpreting workspace coordinates as screen coordinates.
+	flags := uintptr(swpNoMove | screenSWPNoZOrder | swpNoActivate | swpNoOwnerZOrder | swpNoSendChanging)
 	ok, _, callErr := procSetWindowPos.Call(
 		hwnd,
 		0,
-		uintptr(int32(normal.X)),
-		uintptr(int32(normal.Y)),
+		0,
+		0,
 		uintptr(normal.Width),
 		uintptr(normal.Height),
 		flags,
@@ -349,7 +376,7 @@ func screenRepairRestoredBounds(hwnd uintptr, placement screenWindowPlacement, p
 		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
 			return callErr
 		}
-		return errors.New("SetWindowPos failed while restoring normal bounds")
+		return errors.New("SetWindowPos failed while restoring normal size")
 	}
 	screenFlushDWM()
 	return nil

@@ -2,7 +2,16 @@
 
 package mcpcore
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
+
+func TestScreenWindowPlacementMatchesWin32Layout(t *testing.T) {
+	if got := unsafe.Sizeof(screenWindowPlacement{}); got != 60 {
+		t.Fatalf("WINDOWPLACEMENT size = %d, want 60", got)
+	}
+}
 
 func TestScreenVisionPreferredBoundsUsesNormalPlacementForDormantWindow(t *testing.T) {
 	current := screenRect{X: -32000, Y: -32000, Width: 158, Height: 26}
