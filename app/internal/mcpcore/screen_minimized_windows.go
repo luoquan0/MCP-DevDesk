@@ -230,7 +230,7 @@ func screenVisionRestoredIdentityMatches(original, candidate screenWindow) bool 
 	if original.ProcessID == 0 || candidate.ProcessID != original.ProcessID {
 		return false
 	}
-	if strings.TrimSpace(original.ProcessName) != "" && strings.TrimSpace(candidate.ProcessName) != "" && !strings.EqualFold(original.ProcessName, candidate.ProcessName) {
+	if strings.TrimSpace(original.ProcessName) != "" && !strings.EqualFold(strings.TrimSpace(original.ProcessName), strings.TrimSpace(candidate.ProcessName)) {
 		return false
 	}
 	return true

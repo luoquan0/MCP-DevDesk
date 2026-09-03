@@ -107,3 +107,16 @@ func TestScreenRectsStableAllowsOnlyTinyDWMJitter(t *testing.T) {
 		t.Fatal("meaningful width change must reset stability")
 	}
 }
+
+func TestScreenVisionRestoredIdentityRequiresResolvedProcessName(t *testing.T) {
+	original := screenWindow{ProcessID: 55, ProcessName: "v2rayN.exe"}
+	if screenVisionRestoredIdentityMatches(original, screenWindow{ProcessID: 55}) {
+		t.Fatal("replacement with an unresolved process name must not inherit a known target identity")
+	}
+	if !screenVisionRestoredIdentityMatches(original, screenWindow{ProcessID: 55, ProcessName: "V2RAYN.EXE"}) {
+		t.Fatal("same PID and process name should preserve identity case-insensitively")
+	}
+	if screenVisionRestoredIdentityMatches(original, screenWindow{ProcessID: 56, ProcessName: "v2rayN.exe"}) {
+		t.Fatal("different PID must never be rebound")
+	}
+}
