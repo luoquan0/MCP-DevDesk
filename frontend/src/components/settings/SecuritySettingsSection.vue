@@ -53,9 +53,9 @@ const modes = [
 ];
 
 const screenModes: Array<{ id: ScreenCaptureMode; title: string; subtitle: string; icon: string }> = [
-  { id: "window", title: "指定窗口", subtitle: "锁定到你手动选择的一扇窗口", icon: "lock" },
-  { id: "active", title: "当前窗口", subtitle: "每次调用时读取当时的前台窗口", icon: "monitor" },
-  { id: "desktop", title: "整个桌面", subtitle: "读取所有显示器组成的虚拟桌面", icon: "overview" },
+  { id: "window", title: "指定窗口", subtitle: "锁定一个目标，浏览器在前面也读取它", icon: "lock" },
+  { id: "active", title: "当前窗口", subtitle: "只读取你当前正在看的前台内容", icon: "monitor" },
+  { id: "desktop", title: "整个桌面", subtitle: "AI 可自行查看当前打开的软件窗口", icon: "overview" },
 ];
 
 const screenWindows = computed(() => app.config?.screenWindows ?? []);
@@ -294,7 +294,7 @@ async function savePermissions() {
           <div>
             <span class="eyebrow">Screen Vision · Experimental</span>
             <h3>屏幕视觉（测试）</h3>
-            <p>选择 AI 能读取的画面范围。屏幕视觉是整台 DevDesk 的统一隐私策略；模式和开关会立即保存，并让所有正在运行的 Go MCP 实例重新加载。</p>
+            <p>选择 AI 能读取的画面范围。指定窗口可在后台读取；整个桌面允许 AI 自行浏览当前可读取的软件窗口；当前窗口只跟随你正在看的前台内容。</p>
           </div>
           <StatusPill :tone="screenVisionReady ? 'warning' : form.screenCaptureEnabled ? 'info' : 'neutral'">
             {{ screenVisionReady ? `已启用 · ${selectedScreenMode.title}` : form.screenCaptureEnabled ? '等待目标' : '已关闭' }}
@@ -329,7 +329,7 @@ async function savePermissions() {
           <div class="screen-window-picker-heading">
             <div>
               <strong>选择允许读取的窗口</strong>
-              <small>目标用窗口 ID + 进程 ID 锁定。最小化窗口不会列出；请先恢复目标窗口再刷新。窗口关闭或身份变化后必须重新选择。</small>
+              <small>目标用窗口 ID + 进程 ID 锁定。它可以位于 Edge/Chrome 等窗口背后，不需要保持前台；最小化窗口暂不支持。窗口关闭或身份变化后必须重新选择。</small>
             </div>
             <AppButton tone="secondary" icon="refresh" compact :loading="screenWindowsLoading" :disabled="screenVisionSaving" @click="refreshScreenWindows">刷新窗口</AppButton>
           </div>
@@ -382,7 +382,7 @@ async function savePermissions() {
           <div><AppIcon name="shield" :size="16" /><span>截图历史</span><StatusPill tone="success">不保存</StatusPill></div>
           <div><AppIcon name="terminal" :size="16" /><span>鼠标与键盘控制</span><StatusPill tone="neutral">未开放</StatusPill></div>
         </div>
-        <p class="field-hint">当前测试功能仅由 Go MCP Core 提供。最小化窗口不会作为指定目标；部分受保护、DRM 或硬件加速窗口仍可能无法读取。关闭本开关后视觉工具会从所有 Go MCP 实例的工具列表中移除。</p>
+        <p class="field-hint">当前测试功能仅由 Go MCP Core 提供。指定窗口可在后台读取，必要时会做一次不激活目标的临时合成捕获；个别程序可能出现极短的层级刷新。最小化窗口暂不支持；受保护、DRM 或部分硬件窗口仍可能无法读取。</p>
       </AppCard>
     </section>
   </section>
