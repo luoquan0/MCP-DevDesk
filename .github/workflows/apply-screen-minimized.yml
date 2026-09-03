@@ -27,11 +27,26 @@ jobs:
       - name: Apply patch
         shell: pwsh
         run: |
-          $patchPath = "tools\apply-screen-minimized.py"
-          $patchContent = Get-Content -LiteralPath $patchPath -Raw -Encoding utf8
-          $patchContent = $patchContent.Replace('\t\t\tsort.SliceStable', '\t\tsort.SliceStable')
-          Set-Content -LiteralPath $patchPath -Value $patchContent -Encoding utf8 -NoNewline
+          $fixer = @'
+          from pathlib import Path
+          path = Path("tools/apply-screen-minimized.py")
+          lines = path.read_text(encoding="utf-8").splitlines()
+          output = []
+          for line in lines:
+              if "sort.SliceStable(filtered" in line:
+                  first = line.find("'")
+                  last = line.rfind("'")
+                  if first >= 0 and last > first:
+                      encoded = line[first + 1:last]
+                      chunks = encoded.split("\\n")
+                      chunks = [chunk[2:] if chunk.startswith("\\t") else chunk for chunk in chunks]
+                      line = line[:first + 1] + "\\n".join(chunks) + line[last:]
+              output.append(line)
+          path.write_text("\n".join(output) + "\n", encoding="utf-8")
+          '@
+          $fixer | python -
           python .\tools\apply-screen-minimized.py
+          gofmt -w .\app\internal\mcpcore\screen_tools.go .\app\internal\mcpcore\screen_public.go .\app\internal\mcpcore\screen_policy.go .\app\internal\mcpcore\screen_minimized_windows.go .\app\internal\mcpcore\screen_minimized_other.go .\app\internal\mcpcore\screen_minimized_windows_test.go .\app\internal\model\types.go
 
       - name: Setup Go
         uses: actions/setup-go@v5
