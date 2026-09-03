@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/luoquan0/mcp-devdesk/app/internal/model"
+	"mcp-devdesk/internal/model"
 )
 
 func TestMCPArgumentsScreenCaptureOptIn(t *testing.T) {
