@@ -4,6 +4,7 @@ package mcpcore
 
 import (
 	"image"
+	"image/color"
 	"testing"
 )
 
@@ -50,7 +51,7 @@ func TestScreenImageLikelyPrintWindowArtifact(t *testing.T) {
 	for y := 0; y < 200; y++ {
 		for x := 0; x < 320; x++ {
 			value := uint8((x*3 + y*5) % 180 + 32)
-			textured.SetNRGBA(x, y, colorNRGBA(value, uint8(255-value/2), uint8(64+(x+y)%128), 0xff))
+			textured.SetNRGBA(x, y, color.NRGBA{R: value, G: uint8(255 - value/2), B: uint8(64 + (x+y)%128), A: 0xff})
 		}
 	}
 	if screenImageLikelyPrintWindowArtifact(textured) {
@@ -79,12 +80,4 @@ func TestScreenWindowStateSelectable(t *testing.T) {
 	if screenWindowStateSelectable(1, 1, 1) {
 		t.Fatal("minimized window must not be selectable")
 	}
-}
-
-type testNRGBA = struct {
-	R, G, B, A uint8
-}
-
-func colorNRGBA(r, g, b, a uint8) (c image.NRGBAColor) {
-	return image.NRGBAColor{R: r, G: g, B: b, A: a}
 }
