@@ -487,6 +487,7 @@ func screenImageLikelyPrintWindowArtifact(capturedImage *image.NRGBA) bool {
 			if color.R >= 247 && color.G >= 247 && color.B >= 247 {
 				nearWhite++
 			}
+		}
 	}
 	if samples >= 64 && nearWhite*100 >= samples*99 {
 		return true
