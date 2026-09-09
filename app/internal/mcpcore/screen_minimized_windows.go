@@ -12,23 +12,24 @@ import (
 )
 
 const (
-	swHide                      = 0
-	swShowNoActivate            = 4
-	swMinimize                  = 6
-	swShowMinNoActive           = 7
-	swRestore                   = 9
-	screenGWHwndOwner           = 4
-	screenWSExToolWindow        = 0x00000080
-	screenSWPNoZOrder           = 0x0004
-	screenRestorePoll           = 20 * time.Millisecond
-	screenRestoreTimeout        = 760 * time.Millisecond
-	screenRebindPoll            = 35 * time.Millisecond
-	screenRebindInitialTimeout  = 650 * time.Millisecond
-	screenRebindFallbackTimeout = 1200 * time.Millisecond
-	screenStableSamples         = 3
-	screenPostStableRenderWait  = 80 * time.Millisecond
-	screenRetryRenderWait       = 180 * time.Millisecond
+	swHide                     = 0
+	swShowNoActivate           = 4
+	swMinimize                 = 6
+	swShowMinNoActive          = 7
+	screenGWHwndOwner          = 4
+	screenWSExToolWindow       = 0x00000080
+	screenSWPNoZOrder          = 0x0004
+	screenOffscreenMargin      = 256
+	screenRestorePoll          = 20 * time.Millisecond
+	screenRestoreTimeout       = 760 * time.Millisecond
+	screenRebindPoll           = 12 * time.Millisecond
+	screenOffscreenReadyTimeout = 1100 * time.Millisecond
+	screenStableSamples        = 3
+	screenPostStableRenderWait = 90 * time.Millisecond
+	screenRetryRenderWait      = 180 * time.Millisecond
 )
+
+const screenOffscreenSetWindowPosFlags = screenSWPNoZOrder | swpNoActivate | swpNoOwnerZOrder | swpNoSendChanging
 
 var (
 	procShowWindowAsync    = screenUser32.NewProc("ShowWindowAsync")
@@ -336,77 +337,6 @@ func screenAbs(value int) int {
 	return value
 }
 
-func screenWaitForRestoredWindowStable(original screenWindow, placement screenWindowPlacement, placementOK bool, timeout time.Duration, allowSuspiciousExact bool) (screenWindow, error) {
-	deadline := time.Now().Add(timeout)
-	var lastHandle uintptr
-	var lastBounds screenRect
-	stableSamples := 0
-	repairAttempted := make(map[uintptr]bool)
-	var lastErr error
-
-	for {
-		candidate, err := screenEnumerateRestoredWindowCandidate(original, allowSuspiciousExact)
-		if err != nil {
-			lastErr = err
-			stableSamples = 0
-		} else {
-			candidatePlacement := placement
-			candidatePlacementOK := placementOK
-			if candidate.Handle != original.Handle && !candidatePlacementOK {
-				candidatePlacement, candidatePlacementOK = screenGetWindowPlacement(candidate.Handle)
-			}
-			if !repairAttempted[candidate.Handle] {
-				if repairErr := screenRepairRestoredBounds(candidate.Handle, candidatePlacement, candidatePlacementOK); repairErr != nil {
-					lastErr = repairErr
-				} else {
-					repairAttempted[candidate.Handle] = true
-				}
-			}
-
-			rect, rectErr := screenWindowRect(candidate.Handle)
-			if rectErr != nil {
-				lastErr = rectErr
-				stableSamples = 0
-			} else if screenVisionBoundsNeedRepair(rect, original.Bounds) {
-				lastErr = fmt.Errorf("restored window still has abnormal bounds %dx%d", rect.Width, rect.Height)
-				stableSamples = 0
-			} else {
-				candidate.Bounds = rect
-				candidate.Minimized = false
-				candidate.Hidden = false
-				if candidate.Handle == lastHandle && screenRectsStable(lastBounds, rect) {
-					stableSamples++
-				} else {
-					lastHandle = candidate.Handle
-					lastBounds = rect
-					stableSamples = 1
-				}
-				if stableSamples >= screenStableSamples {
-					screenFlushDWM()
-					time.Sleep(screenRestorePoll)
-					finalRect, finalErr := screenWindowRect(candidate.Handle)
-					if finalErr == nil && screenRectsStable(rect, finalRect) {
-						candidate.Bounds = finalRect
-						return candidate, nil
-					}
-					stableSamples = 0
-					if finalErr != nil {
-						lastErr = finalErr
-					}
-				}
-			}
-		}
-
-		if time.Now().After(deadline) {
-			if lastErr != nil {
-				return screenWindow{}, lastErr
-			}
-			return screenWindow{}, errors.New("restored application window did not become stable in time")
-		}
-		time.Sleep(screenRebindPoll)
-	}
-}
-
 func platformCaptureScreenWindowForVision(window screenWindow) (screenCaptureFrame, error) {
 	if window.Handle == 0 {
 		return screenCaptureFrame{}, errors.New("window handle is invalid")
@@ -423,9 +353,32 @@ func platformCaptureScreenWindowForVision(window screenWindow) (screenCaptureFra
 	return captureDormantScreenWindow(window, visible == 0, minimized != 0)
 }
 
+// captureDormantScreenWindow first tries the exact HWND without changing any
+// window state. Only if PrintWindow/window-DC/WGC all fail do we resume the
+// application. The resume is staged into an off-screen WINDOWPLACEMENT before
+// SW_SHOWNOACTIVATE is issued, then SWP_NOACTIVATE|SWP_NOZORDER pins the window
+// outside the virtual desktop. Nothing is intentionally restored on-screen.
 func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized bool) (frame screenCaptureFrame, err error) {
 	logicalWindow := window
 	hwnd := window.Handle
+
+	// State-neutral capture is the preferred path for minimized/tray windows.
+	// This is especially important for GPU/Chromium/WPF windows because WGC can
+	// often read the compositor surface even while PrintWindow is blank.
+	neutralFrame, neutralErr := captureScreenRect(logicalWindow.Bounds, hwnd)
+	if neutralErr == nil && neutralFrame.Image != nil && !screenImageLikelyBlank(neutralFrame.Image) {
+		neutralFrame.Bounds = screenLogicalCaptureBounds(logicalWindow.Bounds, neutralFrame.Image.Bounds().Dx(), neutralFrame.Image.Bounds().Dy())
+		if wasHidden {
+			neutralFrame.Method = "hidden-background/" + neutralFrame.Method
+		} else {
+			neutralFrame.Method = "minimized-background/" + neutralFrame.Method
+		}
+		return neutralFrame, nil
+	}
+	if neutralErr == nil {
+		neutralErr = errors.New("state-neutral dormant capture returned a blank frame")
+	}
+
 	foreground, _, _ := procGetForegroundWindow.Call()
 	originalAbove, _, _ := procGetWindow.Call(hwnd, gwHwndPrev)
 	wasTopmost := screenWindowTopmost(hwnd)
@@ -435,16 +388,28 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 		originalAboveSameBand = valid != 0 && screenWindowTopmost(originalAbove) == wasTopmost
 	}
 	placement, placementOK := screenGetWindowPlacement(hwnd)
-	restoreHandle := hwnd
+	if !placementOK {
+		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); refusing visible fallback because WINDOWPLACEMENT could not be snapshotted", neutralErr)
+	}
 
+	virtualDesktop, desktopErr := screenVirtualDesktopRect()
+	if desktopErr != nil {
+		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); cannot calculate safe off-screen restore area: %w", neutralErr, desktopErr)
+	}
+	offscreen := screenOffscreenCaptureRect(logicalWindow.Bounds, virtualDesktop)
+	if screenRectsIntersect(offscreen, virtualDesktop) {
+		return screenCaptureFrame{}, errors.New("refusing dormant capture because the calculated restore rectangle intersects the visible virtual desktop")
+	}
+
+	restoreHandle := hwnd
 	touched := false
 	defer func() {
 		var restoreErrors []string
 		if touched && restoreHandle != 0 {
 			valid, _, _ := procIsWindow.Call(restoreHandle)
 			if valid != 0 {
-				if restoreErr := screenRestoreDormantWindow(restoreHandle, placement, placementOK, wasHidden, wasMinimized); restoreErr != nil {
-					restoreErrors = append(restoreErrors, fmt.Sprintf("restore dormant window state: %v", restoreErr))
+				if restoreErr := screenRestoreDormantWindow(restoreHandle, placement, true, wasHidden, wasMinimized); restoreErr != nil {
+					restoreErrors = append(restoreErrors, fmt.Sprintf("restore WINDOWPLACEMENT/state: %v", restoreErr))
 				}
 			}
 		}
@@ -452,7 +417,7 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 			valid, _, _ := procIsWindow.Call(restoreHandle)
 			if valid != 0 {
 				if restoreErr := restoreBackgroundWindowAfterReveal(restoreHandle, originalAbove, foreground, wasTopmost, originalAboveSameBand); restoreErr != nil {
-					restoreErrors = append(restoreErrors, fmt.Sprintf("restore selected window placement: %v", restoreErr))
+					restoreErrors = append(restoreErrors, fmt.Sprintf("restore Z-order/topmost/focus: %v", restoreErr))
 				}
 			}
 		}
@@ -467,131 +432,238 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 		}
 	}()
 
+	// Stage the normal placement off-screen while the target is still hidden or
+	// minimized. Only after the staged placement is committed do we show it with
+	// SW_SHOWNOACTIVATE. This prevents the normal on-screen rectangle from being
+	// used even transiently by our restore path.
+	if stageErr := screenStageDormantWindowOffscreen(hwnd, placement, offscreen, wasHidden, wasMinimized); stageErr != nil {
+		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); stage safe off-screen restore: %w", neutralErr, stageErr)
+	}
 	touched = true
-	screenRequestDormantWindowRestore(hwnd, foreground, swShowNoActivate)
-	restored, restoreErr := screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, screenRebindInitialTimeout, false)
-	if restoreErr != nil {
-		valid, _, _ := procIsWindow.Call(hwnd)
-		if valid != 0 {
-			screenRequestDormantWindowRestore(hwnd, foreground, swRestore)
-		}
-		restored, restoreErr = screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, screenRebindFallbackTimeout, false)
-	}
-	if restoreErr != nil {
-		// Final compatibility path: if the application never creates a replacement
-		// HWND, allow the original HWND to be repaired from rcNormalPosition. The
-		// capture still remains locked to the original PID and never substitutes
-		// foreground pixels.
-		restored, restoreErr = screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, 320*time.Millisecond, true)
-	}
-	if restoreErr != nil {
-		return screenCaptureFrame{}, fmt.Errorf("temporarily restore hidden/minimized window: %w", restoreErr)
-	}
+	procShowWindowAsync.Call(hwnd, swShowNoActivate)
+	_ = screenMoveWindowOffscreen(hwnd, offscreen)
+	screenRestoreForeground(foreground)
 
+	restored, restoreErr := screenWaitForOffscreenWindowStable(logicalWindow, offscreen, virtualDesktop, screenOffscreenReadyTimeout)
+	if restoreErr != nil {
+		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); off-screen restore could not stabilize: %w", neutralErr, restoreErr)
+	}
 	restoreHandle = restored.Handle
-	window = restored
 	screenRestoreForeground(foreground)
 	screenFlushDWM()
 	time.Sleep(screenPostStableRenderWait)
-	frame, err = platformCaptureScreenWindow(window)
+
+	frame, err = captureScreenRect(restored.Bounds, restored.Handle)
 	if err != nil || screenImageLikelyBlank(frame.Image) {
-		// A compositor/GPU surface can settle slightly after the outer window
-		// geometry. Re-enumerate again in case the app replaced the HWND during
-		// rendering, require stable geometry, then retry once.
-		refreshed, settleErr := screenWaitForRestoredWindowStable(logicalWindow, placement, placementOK, 520*time.Millisecond, true)
+		refreshed, settleErr := screenWaitForOffscreenWindowStable(logicalWindow, offscreen, virtualDesktop, 620*time.Millisecond)
 		if settleErr == nil {
 			restoreHandle = refreshed.Handle
-			window = refreshed
+			restored = refreshed
 		}
 		screenRestoreForeground(foreground)
 		screenFlushDWM()
 		time.Sleep(screenRetryRenderWait)
-		frame, err = platformCaptureScreenWindow(window)
+		frame, err = captureScreenRect(restored.Bounds, restored.Handle)
 	}
 	if err != nil {
-		return screenCaptureFrame{}, fmt.Errorf("capture temporarily restored hidden/minimized window: %w", err)
+		return screenCaptureFrame{}, fmt.Errorf("capture off-screen restored hidden/minimized window: %w", err)
 	}
-	if screenImageLikelyBlank(frame.Image) {
-		return screenCaptureFrame{}, errors.New("hidden/minimized window resumed and stabilized but still returned a blank frame; the application may destroy its main surface or suspend protected/GPU rendering while in the tray")
+	if frame.Image == nil || screenImageLikelyBlank(frame.Image) {
+		return screenCaptureFrame{}, errors.New("hidden/minimized window was resumed off-screen but still returned a blank frame; the application may destroy its main surface or suspend protected/GPU rendering")
 	}
+
+	frame.Bounds = screenLogicalCaptureBounds(logicalWindow.Bounds, frame.Image.Bounds().Dx(), frame.Image.Bounds().Dy())
 	if wasHidden {
-		frame.Method = "hidden-tray-rebind/" + frame.Method
+		frame.Method = "hidden-offscreen-rebind/" + frame.Method
 	} else {
-		frame.Method = "minimized-rebind/" + frame.Method
+		frame.Method = "minimized-offscreen-rebind/" + frame.Method
 	}
 	return frame, nil
 }
 
-func screenRequestDormantWindowRestore(hwnd, foreground uintptr, command uint32) {
+func screenStageDormantWindowOffscreen(hwnd uintptr, original screenWindowPlacement, offscreen screenRect, wasHidden, wasMinimized bool) error {
 	if hwnd == 0 {
-		return
+		return errors.New("window handle is invalid")
 	}
-	procShowWindowAsync.Call(hwnd, uintptr(command))
-	screenRestoreForeground(foreground)
+	if err := validateScreenRect(offscreen); err != nil {
+		return err
+	}
+	staged := original
+	staged.Length = uint32(unsafe.Sizeof(screenWindowPlacement{}))
+	staged.NormalPosition = winRect{
+		Left:   int32(offscreen.X),
+		Top:    int32(offscreen.Y),
+		Right:  int32(offscreen.X + offscreen.Width),
+		Bottom: int32(offscreen.Y + offscreen.Height),
+	}
+	// Keep the target dormant while changing rcNormalPosition. The subsequent
+	// SW_SHOWNOACTIVATE is the first command allowed to make it non-minimized.
+	if wasHidden {
+		staged.ShowCmd = swHide
+	} else if wasMinimized {
+		staged.ShowCmd = swShowMinNoActive
+	}
+	ok, _, callErr := procSetWindowPlacement.Call(hwnd, uintptr(unsafe.Pointer(&staged)))
+	if ok == 0 {
+		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+			return callErr
+		}
+		return errors.New("SetWindowPlacement failed while staging off-screen normal position")
+	}
+	return nil
 }
 
-func screenRepairRestoredBounds(hwnd uintptr, placement screenWindowPlacement, placementOK bool) error {
-	normal, normalOK := screenPlacementNormalBounds(placement, placementOK)
-	if !normalOK {
-		return nil
+func screenMoveWindowOffscreen(hwnd uintptr, offscreen screenRect) error {
+	if hwnd == 0 {
+		return errors.New("window handle is invalid")
 	}
-	current, currentErr := screenWindowRect(hwnd)
-	if currentErr == nil && !screenVisionBoundsNeedRepair(current, normal) {
-		return nil
-	}
-
-	// WINDOWPLACEMENT coordinates are workspace coordinates for normal top-level
-	// app windows. Restore them with SetWindowPlacement itself; Microsoft warns
-	// against feeding rcNormalPosition directly into SetWindowPos.
-	if placementOK {
-		repairedPlacement := placement
-		repairedPlacement.Length = uint32(unsafe.Sizeof(screenWindowPlacement{}))
-		repairedPlacement.ShowCmd = swShowNoActivate
-		ok, _, callErr := procSetWindowPlacement.Call(hwnd, uintptr(unsafe.Pointer(&repairedPlacement)))
-		if ok == 0 {
-			if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
-				return callErr
-			}
-			return errors.New("SetWindowPlacement failed while restoring normal placement")
-		}
-		screenFlushDWM()
-		time.Sleep(screenRestorePoll)
-		current, currentErr = screenWindowRect(hwnd)
-		if currentErr == nil && !screenVisionBoundsNeedRepair(current, normal) {
-			return nil
-		}
-	}
-
-	// If an application keeps an abnormal icon-sized surface even after its
-	// placement is restored, repair only width/height. SWP_NOMOVE deliberately
-	// avoids interpreting workspace coordinates as screen coordinates.
-	flags := uintptr(swpNoMove | screenSWPNoZOrder | swpNoActivate | swpNoOwnerZOrder | swpNoSendChanging)
 	ok, _, callErr := procSetWindowPos.Call(
 		hwnd,
 		0,
-		0,
-		0,
-		uintptr(normal.Width),
-		uintptr(normal.Height),
-		flags,
+		uintptr(int32(offscreen.X)),
+		uintptr(int32(offscreen.Y)),
+		uintptr(offscreen.Width),
+		uintptr(offscreen.Height),
+		uintptr(screenOffscreenSetWindowPosFlags),
 	)
 	if ok == 0 {
 		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
 			return callErr
 		}
-		return errors.New("SetWindowPos failed while restoring normal size")
+		return errors.New("SetWindowPos failed while pinning restored window off-screen")
 	}
-	screenFlushDWM()
 	return nil
 }
 
+func screenWaitForOffscreenWindowStable(original screenWindow, offscreen, virtualDesktop screenRect, timeout time.Duration) (screenWindow, error) {
+	deadline := time.Now().Add(timeout)
+	var lastHandle uintptr
+	var lastBounds screenRect
+	stableSamples := 0
+	var lastErr error
+
+	for {
+		candidate, err := screenEnumerateRestoredWindowCandidate(original, false)
+		if err != nil {
+			lastErr = err
+			stableSamples = 0
+		} else {
+			// An application can replace its tray/minimized HWND while waking up.
+			// Pin every accepted replacement off-screen immediately, without
+			// activation and without changing its Z-order.
+			if moveErr := screenMoveWindowOffscreen(candidate.Handle, offscreen); moveErr != nil {
+				lastErr = moveErr
+				stableSamples = 0
+			} else {
+				screenFlushDWM()
+				rect, rectErr := screenWindowRect(candidate.Handle)
+				if rectErr != nil {
+					lastErr = rectErr
+					stableSamples = 0
+				} else if screenRectsIntersect(rect, virtualDesktop) {
+					lastErr = fmt.Errorf("restored window escaped off-screen guard at %+v", rect)
+					stableSamples = 0
+				} else {
+					candidate.Bounds = rect
+					candidate.Minimized = false
+					candidate.Hidden = false
+					if candidate.Handle == lastHandle && screenRectsStable(lastBounds, rect) {
+						stableSamples++
+					} else {
+						lastHandle = candidate.Handle
+						lastBounds = rect
+						stableSamples = 1
+					}
+					if stableSamples >= screenStableSamples {
+						return candidate, nil
+					}
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return screenWindow{}, lastErr
+			}
+			return screenWindow{}, errors.New("off-screen application window did not become stable in time")
+		}
+		time.Sleep(screenRebindPoll)
+	}
+}
+
+func screenVirtualDesktopRect() (screenRect, error) {
+	x, _, _ := procGetSystemMetrics.Call(smXVirtualScreen)
+	y, _, _ := procGetSystemMetrics.Call(smYVirtualScreen)
+	width, _, _ := procGetSystemMetrics.Call(smCXVirtualScreen)
+	height, _, _ := procGetSystemMetrics.Call(smCYVirtualScreen)
+	rect := screenRect{X: int(int32(x)), Y: int(int32(y)), Width: int(int32(width)), Height: int(int32(height))}
+	if err := validateScreenRect(rect); err != nil {
+		return screenRect{}, err
+	}
+	return rect, nil
+}
+
+func screenOffscreenCaptureRect(logical, virtualDesktop screenRect) screenRect {
+	width := logical.Width
+	height := logical.Height
+	if width <= 0 {
+		width = 800
+	}
+	if height <= 0 {
+		height = 600
+	}
+	return screenRect{
+		X:      virtualDesktop.X - width - screenOffscreenMargin,
+		Y:      virtualDesktop.Y - height - screenOffscreenMargin,
+		Width:  width,
+		Height: height,
+	}
+}
+
+func screenRectsIntersect(left, right screenRect) bool {
+	return left.X < right.X+right.Width &&
+		left.X+left.Width > right.X &&
+		left.Y < right.Y+right.Height &&
+		left.Y+left.Height > right.Y
+}
+
+func screenLogicalCaptureBounds(logical screenRect, width, height int) screenRect {
+	result := logical
+	if width > 0 {
+		result.Width = width
+	}
+	if height > 0 {
+		result.Height = height
+	}
+	return result
+}
+
+// screenRestoreDormantWindow restores the original WINDOWPLACEMENT without ever
+// first showing the normal rectangle. Hidden targets are hidden before their
+// original placement is reapplied; minimized targets are minimized while still
+// off-screen. This keeps cleanup invisible as well as capture setup.
 func screenRestoreDormantWindow(hwnd uintptr, placement screenWindowPlacement, placementOK, wasHidden, wasMinimized bool) error {
 	var restoreErrors []string
+	if wasHidden {
+		procShowWindowAsync.Call(hwnd, swHide)
+		_ = screenWaitForVisibilityState(hwnd, false, 160*time.Millisecond)
+	} else if wasMinimized {
+		procShowWindowAsync.Call(hwnd, swShowMinNoActive)
+		_ = screenWaitForIconicState(hwnd, true, 160*time.Millisecond)
+	}
+
 	if placementOK {
-		placement.Length = uint32(unsafe.Sizeof(screenWindowPlacement{}))
-		ok, _, callErr := procSetWindowPlacement.Call(hwnd, uintptr(unsafe.Pointer(&placement)))
-		if ok == 0 && callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
-			restoreErrors = append(restoreErrors, fmt.Sprintf("SetWindowPlacement: %v", callErr))
+		restored := placement
+		restored.Length = uint32(unsafe.Sizeof(screenWindowPlacement{}))
+		if wasHidden {
+			restored.ShowCmd = swHide
+		}
+		ok, _, callErr := procSetWindowPlacement.Call(hwnd, uintptr(unsafe.Pointer(&restored)))
+		if ok == 0 {
+			if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+				restoreErrors = append(restoreErrors, fmt.Sprintf("SetWindowPlacement: %v", callErr))
+			} else {
+				restoreErrors = append(restoreErrors, "SetWindowPlacement failed")
+			}
 		}
 	}
 	if wasHidden {
@@ -622,25 +694,6 @@ func screenReturnWindowToMinimized(hwnd uintptr) error {
 		return nil
 	}
 	return errors.New("Windows did not return the target to minimized state in time")
-}
-
-func screenWaitForWindowReady(hwnd uintptr, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for {
-		valid, _, _ := procIsWindow.Call(hwnd)
-		if valid == 0 {
-			return false
-		}
-		visible, _, _ := procIsWindowVisible.Call(hwnd)
-		iconic, _, _ := procIsIconic.Call(hwnd)
-		if visible != 0 && iconic == 0 {
-			return true
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(screenRestorePoll)
-	}
 }
 
 func screenWaitForVisibilityState(hwnd uintptr, wantVisible bool, timeout time.Duration) bool {
