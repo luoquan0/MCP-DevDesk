@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-func TestScreenBackgroundRevealRequired(t *testing.T) {
-	if screenBackgroundRevealRequired(0, 0x20) {
-		t.Fatal("zero HWND must never request a temporary reveal")
-	}
-	if screenBackgroundRevealRequired(0x10, 0) {
-		t.Fatal("missing foreground window must not request a temporary reveal")
-	}
-	if screenBackgroundRevealRequired(0x10, 0x10) {
-		t.Fatal("foreground selected window does not need a temporary reveal")
-	}
-	if !screenBackgroundRevealRequired(0x10, 0x20) {
-		t.Fatal("background selected window should use the target-safe temporary reveal path")
-	}
-}
-
 func TestScreenWindowBandInsertAfter(t *testing.T) {
 	if screenWindowBandInsertAfter(true) != ^uintptr(0) {
 		t.Fatal("topmost restore band must use HWND_TOPMOST")
@@ -45,7 +30,39 @@ func TestScreenImageLikelyBlank(t *testing.T) {
 		visible.Pix[offset+3] = 0xff
 	}
 	if screenImageLikelyBlank(visible) {
-		t.Fatal("normal visible capture must not be treated as blank")
+		t.Fatal("normal visible capture must not be treated as black")
+	}
+}
+
+func TestScreenImageLikelyPrintWindowArtifact(t *testing.T) {
+	white := image.NewNRGBA(image.Rect(0, 0, 320, 200))
+	for offset := 0; offset < len(white.Pix); offset += 4 {
+		white.Pix[offset] = 255
+		white.Pix[offset+1] = 255
+		white.Pix[offset+2] = 255
+		white.Pix[offset+3] = 0xff
+	}
+	if !screenImageLikelyPrintWindowArtifact(white) {
+		t.Fatal("solid-white PrintWindow output should fall through to Windows Graphics Capture")
+	}
+
+	textured := image.NewNRGBA(image.Rect(0, 0, 320, 200))
+	for y := 0; y < 200; y++ {
+		for x := 0; x < 320; x++ {
+			value := uint8((x*3 + y*5) % 180 + 32)
+			textured.SetNRGBA(x, y, colorNRGBA(value, uint8(255-value/2), uint8(64+(x+y)%128), 0xff))
+		}
+	}
+	if screenImageLikelyPrintWindowArtifact(textured) {
+		t.Fatal("textured application pixels must not be classified as an empty PrintWindow surface")
+	}
+}
+
+func TestScreenWGCSizeArgPacksWidthLowHeightHigh(t *testing.T) {
+	got := uint64(screenWGCSizeArg(2560, 1440))
+	want := uint64(2560) | uint64(1440)<<32
+	if got != want {
+		t.Fatalf("WGC SizeInt32 ABI argument = 0x%X, want 0x%X", got, want)
 	}
 }
 
@@ -62,4 +79,12 @@ func TestScreenWindowStateSelectable(t *testing.T) {
 	if screenWindowStateSelectable(1, 1, 1) {
 		t.Fatal("minimized window must not be selectable")
 	}
+}
+
+type testNRGBA = struct {
+	R, G, B, A uint8
+}
+
+func colorNRGBA(r, g, b, a uint8) (c image.NRGBAColor) {
+	return image.NRGBAColor{R: r, G: g, B: b, A: a}
 }
