@@ -19,7 +19,7 @@ Screen Vision 是 MCP DevDesk 的 Windows 屏幕视觉实验功能。它让已�
 
 三种模式互斥，并且语义不能互相回退：
 
-- `指定窗口`：用户在 DevDesk 中手动选择一个目标窗口，例如 VMware、123 云盘或独立插件窗口。之后 AI 始终只能读取这个 HWND + PID 对应的窗口；即使浏览器一直在最前面、目标位于浏览器背后或已经最小化，也应读取指定窗口自身，而不是读取当前前台浏览器。最小化目标会在截图时后台临时恢复，完成后重新最小化。目标关闭或身份变化后不会自动改抓别的窗口，必须重新选择。
+- `指定窗口`：用户在 DevDesk 中手动选择一个目标窗口，例如 VMware、123 云盘或独立插件窗口。之后 AI 始终只能读取这个 HWND + PID 对应的窗口；即使浏览器一直在最前面、目标位于浏览器背后或已经最小化，也应读取指定窗口自身，而不是读取当前前台浏览器。最小化/隐藏目标会先尝试完全不改变窗口状态的后台捕获；只有这些路径全部失败时，才允许把目标无焦点恢复到虚拟桌面以外的屏幕外区域完成一次截图，随后恢复原状态。目标关闭或身份变化后不会自动改抓别的窗口，必须重新选择。
 - `当前窗口`：每次 MCP 调用时读取当时的 Windows 前台窗口，也就是用户此刻肉眼正在看的内容。前台从 Edge 切到 DevDesk，AI 读取目标也随之变化。
 - `整个桌面`：属于整机窗口浏览模式，而不只是“一张全屏截图”。AI 可以读取 Windows 虚拟桌面总览，也可以自行列出当前可读取的顶层应用窗口，并按需选择其中任意一个进行查看。因此浏览器在前台时，AI 仍可主动选择背后的 VMware、编辑器或其他应用单独读取。
 
@@ -45,16 +45,32 @@ Screen Vision 是 MCP DevDesk 的 Windows 屏幕视觉实验功能。它让已�
 
 如果目标本身已经在前台，可以直接使用目标窗口自身的捕获路径；如果目标位于其他窗口后面，则不能简单截取它在桌面上的矩形区域，因为那样会得到覆盖在它上面的 Edge/Chrome 等前台应用。
 
-后台目标采用“锁定 HWND/PID + 无焦点临时合成”的方式：
+后台窗口现在采用“**无状态后台捕获优先，屏幕外恢复兜底**”的固定顺序。普通后台窗口不会再通过提升 Z-order、置顶或在当前可见桌面临时显露目标来截图：
 
-1. 保存用户当前前台窗口和目标原有 Z-order / topmost 状态。
-2. 使用 `SetWindowPos(..., SWP_NOACTIVATE)` 临时把锁定的目标送到可合成位置，但不把键盘焦点切给它。
-3. `DwmFlush` 后只截取锁定目标的矩形像素。
-4. 立即恢复目标原来的 Z-order / topmost 状态，并保持或尽力恢复用户原先的前台窗口。
-5. 如果该路径不可用，再尝试 `PrintWindow(PW_RENDERFULLCONTENT)` → 经典 `PrintWindow` → 目标窗口自己的 `GetWindowDC + BitBlt`。
-6. 所有目标安全路径都失败时直接报错，绝不拿前台应用的画面冒充指定窗口。
+1. 对锁定的 HWND 先执行 `DwmFlush`，随后按顺序尝试 `PrintWindow(PW_RENDERFULLCONTENT)`、经典 `PrintWindow` 和目标自己的 `GetWindowDC + BitBlt`。这些路径都不移动、不显示、不激活目标窗口。
+2. 每次 `PrintWindow` 前都会清空目标位图，并检测近黑、近白和几乎纯色的可疑空白结果。Chromium、WebView2、WPF、VMware 等 GPU/合成器窗口即使 `PrintWindow` 返回成功，只要像素被判断为空白/无效，就不会把该结果当作真实画面。
+3. 上述路径无效时自动切换到 `Windows.Graphics.Capture`（WGC）。WGC 使用 `IGraphicsCaptureItemInterop.CreateForWindow` + `Direct3D11CaptureFramePool.CreateFreeThreaded` 获取目标合成器表面，再通过 D3D11 staging texture 映射到 CPU 内存。它不会调用 `ShowWindow`、`SetForegroundWindow` 或改变目标 Z-order。
+4. WGC 会尽力关闭光标捕获和系统捕获边框；Windows/系统策略如果不允许无边框捕获，不会因此放宽权限或改用可见恢复路径。
+5. 只有当前真实前台窗口允许在所有 HWND/WGC 路径失败后使用桌面 `BitBlt`；后台目标绝不会拿前台应用覆盖后的桌面像素冒充自身内容。
+6. 普通后台窗口的这些无状态路径全部失败时直接报错，不再执行旧的“临时置顶/可见 reveal”逻辑。
 
-这个设计的目标是让用户可以一直在浏览器中和 AI 对话，同时 AI 读取浏览器背后的指定 VMware/插件窗口。`SWP_NOACTIVATE` 不主动抢键盘焦点；个别 Windows 应用或显卡组合在临时合成时仍可能出现极短的层级刷新/闪动，需要测试版实机验证。
+因此，Edge/Chrome 可以一直保持在用户面前；读取其后方的普通后台 VMware、编辑器或插件窗口时，MCP DevDesk 不会主动把目标抬到前台、改变 Z-order 或让目标窗口在当前桌面跳动。
+
+### 最小化 / 隐藏到托盘的窗口
+
+最小化和仍保留可恢复主 HWND 的托盘窗口也先走完全相同的无状态路径：`PrintWindow` / window DC → WGC。只要能直接拿到有效像素，就保持原最小化/隐藏状态完成截图，不执行任何恢复动作。
+
+只有无状态后台捕获全部失败时，才进入一次性的屏幕外恢复兜底。这个路径明确禁止在当前虚拟桌面的可见范围内恢复窗口：
+
+1. 先快照原 `WINDOWPLACEMENT`、原前台 HWND、原 Z-order 相邻窗口、topmost 状态以及原隐藏/最小化状态；无法可靠取得 `WINDOWPLACEMENT` 时直接失败，不冒险恢复。
+2. 根据整个 Windows virtual desktop 的边界计算一个完全不相交的屏幕外矩形。
+3. 在目标仍处于隐藏/最小化状态时，先把 `WINDOWPLACEMENT.rcNormalPosition` 暂存到该屏幕外矩形。
+4. 然后才调用 `ShowWindowAsync(SW_SHOWNOACTIVATE)`；紧接着使用 `SetWindowPos(..., SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING)` 把目标固定在屏幕外。实现不会主动激活目标，也不会把目标提升到 topmost。
+5. 如果应用在恢复渲染时替换主 HWND，只接受原 PID + 进程名身份一致且能唯一判断的主窗口；候选窗口一旦被接受立即继续固定在同一个屏幕外矩形。出现歧义时直接失败，不猜测其他窗口。
+6. 目标在屏幕外连续多次保持稳定尺寸后，仍使用 `PrintWindow` / WGC 对目标自身截图，不读取当前桌面上的其他应用像素。
+7. 截图结束后，先在屏幕外把目标重新隐藏或最小化，再恢复原 `WINDOWPLACEMENT`，随后恢复原 topmost/Z-order，并检查和尽力恢复原前台焦点。清理流程同样不会故意把目标正常窗口先放回可见桌面再隐藏。
+
+这个兜底的目标是把“应用必须恢复渲染才能截图”的副作用限制在虚拟桌面之外。MCP DevDesk 自己不会主动抢焦点或制造可见窗口跳动；如果第三方应用在收到恢复消息时自行创建/激活新的窗口，仍属于应用自身行为，因此测试版需要把任何可见闪动、焦点变化或新窗口跳出都作为缺陷反馈，而不是静默接受。
 
 ### 当前窗口
 
@@ -64,22 +80,23 @@ Screen Vision 是 MCP DevDesk 的 Windows 屏幕视觉实验功能。它让已�
 
 桌面总览使用虚拟桌面 `BitBlt`，代表用户当前肉眼看到的多显示器合成画面。与此同时，“整个桌面”模式还允许 AI 使用 `screen_list_windows` + `screen_capture_window` 自己查看其他已打开的可读取应用，因此“整个桌面”不是只能看到最前面的窗口。
 
-窗口枚举会保留仍有顶层窗体的已最小化应用，并额外尝试识别“隐藏到系统托盘但仍保留主 HWND”的应用；隐藏候选会排除有 Owner 的辅助窗体、`WS_EX_TOOLWINDOW` 和尺寸过小的内部窗口，不会把纯后台服务或无顶层窗体进程伪装成可截图目标。对于 Windows 最小化后常见的 158×26 一类图标矩形，DevDesk 会优先读取 `GetWindowPlacement` 的正常窗口尺寸。读取最小化/托盘目标时，会使用 `ShowWindowAsync(SW_SHOWNOACTIVATE)` 尝试无焦点恢复；恢复动作之后会重新 `EnumWindows`，按原 PID + 进程名重新绑定真正的主 HWND，并再次应用 Owner、`WS_EX_TOOLWINDOW`、DWM Cloaked 和正常尺寸筛选。如果出现多个不能唯一判断的主窗口会直接失败，不会猜测目标。找到唯一窗口后，DevDesk 会轮询窗口矩形，要求位置和尺寸连续多次稳定，并在 `DwmFlush` 后再次确认稳定才截图，而不是只依赖固定延迟；最后恢复原来的最小化/隐藏状态和用户前台窗口。整个过程失败时直接报错，绝不改抓当前 Edge/Chrome。若目标应用进入托盘时直接销毁主 HWND，或彻底停止 GPU/DRM 渲染，Windows 本身就没有可恢复画面，此时仍会明确失败。
+窗口枚举会保留仍有顶层窗体的已最小化应用，并额外尝试识别“隐藏到系统托盘但仍保留主 HWND”的应用；隐藏候选会排除有 Owner 的辅助窗体、`WS_EX_TOOLWINDOW` 和尺寸过小的内部窗口，不会把纯后台服务或无顶层窗体进程伪装成可截图目标。对于 Windows 最小化后常见的 158×26 一类图标矩形，DevDesk 会优先读取 `GetWindowPlacement` 的正常窗口尺寸。读取最小化/托盘目标时优先完全不恢复窗口；只有 PrintWindow/window DC/WGC 都不可用时才执行上述屏幕外恢复，并在屏幕外重新绑定、稳定、截图和清理。整个过程失败时直接报错，绝不改抓当前 Edge/Chrome。
 
-Windows 自身的保护边界仍然生效。UAC 安全桌面、DRM/受保护内容、部分硬件加速窗口或其他 Windows Desktop 上的窗口可能返回黑屏、旧画面或无法捕获。这些情况不会通过降低 MCP 权限边界绕过。
+Windows 自身的保护边界仍然生效。UAC 安全桌面、DRM/受保护内容、被系统禁止的 WGC 目标、已经销毁主 HWND 的托盘应用或彻底停止 GPU 渲染的进程仍可能返回黑屏、旧画面或无法捕获。这些情况不会通过降低 MCP 权限边界或把窗口强行显示到当前桌面来绕过。
 
 ## 测试步骤
 
 1. 使用包含 Screen Vision 的测试版，并确保需要连接的实例使用 **Go MCP Core**。
 2. 打开“设置 → 权限与安全”，选择“信任模式”或“危险模式”。
 3. 开启“允许 AI 按需读取窗口画面”，确认隐私提示并保存；若存在正在运行的 Go MCP 实例，DevDesk 会让它们重新加载统一 Screen Vision 策略。
-4. 测试“指定窗口”：先锁定 VMware/123 云盘等目标，再分别测试“被 Edge/Chrome 覆盖”和“最小化到任务栏”两种状态。客户端调用 `screen_capture_window` 时必须返回锁定目标自身内容或明确错误，绝不能返回前台浏览器画面；最小化测试完成后目标应自动回到最小化状态，浏览器焦点应尽量保持不变。
-5. 若有多个 MCP 实例，刻意让 ChatGPT 连接一个附加实例，再重复指定窗口测试，确认其权限与主设置完全一致。
-6. 测试“整个桌面”：让客户端先 `screen_list_windows`，随后自行选择 VMware、浏览器、DevDesk 等不同窗口分别 `screen_capture_window`；同时 `screen_capture_desktop` 仍应返回用户当前肉眼看到的整块虚拟桌面。
-7. 测试“当前窗口”：在 Edge 与其他程序之间来回切换，`screen_capture_active_window` 应始终跟随用户当前前台内容。
-8. 测试完成后关闭 Screen Vision；视觉工具应从所有 Go MCP 实例的工具列表消失。
+4. 测试“指定窗口”：先锁定 VMware/123 云盘等目标，再分别测试“被 Edge/Chrome 覆盖”“最小化到任务栏”“隐藏到托盘”三种状态。客户端调用 `screen_capture_window` 时必须返回锁定目标自身内容或明确错误，绝不能返回前台浏览器画面；整个截图期间浏览器应保持原焦点，目标不得在当前可见桌面出现、闪烁、置顶或跳动，完成后最小化/隐藏状态和原窗口位置应保持不变。
+5. 对 Chromium/WebView2/WPF/VMware 等 GPU 应用重点验证：当 `PrintWindow` 返回黑/白/纯色空白时，`captureMethod` 应自动转到 `windows-graphics-capture`（或屏幕外恢复后的 WGC），而不是先把应用显示到当前桌面。
+6. 若有多个 MCP 实例，刻意让 ChatGPT 连接一个附加实例，再重复指定窗口测试，确认其权限与主设置完全一致。
+7. 测试“整个桌面”：让客户端先 `screen_list_windows`，随后自行选择 VMware、浏览器、DevDesk 等不同窗口分别 `screen_capture_window`；同时 `screen_capture_desktop` 仍应返回用户当前肉眼看到的整块虚拟桌面。
+8. 测试“当前窗口”：在 Edge 与其他程序之间来回切换，`screen_capture_active_window` 应始终跟随用户当前前台内容。
+9. 测试完成后关闭 Screen Vision；视觉工具应从所有 Go MCP 实例的工具列表消失。
 
-建议重点反馈：指定后台窗口能否在 Edge/Chrome 覆盖时仍正确读取、最小化或托盘目标能否自动恢复完整主窗口并回到原状态、是否还出现 158×26 一类小辅助窗体、是否出现闪动或抢焦点、整个桌面模式能否自主查看正常/后台/最小化/托盘软件窗口、多实例连接下权限是否一致、VMware/硬件加速窗口是否黑屏、DPI/多显示器下截图范围是否正确、截图延迟、开启/关闭后的空闲资源占用，以及所使用的 Windows 版本和目标应用。
+建议重点反馈：指定后台窗口能否在 Edge/Chrome 覆盖时仍正确读取；最小化/托盘目标是否优先无状态捕获；进入兜底时是否始终只在虚拟桌面外恢复；是否发生任何闪动、抢焦点、窗口跳动、任务栏状态变化或 Z-order 变化；Chromium/WebView2/WPF/VMware 是否正确自动走 WGC；是否还出现 158×26 一类小辅助窗体；多实例连接下权限是否一致；DPI/多显示器下屏幕外矩形与截图尺寸是否正确；截图延迟、开启/关闭后的空闲资源占用，以及所使用的 Windows 版本和目标应用。
 
 ## 默认 AI 桌面视觉读取策略
 
@@ -89,7 +106,7 @@ Windows 自身的保护边界仍然生效。UAC 安全桌面、DRM/受保护内�
 - `desktop` 模式下，已命名/后台应用优先 `screen_list_windows` 定位目标，再用 `screen_capture_window` 读取；“当前窗口显示什么”优先 `screen_capture_active_window`。
 - `window` 模式下，优先直接读取 DevDesk 已锁定的目标窗口；目标被浏览器遮挡、最小化或隐藏到托盘时，不要求用户先切前台。
 - `active` 模式下，只针对 Windows 当前前台窗口使用 `screen_capture_active_window`，不越权枚举或读取其他后台窗口。
-- 最小化/托盘目标继续由捕获实现自动尝试无焦点临时恢复、重新绑定有效主 HWND、等待稳定渲染、截图并恢复原状态。
+- 最小化/托盘目标先尝试完全无状态的 PrintWindow/window DC/WGC；只有这些路径实际失败后才允许在虚拟桌面外执行 `SW_SHOWNOACTIVATE` + `SWP_NOACTIVATE/SWP_NOZORDER` 的一次性恢复，并在结束后恢复原状态。
 - 只有实际 Screen Vision 捕获已经失败或明确报告目标不可读取后，模型才应请求用户手动把软件切到前台。
 - 进程、端口、服务等元数据可以作为视觉结果的补充，但不能替代“界面现在显示什么”的像素证据。
 - `screen_capture_desktop` 用于桌面总览；如果用户明确问某个后台软件的界面，应优先单独捕获该窗口，而不是仅依赖桌面总览。
