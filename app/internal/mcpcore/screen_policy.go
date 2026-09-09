@@ -17,10 +17,8 @@ type screenVisionPolicy struct {
 
 var screenVisionPolicies sync.Map
 
-// ConfigureScreenVision narrows the advertised and callable Screen Vision tools
-// to the mode explicitly selected in MCP DevDesk. It is called once during Go
-// MCP Core startup, before the HTTP server begins serving requests.
-
+// screenVisionDefaultInstructions tells MCP clients when direct GUI capture
+// should be the default source of truth, without widening the selected privacy mode.
 func (s *Server) screenVisionDefaultInstructions() string {
 	if !s.screenCaptureEnabled || (s.permissionMode != "trusted" && s.permissionMode != "dangerous") {
 		return ""
@@ -33,6 +31,9 @@ func (s *Server) screenVisionDefaultInstructions() string {
 	if !ok {
 		return ""
 	}
+	if policy.mode == "window" && policy.windowID == "" {
+		return ""
+	}
 	switch policy.mode {
 	case "desktop":
 		return "When the user asks what a named, open, or background application window currently displays, treat it as a GUI-content question and use Screen Vision before process, port, service, or command metadata. Use screen_list_windows to locate the app and screen_capture_window to inspect its pixels. When the user asks what the current foreground window displays, use screen_capture_active_window. If a target is minimized or tray-hidden, call screen_capture_window directly; it automatically attempts a no-focus temporary restore, full-window capture, and restoration of the previous state. Only ask the user to bring the app to the foreground after an actual Screen Vision capture attempt fails or reports the target unavailable. Process/port metadata may supplement the visual result but does not answer what the GUI shows. screen_capture_desktop is for a desktop overview, not a substitute for capturing a named background app."
@@ -43,6 +44,9 @@ func (s *Server) screenVisionDefaultInstructions() string {
 	}
 }
 
+// ConfigureScreenVision narrows the advertised and callable Screen Vision tools
+// to the mode explicitly selected in MCP DevDesk. It is called once during Go
+// MCP Core startup, before the HTTP server begins serving requests.
 func (s *Server) ConfigureScreenVision(mode, windowID string, windowProcessID uint32) {
 	policy := screenVisionPolicy{
 		mode:            normalizeScreenVisionMode(mode),

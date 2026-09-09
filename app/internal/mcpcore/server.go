@@ -527,7 +527,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request 
 }
 
 func (s *Server) instructionsForToolSession(sessionID string) string {
-	if sessionID == "" || (s.currentManagedInstructions() == "" && len(s.currentProjectRules()) == 0) {
+	if sessionID == "" || (s.screenVisionDefaultInstructions() == "" && s.currentManagedInstructions() == "" && len(s.currentProjectRules()) == 0) {
 		return ""
 	}
 	s.mu.Lock()

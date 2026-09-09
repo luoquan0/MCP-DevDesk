@@ -74,6 +74,18 @@ func TestScreenVisionDefaultInstructionsNotAdvertisedWhenUnavailable(t *testing.
 	}
 }
 
+func TestSpecifiedWindowDefaultInstructionsRequireTarget(t *testing.T) {
+	server, err := New(Options{Workspace: t.TempDir(), PermissionMode: "trusted", ScreenCaptureEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	server.ConfigureScreenVision("window", "", 0)
+	if instructions := server.initializeInstructions(); strings.Contains(instructions, "default desktop visual inspection policy") {
+		t.Fatalf("specified-window mode without a target must not recommend unavailable capture tools:\n%s", instructions)
+	}
+}
+
 func TestScreenToolDescriptionsPreferDirectGUIInspection(t *testing.T) {
 	descriptions := map[string]string{}
 	for _, tool := range screenTools() {
