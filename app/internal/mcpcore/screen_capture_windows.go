@@ -20,6 +20,7 @@ const (
 	smCXVirtualScreen        = 78
 	smCYVirtualScreen        = 79
 	dwmwaExtendedFrameBounds = 9
+	dwmwaCloak               = 13
 	dwmwaCloaked             = 14
 	processQueryLimitedInfo  = 0x1000
 	pwRenderFullContent      = 0x00000002
@@ -76,6 +77,7 @@ var (
 	procGetDIBits              = screenGDI32.NewProc("GetDIBits")
 
 	procDwmGetWindowAttribute      = screenDWMAPI.NewProc("DwmGetWindowAttribute")
+	procDwmSetWindowAttribute      = screenDWMAPI.NewProc("DwmSetWindowAttribute")
 	procDwmFlush                   = screenDWMAPI.NewProc("DwmFlush")
 	procOpenProcess                = screenKernel32.NewProc("OpenProcess")
 	procQueryFullProcessImageNameW = screenKernel32.NewProc("QueryFullProcessImageNameW")
@@ -340,7 +342,6 @@ func restoreBackgroundWindowAfterReveal(hwnd, originalAbove, foreground uintptr,
 				restoreErrors = append(restoreErrors, fmt.Sprintf("restore Z-order: %v", err))
 			}
 		}
-	}
 	screenFlushDWM()
 
 	// SWP_NOACTIVATE normally preserves foreground focus. If an application
@@ -385,6 +386,38 @@ func screenFlushDWM() {
 	if err := procDwmFlush.Find(); err == nil {
 		procDwmFlush.Call()
 	}
+}
+
+// screenSetWindowCloak uses the documented DWMWA_CLOAK guard. A cloaked HWND
+// remains composed by DWM but is not visible to the user, which lets the dormant
+// fallback restore/move a window without exposing any intermediate on-screen
+// placement. Callers must always uncloak during cleanup after the original
+// hidden/minimized state has been restored.
+func screenSetWindowCloak(hwnd uintptr, cloaked bool) error {
+	if hwnd == 0 {
+		return errors.New("window handle is invalid")
+	}
+	if err := procDwmSetWindowAttribute.Find(); err != nil {
+		return fmt.Errorf("DwmSetWindowAttribute unavailable: %w", err)
+	}
+	var value uint32
+	if cloaked {
+		value = 1
+	}
+	result, _, callErr := procDwmSetWindowAttribute.Call(
+		hwnd,
+		dwmwaCloak,
+		uintptr(unsafe.Pointer(&value)),
+		unsafe.Sizeof(value),
+	)
+	if int32(result) != 0 {
+		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+			return fmt.Errorf("DwmSetWindowAttribute(DWMWA_CLOAK=%t) failed: HRESULT 0x%08X: %w", cloaked, uint32(result), callErr)
+		}
+		return fmt.Errorf("DwmSetWindowAttribute(DWMWA_CLOAK=%t) failed: HRESULT 0x%08X", cloaked, uint32(result))
+	}
+	screenFlushDWM()
+	return nil
 }
 
 func screenClearCaptureBitmap(memoryDC uintptr, width, height int) {
