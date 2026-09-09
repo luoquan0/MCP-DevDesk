@@ -120,3 +120,37 @@ func TestScreenVisionRestoredIdentityRequiresResolvedProcessName(t *testing.T) {
 		t.Fatal("different PID must never be rebound")
 	}
 }
+
+func TestScreenOffscreenCaptureRectNeverIntersectsVirtualDesktop(t *testing.T) {
+	virtualDesktop := screenRect{X: -1920, Y: -200, Width: 5760, Height: 2160}
+	logical := screenRect{X: 200, Y: 150, Width: 1280, Height: 900}
+	offscreen := screenOffscreenCaptureRect(logical, virtualDesktop)
+	if screenRectsIntersect(offscreen, virtualDesktop) {
+		t.Fatalf("off-screen restore rect %+v intersects virtual desktop %+v", offscreen, virtualDesktop)
+	}
+	if offscreen.Width != logical.Width || offscreen.Height != logical.Height {
+		t.Fatalf("off-screen restore changed size: got %+v want %dx%d", offscreen, logical.Width, logical.Height)
+	}
+}
+
+func TestScreenRectsIntersectEdgeTouchIsNotIntersection(t *testing.T) {
+	left := screenRect{X: 0, Y: 0, Width: 100, Height: 100}
+	right := screenRect{X: 100, Y: 0, Width: 100, Height: 100}
+	if screenRectsIntersect(left, right) {
+		t.Fatal("rectangles that only touch at an edge must not be treated as overlapping")
+	}
+	if !screenRectsIntersect(left, screenRect{X: 99, Y: 0, Width: 100, Height: 100}) {
+		t.Fatal("one-pixel overlap must be detected")
+	}
+}
+
+func TestScreenLogicalCaptureBoundsKeepsLogicalOrigin(t *testing.T) {
+	logical := screenRect{X: 440, Y: 220, Width: 1000, Height: 700}
+	got := screenLogicalCaptureBounds(logical, 1012, 712)
+	if got.X != logical.X || got.Y != logical.Y {
+		t.Fatalf("logical capture origin changed: got %+v want origin %d,%d", got, logical.X, logical.Y)
+	}
+	if got.Width != 1012 || got.Height != 712 {
+		t.Fatalf("capture dimensions were not updated from actual pixels: %+v", got)
+	}
+}
