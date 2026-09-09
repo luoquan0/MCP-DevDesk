@@ -342,6 +342,7 @@ func restoreBackgroundWindowAfterReveal(hwnd, originalAbove, foreground uintptr,
 				restoreErrors = append(restoreErrors, fmt.Sprintf("restore Z-order: %v", err))
 			}
 		}
+	}
 	screenFlushDWM()
 
 	// SWP_NOACTIVATE normally preserves foreground focus. If an application
