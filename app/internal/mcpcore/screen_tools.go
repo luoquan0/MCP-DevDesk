@@ -74,7 +74,7 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_list_windows",
 			Title:       "List App Windows",
-			Description: "List captureable top-level Windows application windows, including minimized apps and tray-hidden main windows when Windows keeps a restorable top-level surface. Screen Vision is explicit opt-in and this tool never starts continuous recording.",
+			Description: "Use this first by default when the user names an open or background app and asks what its GUI currently shows; then pass the returned window id to screen_capture_window. Process, port, or service presence alone does not answer a GUI-content question. Includes minimized apps and tray-hidden main windows when Windows keeps a restorable top-level surface. No screenshot is taken and continuous recording is never started.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -87,13 +87,13 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_get_active_window",
 			Title:       "Get Active Window",
-			Description: "Return metadata for the current foreground window without taking a screenshot.",
+			Description: "Return metadata for the current foreground window without taking a screenshot. Use screen_capture_active_window, not this metadata alone, when the user asks what the current window visually displays.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
 		},
 		{
 			Name:        "screen_capture_window",
 			Title:       "Capture Window",
-			Description: "Capture one explicitly selected Windows application window on demand, including a background, minimized, or tray-hidden target when Windows keeps a restorable main surface. Dormant targets are temporarily restored without focus and returned to their prior state. Nothing is saved to disk.",
+			Description: "Primary GUI inspection tool for a named, open, or background app. When the user asks what an app window currently displays, use this after screen_list_windows instead of answering from process/port metadata or asking the user to bring the app forward. Background, minimized, and tray-hidden targets are captured when Windows keeps a restorable main surface; dormant targets are temporarily restored without focus and returned to their prior state. Only ask the user to foreground the app after this capture actually fails. Nothing is saved to disk.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -107,13 +107,13 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_capture_active_window",
 			Title:       "Capture Active Window",
-			Description: "Capture the current foreground window on demand and return a PNG image to the MCP client. Nothing is saved to disk.",
+			Description: "Primary GUI inspection tool when the user asks what the current foreground/current window visually displays. Use it before relying on process/port metadata. Capture the current foreground window on demand and return a PNG image to the MCP client. Nothing is saved to disk.",
 			InputSchema: map[string]any{"type": "object", "properties": captureProperties, "additionalProperties": false},
 		},
 		{
 			Name:        "screen_capture_desktop",
 			Title:       "Capture Desktop",
-			Description: "Capture the Windows virtual desktop across connected monitors on demand and return a PNG image. Nothing is saved to disk.",
+			Description: "Capture the Windows virtual desktop across connected monitors for an overview. For a named background app, prefer screen_list_windows plus screen_capture_window because a desktop overview is not a substitute for inspecting that app directly. Nothing is saved to disk.",
 			InputSchema: map[string]any{"type": "object", "properties": captureProperties, "additionalProperties": false},
 		},
 	}

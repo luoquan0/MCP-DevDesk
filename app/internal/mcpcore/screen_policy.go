@@ -17,6 +17,33 @@ type screenVisionPolicy struct {
 
 var screenVisionPolicies sync.Map
 
+// screenVisionDefaultInstructions tells MCP clients when direct GUI capture
+// should be the default source of truth, without widening the selected privacy mode.
+func (s *Server) screenVisionDefaultInstructions() string {
+	if !s.screenCaptureEnabled || (s.permissionMode != "trusted" && s.permissionMode != "dangerous") {
+		return ""
+	}
+	value, ok := screenVisionPolicies.Load(s)
+	if !ok {
+		return ""
+	}
+	policy, ok := value.(screenVisionPolicy)
+	if !ok {
+		return ""
+	}
+	if policy.mode == "window" && policy.windowID == "" {
+		return ""
+	}
+	switch policy.mode {
+	case "desktop":
+		return "When the user asks what a named, open, or background application window currently displays, treat it as a GUI-content question and use Screen Vision before process, port, service, or command metadata. Use screen_list_windows to locate the app and screen_capture_window to inspect its pixels. When the user asks what the current foreground window displays, use screen_capture_active_window. If a target is minimized or tray-hidden, call screen_capture_window directly; it automatically attempts a no-focus temporary restore, full-window capture, and restoration of the previous state. Only ask the user to bring the app to the foreground after an actual Screen Vision capture attempt fails or reports the target unavailable. Process/port metadata may supplement the visual result but does not answer what the GUI shows. screen_capture_desktop is for a desktop overview, not a substitute for capturing a named background app."
+	case "window":
+		return "When the user asks what the selected or locked application window displays, use screen_capture_window first. The locked target may be behind another app or minimized/tray-hidden; capture already handles background access, no-focus temporary restoration when needed, and state restoration. Do not ask the user to foreground the target before trying Screen Vision. Only request foregrounding after the capture tool itself fails. Process/port metadata may supplement the result but cannot replace GUI inspection."
+	default:
+		return "When the user asks what the current window or currently visible application displays, use screen_capture_active_window first. Do not answer a GUI-content question only from process/port metadata. Only ask the user to change or foreground a window after the Screen Vision capture itself fails."
+	}
+}
+
 // ConfigureScreenVision narrows the advertised and callable Screen Vision tools
 // to the mode explicitly selected in MCP DevDesk. It is called once during Go
 // MCP Core startup, before the HTTP server begins serving requests.
@@ -43,7 +70,7 @@ func (s *Server) ConfigureScreenVision(mode, windowID string, windowProcessID ui
 			continue
 		}
 		delete(tool.InputSchema, "required")
-		tool.Description = "Capture only the Windows application window selected in MCP DevDesk, including when it is behind another app or minimized. Minimized targets are temporarily restored without focus and minimized again. Omit window to use the locked target; another window id is rejected. Nothing is saved to disk."
+		tool.Description = "Default GUI inspection tool for the Windows application window selected in MCP DevDesk. Use it first when the user asks what the locked app visually displays; do not substitute process/port metadata or ask the user to foreground it first. The target may be behind another app, minimized, or tray-hidden; capture attempts temporarily restore dormant targets without focus when needed and return them to their previous state. Only ask the user to foreground the app after this capture actually fails. Omit window to use the locked target; another window id is rejected. Nothing is saved to disk."
 		if properties, ok := tool.InputSchema["properties"].(map[string]any); ok {
 			if windowProperty, ok := properties["window"].(map[string]any); ok {
 				windowProperty["description"] = "Optional. Screen Vision is locked to the window selected in MCP DevDesk; another window id is rejected."

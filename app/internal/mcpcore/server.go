@@ -527,7 +527,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request 
 }
 
 func (s *Server) instructionsForToolSession(sessionID string) string {
-	if sessionID == "" || (s.currentManagedInstructions() == "" && len(s.currentProjectRules()) == 0) {
+	if sessionID == "" || (s.screenVisionDefaultInstructions() == "" && s.currentManagedInstructions() == "" && len(s.currentProjectRules()) == 0) {
 		return ""
 	}
 	s.mu.Lock()
@@ -544,13 +544,21 @@ func (s *Server) instructionsForToolSession(sessionID string) string {
 
 func (s *Server) initializeInstructions() string {
 	base := "MCP DevDesk Go core. Use the exposed tools only within the configured workspace and permission policy."
+	screenVisionInstructions := s.screenVisionDefaultInstructions()
 	managedInstructions := s.currentManagedInstructions()
 	projectRules := s.currentProjectRules()
-	if managedInstructions == "" && len(projectRules) == 0 {
+	if screenVisionInstructions == "" && managedInstructions == "" && len(projectRules) == 0 {
 		return base
 	}
 	var builder strings.Builder
 	builder.WriteString(base)
+	if screenVisionInstructions != "" {
+		builder.WriteString("\n\nMCP DevDesk default desktop visual inspection policy:\n\n")
+		builder.WriteString(screenVisionInstructions)
+		if !strings.HasSuffix(screenVisionInstructions, "\n") {
+			builder.WriteByte('\n')
+		}
+	}
 	if managedInstructions != "" {
 		builder.WriteString("\n\nMCP DevDesk global instructions (general defaults for all projects; project-specific repository instructions take precedence on conflicts):\n\n")
 		builder.WriteString(managedInstructions)
