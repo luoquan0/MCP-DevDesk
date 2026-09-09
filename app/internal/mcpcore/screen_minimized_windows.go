@@ -12,21 +12,21 @@ import (
 )
 
 const (
-	swHide                     = 0
-	swShowNoActivate           = 4
-	swMinimize                 = 6
-	swShowMinNoActive          = 7
-	screenGWHwndOwner          = 4
-	screenWSExToolWindow       = 0x00000080
-	screenSWPNoZOrder          = 0x0004
-	screenOffscreenMargin      = 256
-	screenRestorePoll          = 20 * time.Millisecond
-	screenRestoreTimeout       = 760 * time.Millisecond
-	screenRebindPoll           = 12 * time.Millisecond
-	screenOffscreenReadyTimeout = 1100 * time.Millisecond
-	screenStableSamples        = 3
-	screenPostStableRenderWait = 90 * time.Millisecond
-	screenRetryRenderWait      = 180 * time.Millisecond
+	swHide                       = 0
+	swShowNoActivate             = 4
+	swMinimize                   = 6
+	swShowMinNoActive            = 7
+	screenGWHwndOwner            = 4
+	screenWSExToolWindow         = 0x00000080
+	screenSWPNoZOrder            = 0x0004
+	screenOffscreenMargin        = 256
+	screenRestorePoll            = 20 * time.Millisecond
+	screenRestoreTimeout         = 760 * time.Millisecond
+	screenRebindPoll             = 12 * time.Millisecond
+	screenOffscreenReadyTimeout  = 1100 * time.Millisecond
+	screenStableSamples          = 3
+	screenPostStableRenderWait   = 90 * time.Millisecond
+	screenRetryRenderWait        = 180 * time.Millisecond
 )
 
 const screenOffscreenSetWindowPosFlags = screenSWPNoZOrder | swpNoActivate | swpNoOwnerZOrder | swpNoSendChanging
@@ -355,9 +355,11 @@ func platformCaptureScreenWindowForVision(window screenWindow) (screenCaptureFra
 
 // captureDormantScreenWindow first tries the exact HWND without changing any
 // window state. Only if PrintWindow/window-DC/WGC all fail do we resume the
-// application. The resume is staged into an off-screen WINDOWPLACEMENT before
-// SW_SHOWNOACTIVATE is issued, then SWP_NOACTIVATE|SWP_NOZORDER pins the window
-// outside the virtual desktop. Nothing is intentionally restored on-screen.
+// application. The stateful fallback first DWM-cloaks the exact HWND, so even if
+// Windows temporarily restores it at its normal coordinates the user cannot see
+// that intermediate state. While cloaked it is moved outside the entire virtual
+// desktop with SWP_NOACTIVATE|SWP_NOZORDER, then uncloaked only after the
+// off-screen geometry is stable. Cleanup performs the inverse sequence.
 func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized bool) (frame screenCaptureFrame, err error) {
 	logicalWindow := window
 	hwnd := window.Handle
@@ -389,7 +391,7 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 	}
 	placement, placementOK := screenGetWindowPlacement(hwnd)
 	if !placementOK {
-		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); refusing visible fallback because WINDOWPLACEMENT could not be snapshotted", neutralErr)
+		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); refusing stateful fallback because WINDOWPLACEMENT could not be snapshotted", neutralErr)
 	}
 
 	virtualDesktop, desktopErr := screenVirtualDesktopRect()
@@ -403,11 +405,21 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 
 	restoreHandle := hwnd
 	touched := false
+	cloakOwned := false
 	defer func() {
 		var restoreErrors []string
 		if touched && restoreHandle != 0 {
 			valid, _, _ := procIsWindow.Call(restoreHandle)
 			if valid != 0 {
+				// Cleanup must be invisible too. If capture had already uncloaked the
+				// off-screen window, cloak it again before any placement/state work.
+				if !cloakOwned {
+					if cloakErr := screenSetWindowCloak(restoreHandle, true); cloakErr != nil {
+						restoreErrors = append(restoreErrors, fmt.Sprintf("re-cloak before cleanup: %v", cloakErr))
+					} else {
+						cloakOwned = true
+					}
+				}
 				if restoreErr := screenRestoreDormantWindow(restoreHandle, placement, true, wasHidden, wasMinimized); restoreErr != nil {
 					restoreErrors = append(restoreErrors, fmt.Sprintf("restore WINDOWPLACEMENT/state: %v", restoreErr))
 				}
@@ -418,6 +430,13 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 			if valid != 0 {
 				if restoreErr := restoreBackgroundWindowAfterReveal(restoreHandle, originalAbove, foreground, wasTopmost, originalAboveSameBand); restoreErr != nil {
 					restoreErrors = append(restoreErrors, fmt.Sprintf("restore Z-order/topmost/focus: %v", restoreErr))
+				}
+				if cloakOwned {
+					if uncloakErr := screenSetWindowCloak(restoreHandle, false); uncloakErr != nil {
+						restoreErrors = append(restoreErrors, fmt.Sprintf("remove DWM cloak after original state restored: %v", uncloakErr))
+					} else {
+						cloakOwned = false
+					}
 				}
 			}
 		}
@@ -432,33 +451,40 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 		}
 	}()
 
-	// Stage the normal placement off-screen while the target is still hidden or
-	// minimized. Only after the staged placement is committed do we show it with
-	// SW_SHOWNOACTIVATE. This prevents the normal on-screen rectangle from being
-	// used even transiently by our restore path.
-	if stageErr := screenStageDormantWindowOffscreen(hwnd, placement, offscreen, wasHidden, wasMinimized); stageErr != nil {
-		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); stage safe off-screen restore: %w", neutralErr, stageErr)
+	// SetWindowPlacement intentionally forces completely off-screen placements
+	// back onto a monitor, so it must not be used to stage the hidden restore.
+	// Instead cloak first (the HWND stays composed but invisible), then restore
+	// without activation and drive the exact HWND off-screen with SetWindowPos.
+	if cloakErr := screenSetWindowCloak(hwnd, true); cloakErr != nil {
+		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); refusing stateful fallback because DWM cloak could not be enabled: %w", neutralErr, cloakErr)
 	}
+	cloakOwned = true
 	touched = true
 	procShowWindowAsync.Call(hwnd, swShowNoActivate)
-	_ = screenMoveWindowOffscreen(hwnd, offscreen)
 	screenRestoreForeground(foreground)
 
-	restored, restoreErr := screenWaitForOffscreenWindowStable(logicalWindow, offscreen, virtualDesktop, screenOffscreenReadyTimeout)
+	restored, restoreErr := screenWaitForExactOffscreenWindowStable(logicalWindow, offscreen, virtualDesktop, foreground, screenOffscreenReadyTimeout)
 	if restoreErr != nil {
-		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); off-screen restore could not stabilize: %w", neutralErr, restoreErr)
+		return screenCaptureFrame{}, fmt.Errorf("background capture failed (%v); DWM-cloaked off-screen restore could not stabilize: %w", neutralErr, restoreErr)
 	}
 	restoreHandle = restored.Handle
+
+	// The window is now verifiably outside every visible monitor. Uncloak only
+	// there so compositor/GPU clients can render fresh pixels for PrintWindow/WGC.
+	if uncloakErr := screenSetWindowCloak(restored.Handle, false); uncloakErr != nil {
+		return screenCaptureFrame{}, fmt.Errorf("off-screen window could not be uncloaked for rendering: %w", uncloakErr)
+	}
+	cloakOwned = false
 	screenRestoreForeground(foreground)
 	screenFlushDWM()
 	time.Sleep(screenPostStableRenderWait)
 
 	frame, err = captureScreenRect(restored.Bounds, restored.Handle)
 	if err != nil || screenImageLikelyBlank(frame.Image) {
-		refreshed, settleErr := screenWaitForOffscreenWindowStable(logicalWindow, offscreen, virtualDesktop, 620*time.Millisecond)
+		refreshed, settleErr := screenWaitForExactOffscreenWindowStable(logicalWindow, offscreen, virtualDesktop, foreground, 620*time.Millisecond)
 		if settleErr == nil {
-			restoreHandle = refreshed.Handle
 			restored = refreshed
+			restoreHandle = refreshed.Handle
 		}
 		screenRestoreForeground(foreground)
 		screenFlushDWM()
@@ -474,13 +500,17 @@ func captureDormantScreenWindow(window screenWindow, wasHidden, wasMinimized boo
 
 	frame.Bounds = screenLogicalCaptureBounds(logicalWindow.Bounds, frame.Image.Bounds().Dx(), frame.Image.Bounds().Dy())
 	if wasHidden {
-		frame.Method = "hidden-offscreen-rebind/" + frame.Method
+		frame.Method = "hidden-cloaked-offscreen/" + frame.Method
 	} else {
-		frame.Method = "minimized-offscreen-rebind/" + frame.Method
+		frame.Method = "minimized-cloaked-offscreen/" + frame.Method
 	}
 	return frame, nil
 }
 
+// screenStageDormantWindowOffscreen is retained only for compatibility with
+// older tests/callers. It is deliberately not used by Screen Vision capture:
+// Windows SetWindowPlacement automatically moves a fully off-screen rectangle
+// back onto a visible monitor, which is incompatible with the no-flicker guard.
 func screenStageDormantWindowOffscreen(hwnd uintptr, original screenWindowPlacement, offscreen screenRect, wasHidden, wasMinimized bool) error {
 	if hwnd == 0 {
 		return errors.New("window handle is invalid")
@@ -496,8 +526,6 @@ func screenStageDormantWindowOffscreen(hwnd uintptr, original screenWindowPlacem
 		Right:  int32(offscreen.X + offscreen.Width),
 		Bottom: int32(offscreen.Y + offscreen.Height),
 	}
-	// Keep the target dormant while changing rcNormalPosition. The subsequent
-	// SW_SHOWNOACTIVATE is the first command allowed to make it non-minimized.
 	if wasHidden {
 		staged.ShowCmd = swHide
 	} else if wasMinimized {
@@ -535,6 +563,66 @@ func screenMoveWindowOffscreen(hwnd uintptr, offscreen screenRect) error {
 	return nil
 }
 
+// screenWaitForExactOffscreenWindowStable never follows a replacement HWND.
+// A stateful fallback can guarantee cleanup only for the exact window whose
+// WINDOWPLACEMENT/Z-order/focus snapshot was taken. If an app destroys that
+// HWND while waking from the tray, fail closed instead of risking a newly
+// created visible window with unknown state.
+func screenWaitForExactOffscreenWindowStable(original screenWindow, offscreen, virtualDesktop screenRect, foreground uintptr, timeout time.Duration) (screenWindow, error) {
+	deadline := time.Now().Add(timeout)
+	var lastBounds screenRect
+	stableSamples := 0
+	var lastErr error
+
+	for {
+		valid, _, _ := procIsWindow.Call(original.Handle)
+		if valid == 0 {
+			return screenWindow{}, errors.New("dormant application replaced or destroyed the selected HWND; refusing to chase a new window during no-flicker fallback")
+		}
+		if moveErr := screenMoveWindowOffscreen(original.Handle, offscreen); moveErr != nil {
+			lastErr = moveErr
+			stableSamples = 0
+		} else {
+			screenRestoreForeground(foreground)
+			screenFlushDWM()
+			visible, _, _ := procIsWindowVisible.Call(original.Handle)
+			minimized, _, _ := procIsIconic.Call(original.Handle)
+			rect, rectErr := screenWindowRect(original.Handle)
+			if rectErr != nil {
+				lastErr = rectErr
+				stableSamples = 0
+			} else if visible == 0 || minimized != 0 {
+				lastErr = errors.New("restored exact HWND is not yet visible/non-minimized behind the DWM cloak")
+				stableSamples = 0
+			} else if screenRectsIntersect(rect, virtualDesktop) {
+				lastErr = fmt.Errorf("restored window escaped off-screen guard at %+v", rect)
+				stableSamples = 0
+			} else {
+				if screenRectsStable(lastBounds, rect) {
+					stableSamples++
+				} else {
+					lastBounds = rect
+					stableSamples = 1
+				}
+				if stableSamples >= screenStableSamples {
+					candidate := original
+					candidate.Bounds = rect
+					candidate.Minimized = false
+					candidate.Hidden = false
+					return candidate, nil
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return screenWindow{}, lastErr
+			}
+			return screenWindow{}, errors.New("exact off-screen application window did not become stable in time")
+		}
+		time.Sleep(screenRebindPoll)
+	}
+}
+
 func screenWaitForOffscreenWindowStable(original screenWindow, offscreen, virtualDesktop screenRect, timeout time.Duration) (screenWindow, error) {
 	deadline := time.Now().Add(timeout)
 	var lastHandle uintptr
@@ -548,9 +636,6 @@ func screenWaitForOffscreenWindowStable(original screenWindow, offscreen, virtua
 			lastErr = err
 			stableSamples = 0
 		} else {
-			// An application can replace its tray/minimized HWND while waking up.
-			// Pin every accepted replacement off-screen immediately, without
-			// activation and without changing its Z-order.
 			if moveErr := screenMoveWindowOffscreen(candidate.Handle, offscreen); moveErr != nil {
 				lastErr = moveErr
 				stableSamples = 0
@@ -637,10 +722,10 @@ func screenLogicalCaptureBounds(logical screenRect, width, height int) screenRec
 	return result
 }
 
-// screenRestoreDormantWindow restores the original WINDOWPLACEMENT without ever
-// first showing the normal rectangle. Hidden targets are hidden before their
-// original placement is reapplied; minimized targets are minimized while still
-// off-screen. This keeps cleanup invisible as well as capture setup.
+// screenRestoreDormantWindow restores the original WINDOWPLACEMENT after the
+// target has already been cloaked and returned to its original hidden/minimized
+// state. The caller keeps the DWM cloak until placement and Z-order cleanup are
+// complete, so SetWindowPlacement cannot expose an intermediate visible frame.
 func screenRestoreDormantWindow(hwnd uintptr, placement screenWindowPlacement, placementOK, wasHidden, wasMinimized bool) error {
 	var restoreErrors []string
 	if wasHidden {
