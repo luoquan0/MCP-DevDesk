@@ -38,7 +38,6 @@ type screenWindow struct {
 	Bounds      screenRect `json:"bounds"`
 	Active      bool       `json:"active"`
 	Minimized   bool       `json:"minimized"`
-	Hidden      bool       `json:"hidden"`
 }
 
 type screenCaptureFrame struct {
@@ -74,7 +73,7 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_list_windows",
 			Title:       "List App Windows",
-			Description: "Use this first by default when the user names an open or background app and asks what its GUI currently shows; then pass the returned window id to screen_capture_window. Process, port, or service presence alone does not answer a GUI-content question. Includes minimized apps and tray-hidden main windows when Windows keeps a restorable top-level surface. No screenshot is taken and continuous recording is never started.",
+			Description: "List captureable top-level Windows application windows, including minimized apps. Screen Vision is explicit opt-in and this tool never starts continuous recording.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -87,13 +86,13 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_get_active_window",
 			Title:       "Get Active Window",
-			Description: "Return metadata for the current foreground window without taking a screenshot. Use screen_capture_active_window, not this metadata alone, when the user asks what the current window visually displays.",
+			Description: "Return metadata for the current foreground window without taking a screenshot.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
 		},
 		{
 			Name:        "screen_capture_window",
 			Title:       "Capture Window",
-			Description: "Primary GUI inspection tool for a named, open, or background app. When the user asks what an app window currently displays, use this after screen_list_windows instead of answering from process/port metadata or asking the user to bring the app forward. Background, minimized, and tray-hidden targets are captured when Windows keeps a restorable main surface; dormant targets are temporarily restored without focus and returned to their prior state. Only ask the user to foreground the app after this capture actually fails. Nothing is saved to disk.",
+			Description: "Capture one explicitly selected Windows application window on demand, including a background or minimized target when Windows allows it, and return a PNG image to the MCP client. Minimized targets are temporarily restored without focus and returned to minimized state. Nothing is saved to disk.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -107,13 +106,13 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_capture_active_window",
 			Title:       "Capture Active Window",
-			Description: "Primary GUI inspection tool when the user asks what the current foreground/current window visually displays. Use it before relying on process/port metadata. Capture the current foreground window on demand and return a PNG image to the MCP client. Nothing is saved to disk.",
+			Description: "Capture the current foreground window on demand and return a PNG image to the MCP client. Nothing is saved to disk.",
 			InputSchema: map[string]any{"type": "object", "properties": captureProperties, "additionalProperties": false},
 		},
 		{
 			Name:        "screen_capture_desktop",
 			Title:       "Capture Desktop",
-			Description: "Capture the Windows virtual desktop across connected monitors for an overview. For a named background app, prefer screen_list_windows plus screen_capture_window because a desktop overview is not a substitute for inspecting that app directly. Nothing is saved to disk.",
+			Description: "Capture the Windows virtual desktop across connected monitors on demand and return a PNG image. Nothing is saved to disk.",
 			InputSchema: map[string]any{"type": "object", "properties": captureProperties, "additionalProperties": false},
 		},
 	}
@@ -147,9 +146,6 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 		sort.SliceStable(filtered, func(i, j int) bool {
 			if filtered[i].Active != filtered[j].Active {
 				return filtered[i].Active
-			}
-			if filtered[i].Hidden != filtered[j].Hidden {
-				return !filtered[i].Hidden
 			}
 			if filtered[i].Minimized != filtered[j].Minimized {
 				return !filtered[i].Minimized
@@ -337,12 +333,7 @@ func screenFrameResult(frame screenCaptureFrame, maxWidth int, window *screenWin
 		"continuous":        false,
 	}
 	if window != nil {
-		capturedWindow := *window
-		// Report the bounds that actually produced the image. In particular, a
-		// minimized icon rectangle (for example 158x26) must not survive in the
-		// response after the real window was restored and captured at full size.
-		capturedWindow.Bounds = frame.Bounds
-		result["window"] = capturedWindow
+		result["window"] = *window
 	}
 	return result, nil
 }
