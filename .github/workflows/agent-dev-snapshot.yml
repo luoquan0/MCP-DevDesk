@@ -16,10 +16,10 @@ jobs:
         with:
           fetch-depth: 0
       - name: Pack source snapshot
-        run: tar -czf mcp-devdesk-source.tgz --exclude=.git .
+        run: tar -czf "$RUNNER_TEMP/mcp-devdesk-source.tgz" --exclude=.git .
       - name: Upload source snapshot
         uses: actions/upload-artifact@v4
         with:
           name: agent-runtime-source-${{ github.sha }}
-          path: mcp-devdesk-source.tgz
+          path: ${{ runner.temp }}/mcp-devdesk-source.tgz
           retention-days: 1
