@@ -5,10 +5,11 @@ export const router = createRouter({
   routes: [
     { path: "/", name: "overview", component: () => import("@/pages/OverviewPage.vue") },
     { path: "/workspace", name: "workspace", component: () => import("@/pages/WorkspaceHubPage.vue") },
+    { path: "/agent-tasks", name: "agent-tasks", component: () => import("@/pages/AgentTasksPage.vue") },
     { path: "/projects", redirect: "/workspace" },
     { path: "/instances", redirect: "/workspace" },
     { path: "/services", redirect: "/workspace" },
-    { path: "/cloudflare", name: "cloudflare", component: () => import("@/pages/CloudflarePage.vue") },
+    { path: "/cloudflare", name: "cloudflare", component: () => import("@/pages/ConnectionPage.vue") },
     { path: "/logs", name: "logs", component: () => import("@/pages/LogsPage.vue") },
     { path: "/security", redirect: "/settings" },
     { path: "/settings", name: "settings", component: () => import("@/pages/SettingsPage.vue") },

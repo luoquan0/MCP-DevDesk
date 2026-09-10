@@ -19,6 +19,7 @@ import (
 var (
 	domainPattern         = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 	screenWindowIDPattern = regexp.MustCompile(`(?i)^0x[0-9a-f]+$`)
+	openAITunnelIDPattern = regexp.MustCompile(`^tunnel_[0-9a-f]{32}$`)
 )
 
 const protectedProxyPasswordPrefix = "dpapi:v1:"
@@ -70,34 +71,37 @@ func (s *Store) defaults() model.Config {
 	core := filepath.Join(s.rootDir, "coding-tools-mcp.exe")
 	goCore := defaultGoCoreExecutable(s.rootDir)
 	cloudflared := filepath.Join(s.rootDir, "cloudflared.exe")
+	openAITunnelClient := filepath.Join(s.rootDir, "tunnel-client.exe")
 
 	return model.Config{
-		Version:                 model.CurrentConfigVersion,
-		Workspace:               workspace,
-		AllowedRoots:            []string{workspace},
-		MCPHost:                 "127.0.0.1",
-		MCPPort:                 8765,
-		AdminHost:               "127.0.0.1",
-		AdminPort:               17860,
-		WebControlEnabled:       false,
-		WebControlPort:          17861,
-		WebControlLANEnabled:    false,
-		WebControlAuthEnabled:   false,
-		PermissionMode:          "trusted",
-		FileScope:               "workspace",
-		ToolProfile:             "full",
-		AllowNetwork:            true,
-		ScreenCaptureMode:       "active",
-		TunnelName:              "mcp-devdesk",
-		AutoStart:               false,
-		Watchdog:                true,
-		CoreMode:                "legacy",
-		CoreExecutable:          core,
-		GoCoreExecutable:        goCore,
-		CloudflaredExecutable:   cloudflared,
-		OpenBrowserOnStart:      true,
-		HideChildProcessWindows: true,
-		LoggingEnabled:          true,
+		Version:                      model.CurrentConfigVersion,
+		Workspace:                    workspace,
+		AllowedRoots:                 []string{workspace},
+		MCPHost:                      "127.0.0.1",
+		MCPPort:                      8765,
+		AdminHost:                    "127.0.0.1",
+		AdminPort:                    17860,
+		WebControlEnabled:            false,
+		WebControlPort:               17861,
+		WebControlLANEnabled:         false,
+		WebControlAuthEnabled:        false,
+		PermissionMode:               "trusted",
+		FileScope:                    "workspace",
+		ToolProfile:                  "full",
+		AllowNetwork:                 true,
+		ScreenCaptureMode:            "active",
+		ConnectionMode:               "cloudflare",
+		TunnelName:                   "mcp-devdesk",
+		AutoStart:                    false,
+		Watchdog:                     true,
+		CoreMode:                     "legacy",
+		CoreExecutable:               core,
+		GoCoreExecutable:             goCore,
+		CloudflaredExecutable:        cloudflared,
+		OpenAITunnelClientExecutable: openAITunnelClient,
+		OpenBrowserOnStart:           true,
+		HideChildProcessWindows:      true,
+		LoggingEnabled:               true,
 	}
 }
 
@@ -156,6 +160,9 @@ func (s *Store) normalize(cfg *model.Config) {
 	if cfg.ScreenCaptureMode == "" {
 		cfg.ScreenCaptureMode = "active"
 	}
+	if cfg.ConnectionMode == "" {
+		cfg.ConnectionMode = "cloudflare"
+	}
 	if cfg.TunnelName == "" {
 		cfg.TunnelName = "mcp-devdesk"
 	}
@@ -171,6 +178,9 @@ func (s *Store) normalize(cfg *model.Config) {
 	if cfg.CloudflaredExecutable == "" {
 		cfg.CloudflaredExecutable = filepath.Join(s.rootDir, "cloudflared.exe")
 	}
+	if cfg.OpenAITunnelClientExecutable == "" {
+		cfg.OpenAITunnelClientExecutable = filepath.Join(s.rootDir, "tunnel-client.exe")
+	}
 
 	cfg.Workspace = cleanPath(cfg.Workspace)
 	for i := range cfg.AllowedRoots {
@@ -179,6 +189,10 @@ func (s *Store) normalize(cfg *model.Config) {
 	cfg.CoreExecutable = s.resolveBundledExecutable(cfg.CoreExecutable, filepath.Join(s.rootDir, "coding-tools-mcp.exe"))
 	cfg.GoCoreExecutable = s.resolveBundledExecutable(cfg.GoCoreExecutable, goCoreExecutableCandidates(s.rootDir)...)
 	cfg.CloudflaredExecutable = s.resolveBundledExecutable(cfg.CloudflaredExecutable, filepath.Join(s.rootDir, "cloudflared.exe"))
+	cfg.OpenAITunnelClientExecutable = s.resolveBundledExecutable(cfg.OpenAITunnelClientExecutable, filepath.Join(s.rootDir, "tunnel-client.exe"))
+	cfg.ConnectionMode = strings.ToLower(strings.TrimSpace(cfg.ConnectionMode))
+	cfg.OpenAITunnelID = strings.TrimSpace(cfg.OpenAITunnelID)
+	cfg.OpenAITunnelProxy = strings.TrimSpace(cfg.OpenAITunnelProxy)
 	cfg.Domain = strings.ToLower(strings.TrimSpace(cfg.Domain))
 	cfg.TunnelName = strings.TrimSpace(cfg.TunnelName)
 	cfg.ProxyAddress = strings.TrimSpace(cfg.ProxyAddress)
@@ -254,6 +268,7 @@ func (s *Store) makeExecutablePathsPortable(cfg *model.Config) {
 	cfg.CoreExecutable = s.portableExecutablePath(cfg.CoreExecutable)
 	cfg.GoCoreExecutable = s.portableExecutablePath(cfg.GoCoreExecutable)
 	cfg.CloudflaredExecutable = s.portableExecutablePath(cfg.CloudflaredExecutable)
+	cfg.OpenAITunnelClientExecutable = s.portableExecutablePath(cfg.OpenAITunnelClientExecutable)
 }
 
 func fileExists(path string) bool {
@@ -320,6 +335,17 @@ func Validate(cfg model.Config) error {
 	case "active", "window", "desktop":
 	default:
 		return errors.New("screenCaptureMode must be active, window, or desktop")
+	}
+	switch cfg.ConnectionMode {
+	case "cloudflare", "openai", "local":
+	default:
+		return errors.New("connectionMode must be cloudflare, openai, or local")
+	}
+	if cfg.OpenAITunnelID != "" && !openAITunnelIDPattern.MatchString(cfg.OpenAITunnelID) {
+		return errors.New("OpenAI Secure Tunnel ID must use tunnel_ followed by 32 lowercase hexadecimal characters")
+	}
+	if len(cfg.OpenAITunnelProxy) > 1024 || strings.ContainsAny(cfg.OpenAITunnelProxy, "\r\n\t") {
+		return errors.New("invalid OpenAI Secure Tunnel proxy")
 	}
 	if cfg.ScreenCaptureWindowID != "" && !screenWindowIDPattern.MatchString(cfg.ScreenCaptureWindowID) {
 		return errors.New("screenCaptureWindowId must be a hexadecimal Windows handle")
@@ -493,6 +519,9 @@ func applyUpdate(cfg *model.Config, update model.ConfigUpdate) {
 	if update.ScreenCaptureWindowProcess != nil {
 		cfg.ScreenCaptureWindowProcess = *update.ScreenCaptureWindowProcess
 	}
+	if update.ConnectionMode != nil {
+		cfg.ConnectionMode = *update.ConnectionMode
+	}
 	if update.Domain != nil {
 		cfg.Domain = *update.Domain
 	}
@@ -516,6 +545,15 @@ func applyUpdate(cfg *model.Config, update model.ConfigUpdate) {
 	}
 	if update.CoreMode != nil {
 		cfg.CoreMode = *update.CoreMode
+	}
+	if update.OpenAITunnelID != nil {
+		cfg.OpenAITunnelID = *update.OpenAITunnelID
+	}
+	if update.OpenAITunnelClientExecutable != nil {
+		cfg.OpenAITunnelClientExecutable = *update.OpenAITunnelClientExecutable
+	}
+	if update.OpenAITunnelProxy != nil {
+		cfg.OpenAITunnelProxy = *update.OpenAITunnelProxy
 	}
 	if update.OpenBrowserOnStart != nil {
 		cfg.OpenBrowserOnStart = *update.OpenBrowserOnStart

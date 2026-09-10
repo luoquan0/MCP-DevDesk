@@ -108,3 +108,7 @@ MCP 端口不再固定为 `8765`。用户在“项目与服务”页面修改端
 - cloudflared 的正常升级由“Cloudflare Tunnel 客户端”专用更新功能负责。该功能读取 Cloudflare 官方最新 Release，要求 Windows amd64 资产带有 `sha256:` digest，下载后再次计算 SHA256，校验通过才执行原子替换。
 - 专用更新会先暂停受影响的 Tunnel / Watchdog，替换完成后恢复原先需要运行的连接，避免同时占用正在更新的可执行文件。
 - 正式 Portable Release 内置的 cloudflared 版本由 `tools/cloudflared-release.json` 固定，并由 Release 工作流从 Cloudflare 官方 Release 下载和校验。这个内置版本服务于新安装、文件缺失恢复和旧更新器过渡兼容，不代表每次软件更新都要把本机 cloudflared 同步回该版本。
+
+## 9. 与其他连接模式的关系（0.13 Beta）
+
+Cloudflare 现在是主实例三种连接方式之一，且保留现有固定域名、DNS、Tunnel UUID、进程盘点和独立 cloudflared 更新逻辑。选择 `OpenAI Secure Tunnel` 时不启动 cloudflared；选择 `Local` 时不启动任何 Tunnel。三种模式切换前必须停止主实例，避免改变正在使用的 MCP 对外入口。OpenAI 模式见 `docs/OPENAI_SECURE_TUNNEL.md`。

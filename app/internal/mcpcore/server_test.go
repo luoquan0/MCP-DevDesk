@@ -70,7 +70,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 		} `json:"result"`
 	}
 	decodeJSON(t, listResponse.Body, &listResult)
-	if len(listResult.Result.Tools) != 33 {
+	if len(listResult.Result.Tools) != 42 {
 		t.Fatalf("tool count = %d", len(listResult.Result.Tools))
 	}
 
@@ -273,7 +273,7 @@ func TestExposedToolSchemasAreValidAndUnique(t *testing.T) {
 			t.Fatalf("tool %q input schema is not JSON encodable: %v", tool.Name, err)
 		}
 	}
-	if len(seen) != 33 {
+	if len(seen) != 42 {
 		t.Fatalf("tool count = %d", len(seen))
 	}
 }
@@ -753,4 +753,25 @@ func readBody(t *testing.T, reader io.Reader) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+func TestUIAutomationToolFollowsScreenVisionPermissionBoundary(t *testing.T) {
+	trusted := mustNewServer(t, Options{Workspace: t.TempDir(), PermissionMode: "trusted", ScreenCaptureEnabled: true})
+	found := false
+	for _, tool := range trusted.tools {
+		if tool.Name == "ui_automation_tree" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("trusted Screen Vision server did not expose ui_automation_tree")
+	}
+
+	safe := mustNewServer(t, Options{Workspace: t.TempDir(), PermissionMode: "safe", ScreenCaptureEnabled: true})
+	for _, tool := range safe.tools {
+		if tool.Name == "ui_automation_tree" {
+			t.Fatal("safe permission mode exposed ui_automation_tree")
+		}
+	}
 }

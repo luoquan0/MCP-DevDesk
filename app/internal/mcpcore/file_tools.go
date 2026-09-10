@@ -196,13 +196,16 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 	}
 	switch name {
 	case "server_info":
+		effectiveWorkspace, _ := s.workspaceRoot()
 		return map[string]any{
 			"name":                 s.name,
 			"version":              s.version,
 			"protocolVersion":      ProtocolVersion,
 			"transport":            "streamable-http",
 			"coreMode":             "go",
-			"workspace":            s.workspace,
+			"workspace":            effectiveWorkspace,
+			"baseWorkspace":        s.workspace,
+			"activeTaskId":         s.activeTaskID(),
 			"toolCount":            len(s.tools),
 			"permissionMode":       s.permissionMode,
 			"toolProfile":          s.toolProfile,
@@ -263,12 +266,20 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 		return s.executeWriteTool(name, arguments)
 	case "exec_command", "read_output", "write_stdin", "kill_session":
 		return s.executeCommandTool(name, arguments)
+	case "task_start", "task_list", "task_get", "task_resume", "task_diff", "task_finish":
+		return s.executeTaskTool(name, arguments)
+	case "job_list", "job_get":
+		return s.executeJobTool(name, arguments)
+	case "checks_run":
+		return s.executeCheckTool(name, arguments)
 	case "git_status", "git_diff", "git_log", "git_show", "git_worktrees":
 		return s.executeGitTool(name, arguments)
 	case "permission_status", "request_permissions":
 		return s.executePermissionTool(name, arguments)
 	case "screen_list_windows", "screen_get_active_window", "screen_capture_window", "screen_capture_active_window", "screen_capture_desktop":
 		return s.executeScreenTool(name, arguments)
+	case "ui_automation_tree":
+		return s.executeUIAutomationTool(arguments)
 	case "check_exec_environment", "get_default_cwd", "set_default_cwd", "list_files", "git_blame", "write_image", "save_chatgpt_image", "view_image":
 		return s.executeCompatibilityTool(name, arguments)
 	default:
@@ -279,7 +290,8 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 func isMutatingOrCommandTool(name string) bool {
 	switch name {
 	case "write_file", "replace_text", "apply_patch", "make_directory", "move_path", "delete_path",
-		"exec_command", "read_output", "write_stdin", "kill_session", "write_image", "save_chatgpt_image":
+		"exec_command", "read_output", "write_stdin", "kill_session", "write_image", "save_chatgpt_image",
+		"task_start", "task_resume", "task_finish", "checks_run":
 		return true
 	default:
 		return false
@@ -836,6 +848,9 @@ func gitStatusClean(output string) bool {
 
 func (s *Server) workspaceRoot() (string, error) {
 	workspace := strings.TrimSpace(s.workspace)
+	if s.tasks != nil {
+		workspace = strings.TrimSpace(s.tasks.ActiveWorkspace(workspace))
+	}
 	if workspace == "" {
 		return "", errors.New("workspace is not configured")
 	}

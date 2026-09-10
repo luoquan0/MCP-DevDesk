@@ -3,6 +3,29 @@ export type FileScope = "workspace" | "roots" | "computer";
 export type ToolProfile = "full" | "read-only" | "compat-readonly-all";
 export type CoreMode = "legacy" | "go";
 export type ScreenCaptureMode = "active" | "window" | "desktop";
+export type ConnectionMode = "cloudflare" | "openai" | "local";
+
+export interface AgentTask {
+  id: string;
+  title: string;
+  summary?: string;
+  status: "editing" | "review" | "accepted" | "rejected";
+  baseWorkspace: string;
+  worktreePath: string;
+  branch: string;
+  baseCommit: string;
+  resultCommit?: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  acceptedAt?: string;
+  rejectedAt?: string;
+}
+
+export interface AgentTaskList {
+  tasks: AgentTask[];
+  activeTaskId?: string;
+}
 
 export interface ScreenWindowBounds {
   x: number;
@@ -79,6 +102,15 @@ export interface CloudflareStatus {
   tunnelId?: string;
 }
 
+export interface OpenAITunnelStatus {
+  configured: boolean;
+  credentialsReady: boolean;
+  installed: boolean;
+  tunnelId?: string;
+  clientExecutable?: string;
+  proxy?: string;
+}
+
 export interface ServiceStatus {
   version: string;
   rootDirectory: string;
@@ -91,6 +123,8 @@ export interface ServiceStatus {
   oauthClientType: string;
   oauthTokenAuth: string;
   coreMode: CoreMode;
+  connectionMode: ConnectionMode;
+  openAITunnel: OpenAITunnelStatus;
   mcp: ProcessStatus;
   mcpPortOwner: PortOwner;
   tunnel: ProcessStatus;
@@ -130,9 +164,13 @@ export interface Config {
   screenCaptureWindowProcess: string;
   screenWindows?: ScreenWindowInfo[];
   fileScope: FileScope;
+  connectionMode: ConnectionMode;
   domain: string;
   tunnelName: string;
   tunnelId: string;
+  openAITunnelId: string;
+  openAITunnelClientExecutable: string;
+  openAITunnelProxy: string;
   openBrowserOnStart: boolean;
   autoStart: boolean;
   watchdog: boolean;
@@ -373,6 +411,8 @@ export interface SecretSummary {
   configured: boolean;
   encryptedAtRest: boolean;
   redirectUris?: string[];
+  openAITunnelApiKey?: string;
+  hasOpenAITunnelApiKey: boolean;
 }
 
 export interface SecretUpdateRequest {
@@ -381,6 +421,7 @@ export interface SecretUpdateRequest {
   clientSecret?: string;
   tokenSecret?: string;
   redirectUris?: string[];
+  openAITunnelApiKey?: string;
   restart: boolean;
 }
 

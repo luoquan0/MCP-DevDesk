@@ -97,3 +97,11 @@
 
 当前仍保留旧核心作为兼容回退，不会强制删除。后续版本会在更多真实客户端验证通过后再考虑把 Go 核心设为默认。
 
+
+## 6. Agent Runtime（0.13 Beta）
+
+Go Core 可选进入任务级 Agent Runtime：`task_start` 自动创建独立 Git Worktree，后续写入、命令和 `checks_run` 解析到 Worktree；`task_finish` 后只能由本机 DevDesk UI 接受或拒绝。Task/Job 状态持久化在 `data/devdesk/agent-runtime/`，核心重启后仍可按 ID 查询，运行中的旧进程会明确标记为 interrupted。
+
+Windows UI Automation 作为 Screen Vision 的只读语义补充：只有 Screen Vision 已显式开启且权限模式允许时才注册 `ui_automation_tree`。它复用 Screen Vision 的目标窗口策略，只读取 UIA 控件树，不点击、不聚焦，并且不读取密码控件 Value。
+
+主实例连接层增加 `cloudflare / openai / local` 三模式。Cloudflare 保持现有固定域名路径；OpenAI 模式由管理器监督官方 `tunnel-client` 并只连接 loopback MCP；Local 不启动 Tunnel。详见 `docs/OPENAI_SECURE_TUNNEL.md`。

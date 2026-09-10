@@ -99,17 +99,18 @@ func main() {
 	oauthOptions := mcpcore.OAuthOptions{}
 	if *oauthMode {
 		oauthOptions = mcpcore.OAuthOptions{
-			Enabled:         true,
-			Issuer:          issuerURL,
-			Resource:        resourceURL,
-			OwnerPassword:   os.Getenv("CODING_TOOLS_MCP_OAUTH_PASSWORD"),
-			ClientID:        envOrDefault("CODING_TOOLS_MCP_OAUTH_CLIENT_ID", "mcp-devdesk"),
-			ClientSecret:    os.Getenv("CODING_TOOLS_MCP_OAUTH_CLIENT_SECRET"),
-			RedirectURIs:    splitEnvLines(os.Getenv("CODING_TOOLS_MCP_OAUTH_REDIRECT_URIS")),
-			TokenSecret:     os.Getenv("CODING_TOOLS_MCP_OAUTH_TOKEN_SECRET"),
-			DataDir:         resolvedDataDir,
-			AccessTokenTTL:  durationFromEnv("CODING_TOOLS_MCP_ACCESS_TOKEN_TTL", time.Hour),
-			RefreshTokenTTL: durationFromEnv("CODING_TOOLS_MCP_REFRESH_TOKEN_TTL", 30*24*time.Hour),
+			Enabled:          true,
+			Issuer:           issuerURL,
+			Resource:         resourceURL,
+			OwnerPassword:    os.Getenv("CODING_TOOLS_MCP_OAUTH_PASSWORD"),
+			ClientID:         envOrDefault("CODING_TOOLS_MCP_OAUTH_CLIENT_ID", "mcp-devdesk"),
+			ClientSecret:     os.Getenv("CODING_TOOLS_MCP_OAUTH_CLIENT_SECRET"),
+			RedirectURIs:     splitEnvLines(os.Getenv("CODING_TOOLS_MCP_OAUTH_REDIRECT_URIS")),
+			TokenSecret:      os.Getenv("CODING_TOOLS_MCP_OAUTH_TOKEN_SECRET"),
+			LocalTunnelToken: os.Getenv("CODING_TOOLS_MCP_LOCAL_TUNNEL_TOKEN"),
+			DataDir:          resolvedDataDir,
+			AccessTokenTTL:   durationFromEnv("CODING_TOOLS_MCP_ACCESS_TOKEN_TTL", time.Hour),
+			RefreshTokenTTL:  durationFromEnv("CODING_TOOLS_MCP_REFRESH_TOKEN_TTL", 30*24*time.Hour),
 		}
 	}
 
@@ -160,6 +161,7 @@ func main() {
 		FileScope:               *fileScope,
 		AllowedRoots:            append([]string(nil), allowedRoots...),
 		ToolProfile:             *toolProfile,
+		AgentStateDir:           resolvedDataDir,
 		OAuth:                   oauthOptions,
 		AllowedOrigins:          []string{issuerURL},
 	})

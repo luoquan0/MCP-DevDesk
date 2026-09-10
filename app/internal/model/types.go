@@ -44,6 +44,7 @@ type Config struct {
 	ScreenCaptureWindowProcessID uint32   `json:"screenCaptureWindowProcessId"`
 	ScreenCaptureWindowTitle     string   `json:"screenCaptureWindowTitle"`
 	ScreenCaptureWindowProcess   string   `json:"screenCaptureWindowProcess"`
+	ConnectionMode               string   `json:"connectionMode"`
 	Domain                       string   `json:"domain"`
 	TunnelName                   string   `json:"tunnelName"`
 	TunnelID                     string   `json:"tunnelId"`
@@ -56,6 +57,9 @@ type Config struct {
 	CoreExecutable               string   `json:"coreExecutable"`
 	GoCoreExecutable             string   `json:"goCoreExecutable"`
 	CloudflaredExecutable        string   `json:"cloudflaredExecutable"`
+	OpenAITunnelID               string   `json:"openAITunnelId"`
+	OpenAITunnelClientExecutable string   `json:"openAITunnelClientExecutable"`
+	OpenAITunnelProxy            string   `json:"openAITunnelProxy"`
 	OpenBrowserOnStart           bool     `json:"openBrowserOnStart"`
 	HideChildProcessWindows      bool     `json:"hideChildProcessWindows"`
 	LoggingEnabled               bool     `json:"loggingEnabled"`
@@ -84,6 +88,7 @@ type PublicConfig struct {
 	ScreenCaptureWindowTitle     string             `json:"screenCaptureWindowTitle"`
 	ScreenCaptureWindowProcess   string             `json:"screenCaptureWindowProcess"`
 	ScreenWindows                []ScreenWindowInfo `json:"screenWindows,omitempty"`
+	ConnectionMode               string             `json:"connectionMode"`
 	Domain                       string             `json:"domain"`
 	TunnelName                   string             `json:"tunnelName"`
 	TunnelID                     string             `json:"tunnelId"`
@@ -96,6 +101,9 @@ type PublicConfig struct {
 	CoreExecutable               string             `json:"coreExecutable"`
 	GoCoreExecutable             string             `json:"goCoreExecutable"`
 	CloudflaredExecutable        string             `json:"cloudflaredExecutable"`
+	OpenAITunnelID               string             `json:"openAITunnelId"`
+	OpenAITunnelClientExecutable string             `json:"openAITunnelClientExecutable"`
+	OpenAITunnelProxy            string             `json:"openAITunnelProxy"`
 	OpenBrowserOnStart           bool               `json:"openBrowserOnStart"`
 	HideChildProcessWindows      bool               `json:"hideChildProcessWindows"`
 	LoggingEnabled               bool               `json:"loggingEnabled"`
@@ -124,6 +132,7 @@ func (c Config) Public() PublicConfig {
 		ScreenCaptureWindowProcessID: c.ScreenCaptureWindowProcessID,
 		ScreenCaptureWindowTitle:     c.ScreenCaptureWindowTitle,
 		ScreenCaptureWindowProcess:   c.ScreenCaptureWindowProcess,
+		ConnectionMode:               c.ConnectionMode,
 		Domain:                       c.Domain,
 		TunnelName:                   c.TunnelName,
 		TunnelID:                     c.TunnelID,
@@ -136,6 +145,9 @@ func (c Config) Public() PublicConfig {
 		CoreExecutable:               c.CoreExecutable,
 		GoCoreExecutable:             c.GoCoreExecutable,
 		CloudflaredExecutable:        c.CloudflaredExecutable,
+		OpenAITunnelID:               c.OpenAITunnelID,
+		OpenAITunnelClientExecutable: c.OpenAITunnelClientExecutable,
+		OpenAITunnelProxy:            c.OpenAITunnelProxy,
 		OpenBrowserOnStart:           c.OpenBrowserOnStart,
 		HideChildProcessWindows:      c.HideChildProcessWindows,
 		LoggingEnabled:               c.LoggingEnabled,
@@ -161,6 +173,7 @@ type ConfigUpdate struct {
 	ScreenCaptureWindowProcessID *uint32   `json:"screenCaptureWindowProcessId"`
 	ScreenCaptureWindowTitle     *string   `json:"screenCaptureWindowTitle"`
 	ScreenCaptureWindowProcess   *string   `json:"screenCaptureWindowProcess"`
+	ConnectionMode               *string   `json:"connectionMode"`
 	Domain                       *string   `json:"domain"`
 	TunnelName                   *string   `json:"tunnelName"`
 	ProxyAddress                 *string   `json:"proxyAddress"`
@@ -169,6 +182,9 @@ type ConfigUpdate struct {
 	AutoStart                    *bool     `json:"autoStart"`
 	Watchdog                     *bool     `json:"watchdog"`
 	CoreMode                     *string   `json:"coreMode"`
+	OpenAITunnelID               *string   `json:"openAITunnelId"`
+	OpenAITunnelClientExecutable *string   `json:"openAITunnelClientExecutable"`
+	OpenAITunnelProxy            *string   `json:"openAITunnelProxy"`
 	ConfirmCoreSwitch            bool      `json:"confirmCoreSwitch"`
 	OpenBrowserOnStart           *bool     `json:"openBrowserOnStart"`
 	HideChildProcessWindows      *bool     `json:"hideChildProcessWindows"`
@@ -232,29 +248,40 @@ type CloudflareStatus struct {
 	CredentialsPath string `json:"credentialsPath"`
 }
 
+type OpenAITunnelStatus struct {
+	Configured       bool   `json:"configured"`
+	CredentialsReady bool   `json:"credentialsReady"`
+	Installed        bool   `json:"installed"`
+	TunnelID         string `json:"tunnelId,omitempty"`
+	ClientExecutable string `json:"clientExecutable,omitempty"`
+	Proxy            string `json:"proxy,omitempty"`
+}
+
 type ServiceStatus struct {
-	Version          string           `json:"version"`
-	RootDirectory    string           `json:"rootDirectory"`
-	DataDirectory    string           `json:"dataDirectory"`
-	AdminURL         string           `json:"adminUrl"`
-	LocalMCPURL      string           `json:"localMcpUrl"`
-	RemoteMCPURL     string           `json:"remoteMcpUrl,omitempty"`
-	AuthorizeURL     string           `json:"authorizeUrl,omitempty"`
-	OAuthClientID    string           `json:"oauthClientId"`
-	OAuthClientType  string           `json:"oauthClientType"`
-	OAuthTokenAuth   string           `json:"oauthTokenAuth"`
-	CoreMode         string           `json:"coreMode"`
-	MCP              ProcessStatus    `json:"mcp"`
-	MCPPortOwner     PortOwner        `json:"mcpPortOwner"`
-	Tunnel           ProcessStatus    `json:"tunnel"`
-	TunnelInventory  TunnelInventory  `json:"tunnelInventory"`
-	Cloudflare       CloudflareStatus `json:"cloudflare"`
-	PermissionMode   string           `json:"permissionMode"`
-	FileScope        string           `json:"fileScope"`
-	AllowNetwork     bool             `json:"allowNetwork"`
-	WatchdogEnabled  bool             `json:"watchdogEnabled"`
-	ConfigurationOK  bool             `json:"configurationOk"`
-	ConfigurationMsg string           `json:"configurationMessage,omitempty"`
+	Version          string             `json:"version"`
+	RootDirectory    string             `json:"rootDirectory"`
+	DataDirectory    string             `json:"dataDirectory"`
+	AdminURL         string             `json:"adminUrl"`
+	LocalMCPURL      string             `json:"localMcpUrl"`
+	RemoteMCPURL     string             `json:"remoteMcpUrl,omitempty"`
+	AuthorizeURL     string             `json:"authorizeUrl,omitempty"`
+	OAuthClientID    string             `json:"oauthClientId"`
+	OAuthClientType  string             `json:"oauthClientType"`
+	OAuthTokenAuth   string             `json:"oauthTokenAuth"`
+	CoreMode         string             `json:"coreMode"`
+	MCP              ProcessStatus      `json:"mcp"`
+	MCPPortOwner     PortOwner          `json:"mcpPortOwner"`
+	Tunnel           ProcessStatus      `json:"tunnel"`
+	TunnelInventory  TunnelInventory    `json:"tunnelInventory"`
+	Cloudflare       CloudflareStatus   `json:"cloudflare"`
+	ConnectionMode   string             `json:"connectionMode"`
+	OpenAITunnel     OpenAITunnelStatus `json:"openAITunnel"`
+	PermissionMode   string             `json:"permissionMode"`
+	FileScope        string             `json:"fileScope"`
+	AllowNetwork     bool               `json:"allowNetwork"`
+	WatchdogEnabled  bool               `json:"watchdogEnabled"`
+	ConfigurationOK  bool               `json:"configurationOk"`
+	ConfigurationMsg string             `json:"configurationMessage,omitempty"`
 }
 
 type ChangeMCPPortRequest struct {
@@ -285,22 +312,25 @@ type LogResponse struct {
 }
 
 type SecretSummary struct {
-	OwnerPassword   string   `json:"ownerPassword,omitempty"`
-	ClientID        string   `json:"clientId,omitempty"`
-	ClientSecret    string   `json:"clientSecret,omitempty"`
-	TokenSecret     string   `json:"tokenSecret,omitempty"`
-	Configured      bool     `json:"configured"`
-	EncryptedAtRest bool     `json:"encryptedAtRest"`
-	RedirectURIs    []string `json:"redirectUris,omitempty"`
+	OwnerPassword         string   `json:"ownerPassword,omitempty"`
+	ClientID              string   `json:"clientId,omitempty"`
+	ClientSecret          string   `json:"clientSecret,omitempty"`
+	TokenSecret           string   `json:"tokenSecret,omitempty"`
+	Configured            bool     `json:"configured"`
+	EncryptedAtRest       bool     `json:"encryptedAtRest"`
+	RedirectURIs          []string `json:"redirectUris,omitempty"`
+	OpenAITunnelAPIKey    string   `json:"openAITunnelApiKey,omitempty"`
+	HasOpenAITunnelAPIKey bool     `json:"hasOpenAITunnelApiKey"`
 }
 
 type SecretUpdateRequest struct {
-	OwnerPassword *string   `json:"ownerPassword"`
-	ClientID      *string   `json:"clientId"`
-	ClientSecret  *string   `json:"clientSecret"`
-	TokenSecret   *string   `json:"tokenSecret"`
-	RedirectURIs  *[]string `json:"redirectUris"`
-	Restart       bool      `json:"restart"`
+	OwnerPassword      *string   `json:"ownerPassword"`
+	ClientID           *string   `json:"clientId"`
+	ClientSecret       *string   `json:"clientSecret"`
+	TokenSecret        *string   `json:"tokenSecret"`
+	RedirectURIs       *[]string `json:"redirectUris"`
+	OpenAITunnelAPIKey *string   `json:"openAITunnelApiKey"`
+	Restart            bool      `json:"restart"`
 }
 
 type SecretGenerateRequest struct {

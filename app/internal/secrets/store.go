@@ -19,12 +19,14 @@ import (
 )
 
 type Values struct {
-	OwnerPassword      string   `json:"ownerPassword"`
-	ClientID           string   `json:"clientId"`
-	ClientSecret       string   `json:"clientSecret"`
-	TokenSecret        string   `json:"tokenSecret"`
-	RedirectURIs       []string `json:"redirectUris,omitempty"`
-	WebControlPassword string   `json:"webControlPassword,omitempty"`
+	OwnerPassword          string   `json:"ownerPassword"`
+	ClientID               string   `json:"clientId"`
+	ClientSecret           string   `json:"clientSecret"`
+	TokenSecret            string   `json:"tokenSecret"`
+	RedirectURIs           []string `json:"redirectUris,omitempty"`
+	WebControlPassword     string   `json:"webControlPassword,omitempty"`
+	OpenAITunnelAPIKey     string   `json:"openAITunnelApiKey,omitempty"`
+	OpenAITunnelLocalToken string   `json:"openAITunnelLocalToken,omitempty"`
 }
 
 type secretEnvelope struct {
@@ -144,7 +146,7 @@ func (s *Store) Summary(reveal bool) (model.SecretSummary, error) {
 		return model.SecretSummary{}, err
 	}
 	if !reveal {
-		return model.SecretSummary{ClientID: values.ClientID, Configured: true, EncryptedAtRest: encryptionAvailable()}, nil
+		return model.SecretSummary{ClientID: values.ClientID, Configured: true, EncryptedAtRest: encryptionAvailable(), HasOpenAITunnelAPIKey: strings.TrimSpace(values.OpenAITunnelAPIKey) != ""}, nil
 	}
 	return summary(values), nil
 }
@@ -171,6 +173,17 @@ func (s *Store) Update(request model.SecretUpdateRequest) (model.SecretSummary, 
 	}
 	if request.RedirectURIs != nil {
 		values.RedirectURIs = append([]string(nil), (*request.RedirectURIs)...)
+	}
+	if request.OpenAITunnelAPIKey != nil {
+		values.OpenAITunnelAPIKey = strings.TrimSpace(*request.OpenAITunnelAPIKey)
+		if values.OpenAITunnelAPIKey == "" {
+			values.OpenAITunnelLocalToken = ""
+		} else if values.OpenAITunnelLocalToken == "" {
+			values.OpenAITunnelLocalToken, err = randomHex(32)
+			if err != nil {
+				return model.SecretSummary{}, err
+			}
+		}
 	}
 	for index := range values.RedirectURIs {
 		values.RedirectURIs[index] = strings.TrimSpace(values.RedirectURIs[index])
@@ -265,14 +278,38 @@ func (s *Store) Generate(field string) (model.SecretSummary, error) {
 
 func summary(values Values) model.SecretSummary {
 	return model.SecretSummary{
-		OwnerPassword:   values.OwnerPassword,
-		ClientID:        values.ClientID,
-		ClientSecret:    values.ClientSecret,
-		TokenSecret:     values.TokenSecret,
-		Configured:      true,
-		EncryptedAtRest: encryptionAvailable(),
-		RedirectURIs:    append([]string(nil), values.RedirectURIs...),
+		OwnerPassword:         values.OwnerPassword,
+		ClientID:              values.ClientID,
+		ClientSecret:          values.ClientSecret,
+		TokenSecret:           values.TokenSecret,
+		Configured:            true,
+		EncryptedAtRest:       encryptionAvailable(),
+		RedirectURIs:          append([]string(nil), values.RedirectURIs...),
+		OpenAITunnelAPIKey:    values.OpenAITunnelAPIKey,
+		HasOpenAITunnelAPIKey: strings.TrimSpace(values.OpenAITunnelAPIKey) != "",
 	}
+}
+
+func (s *Store) OpenAITunnelCredentials() (apiKey, localToken string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values, err := s.getOrCreateLocked()
+	if err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(values.OpenAITunnelAPIKey) == "" {
+		return "", "", errors.New("OpenAI Secure Tunnel API key is not configured")
+	}
+	if values.OpenAITunnelLocalToken == "" {
+		values.OpenAITunnelLocalToken, err = randomHex(32)
+		if err != nil {
+			return "", "", err
+		}
+		if err := s.saveLocked(values); err != nil {
+			return "", "", err
+		}
+	}
+	return values.OpenAITunnelAPIKey, values.OpenAITunnelLocalToken, nil
 }
 
 func validate(values Values) error {
@@ -288,6 +325,22 @@ func validate(values Values) error {
 		}
 		if hasControl(values.WebControlPassword) {
 			return errors.New("web control password cannot contain control characters")
+		}
+	}
+	if values.OpenAITunnelAPIKey != "" {
+		if length := len(values.OpenAITunnelAPIKey); length < 12 || length > 1024 {
+			return errors.New("OpenAI Secure Tunnel API key must be between 12 and 1024 characters")
+		}
+		if hasControl(values.OpenAITunnelAPIKey) {
+			return errors.New("OpenAI Secure Tunnel API key cannot contain control characters")
+		}
+	}
+	if values.OpenAITunnelLocalToken != "" {
+		if len(values.OpenAITunnelLocalToken) != 64 {
+			return errors.New("OpenAI local tunnel token must contain exactly 64 hexadecimal characters")
+		}
+		if _, err := hex.DecodeString(values.OpenAITunnelLocalToken); err != nil {
+			return errors.New("OpenAI local tunnel token must contain exactly 64 hexadecimal characters")
 		}
 	}
 	if length := len(values.ClientID); length < 3 || length > 128 || !clientIDPattern.MatchString(values.ClientID) {

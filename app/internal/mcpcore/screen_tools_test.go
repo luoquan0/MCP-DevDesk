@@ -1,10 +1,10 @@
 package mcpcore
 
 import (
+	"bytes"
 	"encoding/base64"
 	"image"
 	"image/png"
-	"bytes"
 	"strings"
 	"testing"
 )

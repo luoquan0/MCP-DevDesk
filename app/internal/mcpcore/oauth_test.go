@@ -692,3 +692,48 @@ func TestDynamicOAuthClientsAreEncryptedAndReloaded(t *testing.T) {
 		t.Fatalf("registered client was not reloaded: %#v, %v", client, ok)
 	}
 }
+
+func TestOAuthLocalTunnelCredentialIsLoopbackOnly(t *testing.T) {
+	oauth, err := newOAuthServer(OAuthOptions{
+		Enabled:          true,
+		Issuer:           "http://127.0.0.1:18765",
+		Resource:         "http://127.0.0.1:18765/mcp",
+		OwnerPassword:    "owner-password-long-enough",
+		ClientID:         "mcp-devdesk",
+		ClientSecret:     "static-client-secret-value",
+		TokenSecret:      strings.Repeat("ab", 32),
+		LocalTunnelToken: strings.Repeat("cd", 32),
+		DataDir:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected := oauth.protect(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+
+	loopback := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18765/mcp", nil)
+	loopback.RemoteAddr = "127.0.0.1:54321"
+	loopback.Header.Set("X-MCP-DevDesk-Tunnel-Token", strings.Repeat("cd", 32))
+	loopbackRecorder := httptest.NewRecorder()
+	protected.ServeHTTP(loopbackRecorder, loopback)
+	if loopbackRecorder.Code != http.StatusNoContent {
+		t.Fatalf("loopback token status = %d", loopbackRecorder.Code)
+	}
+
+	remote := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18765/mcp", nil)
+	remote.RemoteAddr = "203.0.113.10:54321"
+	remote.Header.Set("X-MCP-DevDesk-Tunnel-Token", strings.Repeat("cd", 32))
+	remoteRecorder := httptest.NewRecorder()
+	protected.ServeHTTP(remoteRecorder, remote)
+	if remoteRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("remote token unexpectedly bypassed OAuth: %d", remoteRecorder.Code)
+	}
+
+	wrong := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18765/mcp", nil)
+	wrong.RemoteAddr = "[::1]:54321"
+	wrong.Header.Set("X-MCP-DevDesk-Tunnel-Token", strings.Repeat("ef", 32))
+	wrongRecorder := httptest.NewRecorder()
+	protected.ServeHTTP(wrongRecorder, wrong)
+	if wrongRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong loopback token unexpectedly bypassed OAuth: %d", wrongRecorder.Code)
+	}
+}

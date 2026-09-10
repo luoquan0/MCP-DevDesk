@@ -74,6 +74,16 @@ func (m *Manager) StartMCP(cfg model.Config) error {
 	}
 	args := mcpArguments(cfg, m.dataDir, baseURL, instructionsFile)
 
+	if strings.EqualFold(strings.TrimSpace(cfg.ConnectionMode), "openai") {
+		if cfg.CoreMode != "go" {
+			return errors.New("OpenAI Secure Tunnel requires the Go MCP core")
+		}
+		_, localToken, credentialErr := m.secrets.OpenAITunnelCredentials()
+		if credentialErr != nil {
+			return credentialErr
+		}
+		values.OpenAITunnelLocalToken = localToken
+	}
 	env := mcpEnvironment(cfg, values, baseURL)
 
 	stdout := filepath.Join(m.dataDir, "logs", "mcp-stdout.log")
@@ -134,8 +144,11 @@ func selectedMCPExecutable(cfg model.Config) string {
 }
 
 func mcpServerURL(cfg model.Config) string {
-	if domain := strings.TrimSpace(cfg.Domain); domain != "" {
-		return "https://" + strings.ToLower(domain)
+	mode := strings.ToLower(strings.TrimSpace(cfg.ConnectionMode))
+	if mode == "" || mode == "cloudflare" {
+		if domain := strings.TrimSpace(cfg.Domain); domain != "" {
+			return "https://" + strings.ToLower(domain)
+		}
 	}
 	return "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort)
 }
@@ -214,10 +227,26 @@ func mcpEnvironment(cfg model.Config, values secrets.Values, baseURL string) []s
 		"CODING_TOOLS_MCP_OAUTH_REDIRECT_URIS="+strings.Join(values.RedirectURIs, "\n"),
 		"CODING_TOOLS_MCP_TOOL_PROFILE="+cfg.ToolProfile,
 	)
+	if strings.TrimSpace(values.OpenAITunnelLocalToken) != "" {
+		env = append(env, "CODING_TOOLS_MCP_LOCAL_TUNNEL_TOKEN="+values.OpenAITunnelLocalToken)
+	}
 	return appendProxy(env, cfg)
 }
 
 func (m *Manager) StartTunnel(cfg model.Config) error {
+	switch strings.ToLower(strings.TrimSpace(cfg.ConnectionMode)) {
+	case "local":
+		return errors.New("local connection mode does not start a tunnel process")
+	case "openai":
+		return m.startOpenAITunnel(cfg)
+	case "", "cloudflare":
+		return m.startCloudflareTunnel(cfg)
+	default:
+		return fmt.Errorf("unsupported connection mode %q", cfg.ConnectionMode)
+	}
+}
+
+func (m *Manager) startCloudflareTunnel(cfg model.Config) error {
 	if _, err := os.Stat(cfg.CloudflaredExecutable); err != nil {
 		return fmt.Errorf("cloudflared executable unavailable: %w", err)
 	}
@@ -252,6 +281,62 @@ func (m *Manager) StartTunnel(cfg model.Config) error {
 	stdout := filepath.Join(m.dataDir, "logs", "tunnel-stdout.log")
 	stderr := filepath.Join(m.dataDir, "logs", "tunnel-stderr.log")
 	return m.start(&m.tunnel, cfg.CloudflaredExecutable, args, m.rootDir, appendProxy(os.Environ(), cfg), stdout, stderr, cfg.HideChildProcessWindows)
+}
+
+func (m *Manager) startOpenAITunnel(cfg model.Config) error {
+	if cfg.CoreMode != "go" {
+		return errors.New("OpenAI Secure Tunnel requires the Go MCP core")
+	}
+	executable := strings.TrimSpace(cfg.OpenAITunnelClientExecutable)
+	if executable == "" {
+		return errors.New("OpenAI tunnel-client executable is not configured")
+	}
+	if _, err := os.Stat(executable); err != nil {
+		return fmt.Errorf("OpenAI tunnel-client executable unavailable: %w", err)
+	}
+	tunnelID := strings.TrimSpace(cfg.OpenAITunnelID)
+	if tunnelID == "" {
+		return errors.New("OpenAI Secure Tunnel ID is not configured")
+	}
+	apiKey, localToken, err := m.secrets.OpenAITunnelCredentials()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(localToken) == "" {
+		return errors.New("OpenAI Secure Tunnel local credential is unavailable")
+	}
+
+	secretDir := filepath.Join(m.dataDir, "openai-tunnel")
+	if err := os.MkdirAll(secretDir, 0o700); err != nil {
+		return fmt.Errorf("create OpenAI tunnel state directory: %w", err)
+	}
+	headerPath := filepath.Join(secretDir, "local-token.txt")
+	if err := os.WriteFile(headerPath, []byte(localToken), 0o600); err != nil {
+		return fmt.Errorf("write OpenAI tunnel local credential: %w", err)
+	}
+
+	args := openAITunnelArguments(cfg, headerPath)
+	env := append(os.Environ(),
+		"CONTROL_PLANE_TUNNEL_ID="+tunnelID,
+		"CONTROL_PLANE_API_KEY="+apiKey,
+	)
+	stdout := filepath.Join(m.dataDir, "logs", "openai-tunnel-stdout.log")
+	stderr := filepath.Join(m.dataDir, "logs", "openai-tunnel-stderr.log")
+	return m.start(&m.tunnel, executable, args, m.rootDir, env, stdout, stderr, cfg.HideChildProcessWindows)
+}
+
+func openAITunnelArguments(cfg model.Config, localTokenFile string) []string {
+	localMCPURL := "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort) + "/mcp"
+	args := []string{
+		"run",
+		"--control-plane.tunnel-id", strings.TrimSpace(cfg.OpenAITunnelID),
+		"--mcp.server-url", "url=" + localMCPURL + ",channel=main",
+		"--mcp.extra-headers", "X-MCP-DevDesk-Tunnel-Token: file:" + localTokenFile,
+	}
+	if proxy := strings.TrimSpace(cfg.OpenAITunnelProxy); proxy != "" {
+		args = append(args, "--control-plane.http-proxy", proxy)
+	}
+	return args
 }
 
 func (m *Manager) ensureMCPServerURLForTunnel(cfg model.Config) error {
