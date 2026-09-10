@@ -389,36 +389,58 @@ func screenFlushDWM() {
 	}
 }
 
-// screenSetWindowCloak uses the documented DWMWA_CLOAK guard. A cloaked HWND
-// remains composed by DWM but is not visible to the user, which lets the dormant
-// fallback restore/move a window without exposing any intermediate on-screen
-// placement. Callers must always uncloak during cleanup after the original
-// hidden/minimized state has been restored.
+// screenSetWindowCloak provides a no-visible-desktop guard for dormant-window
+// restoration. DWM cloak is preferred because it leaves the compositor surface
+// intact. Windows can reject DWMWA_CLOAK for another process with E_ACCESSDENIED;
+// in that case we install an empty Win32 window region before ShowWindowAsync and
+// restore the original region only after the HWND is safely off-screen. Callers
+// therefore keep the same strict fail-closed behavior without depending on
+// cross-process DWM cloak permission.
 func screenSetWindowCloak(hwnd uintptr, cloaked bool) error {
 	if hwnd == 0 {
 		return errors.New("window handle is invalid")
 	}
-	if err := procDwmSetWindowAttribute.Find(); err != nil {
-		return fmt.Errorf("DwmSetWindowAttribute unavailable: %w", err)
+
+	// If this HWND is currently protected by the Win32 region fallback, an
+	// "uncloak" request means restore its original region. Do not call DWM here:
+	// the DWM cloak operation never succeeded for this guard instance.
+	if !cloaked && screenWindowRegionGuardActive(hwnd) {
+		return screenDisableWindowRegionGuard(hwnd)
 	}
-	var value uint32
-	if cloaked {
-		value = 1
-	}
-	result, _, callErr := procDwmSetWindowAttribute.Call(
-		hwnd,
-		dwmwaCloak,
-		uintptr(unsafe.Pointer(&value)),
-		unsafe.Sizeof(value),
-	)
-	if int32(result) != 0 {
-		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
-			return fmt.Errorf("DwmSetWindowAttribute(DWMWA_CLOAK=%t) failed: HRESULT 0x%08X: %w", cloaked, uint32(result), callErr)
+
+	var dwmErr error
+	if findErr := procDwmSetWindowAttribute.Find(); findErr != nil {
+		dwmErr = fmt.Errorf("DwmSetWindowAttribute unavailable: %w", findErr)
+	} else {
+		var value uint32
+		if cloaked {
+			value = 1
 		}
-		return fmt.Errorf("DwmSetWindowAttribute(DWMWA_CLOAK=%t) failed: HRESULT 0x%08X", cloaked, uint32(result))
+		result, _, callErr := procDwmSetWindowAttribute.Call(
+			hwnd,
+			dwmwaCloak,
+			uintptr(unsafe.Pointer(&value)),
+			unsafe.Sizeof(value),
+		)
+		if int32(result) == 0 {
+			screenFlushDWM()
+			return nil
+		}
+		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+			dwmErr = fmt.Errorf("DwmSetWindowAttribute(DWMWA_CLOAK=%t) failed: HRESULT 0x%08X: %w", cloaked, uint32(result), callErr)
+		} else {
+			dwmErr = fmt.Errorf("DwmSetWindowAttribute(DWMWA_CLOAK=%t) failed: HRESULT 0x%08X", cloaked, uint32(result))
+		}
 	}
-	screenFlushDWM()
-	return nil
+
+	if cloaked {
+		if regionErr := screenEnableWindowRegionGuard(hwnd); regionErr == nil {
+			return nil
+		} else {
+			return fmt.Errorf("%v; Win32 window-region visibility fallback failed: %w", dwmErr, regionErr)
+		}
+	}
+	return dwmErr
 }
 
 func screenClearCaptureBitmap(memoryDC uintptr, width, height int) {
