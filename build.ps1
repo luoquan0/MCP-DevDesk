@@ -27,8 +27,10 @@ if (Test-Path (Join-Path $FrontendDir "package.json")) {
     try {
         if (-not (Test-Path (Join-Path $FrontendDir "node_modules"))) {
             npm ci
+            if ($LASTEXITCODE -ne 0) { throw "Native build/test command failed with exit code $LASTEXITCODE" }
         }
         npm run build
+        if ($LASTEXITCODE -ne 0) { throw "Native build/test command failed with exit code $LASTEXITCODE" }
     } finally {
         Pop-Location
     }
@@ -40,6 +42,7 @@ try {
     $env:GOTMPDIR = Join-Path $AppDir ".gotmp"
     if ($RunTests) {
         go test -mod=vendor ./...
+        if ($LASTEXITCODE -ne 0) { throw "Native build/test command failed with exit code $LASTEXITCODE" }
     }
 
     $env:GOOS = "windows"
@@ -50,19 +53,23 @@ try {
         $ManagerLdFlags += " -X mcp-devdesk/internal/buildinfo.Repository=$($env:MCP_DEVDESK_GITHUB_REPOSITORY)"
     }
     go build -mod=vendor -trimpath -ldflags $ManagerLdFlags -o $Output ./cmd/mcp-devdesk
+    if ($LASTEXITCODE -ne 0) { throw "Native build/test command failed with exit code $LASTEXITCODE" }
     if (Test-Path -LiteralPath $ExeIconScript) {
         & $ExeIconScript -ExePath $Output -IconPath (Join-Path $AppDir "internal\desktop\assets\mcp-devdesk.ico")
     }
 
     $CliOutput = Join-Path $DistDir "devdeskctl-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w" -o $CliOutput ./cmd/devdeskctl
+    if ($LASTEXITCODE -ne 0) { throw "Native build/test command failed with exit code $LASTEXITCODE" }
 
     $CoreOutput = Join-Path $DistDir "mcp-core-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w" -o $CoreOutput ./cmd/mcp-core
+    if ($LASTEXITCODE -ne 0) { throw "Native build/test command failed with exit code $LASTEXITCODE" }
     Copy-Item -LiteralPath $CoreOutput -Destination (Join-Path $DistDir "mcp-core.exe") -Force
 
     $UpdaterOutput = Join-Path $DistDir "devdesk-updater-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w -H=windowsgui" -o $UpdaterOutput ./cmd/devdesk-updater
+    if ($LASTEXITCODE -ne 0) { throw "Native build/test command failed with exit code $LASTEXITCODE" }
 
     Write-Host "Build complete: $Output" -ForegroundColor Green
     Write-Host "CLI complete:   $CliOutput" -ForegroundColor Green
@@ -80,6 +87,7 @@ if ($RunTests -and (Test-Path -LiteralPath $SmokeScript)) {
         $PreviousE2ECore = $env:MCP_DEV_DESK_E2E_CORE
         $env:MCP_DEV_DESK_E2E_CORE = Join-Path $DistDir "mcp-core-$Arch.exe"
         go test -mod=vendor ./internal/application -run TestRealMultiInstanceStart -count=1
+        if ($LASTEXITCODE -ne 0) { throw "Native build/test command failed with exit code $LASTEXITCODE" }
     } finally {
         $env:MCP_DEV_DESK_E2E_CORE = $PreviousE2ECore
         Pop-Location

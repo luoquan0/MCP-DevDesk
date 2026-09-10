@@ -19,11 +19,16 @@ import (
 	"mcp-devdesk/internal/desktop"
 	devlogging "mcp-devdesk/internal/logging"
 	"mcp-devdesk/internal/maintenance"
+	"mcp-devdesk/internal/mcpcore"
 	"mcp-devdesk/internal/startup"
 	"mcp-devdesk/internal/web"
 )
 
 func main() {
+	if handled, code := mcpcore.RunScreenCaptureWorker(os.Args[1:], os.Stdin, os.Stdout); handled {
+		os.Exit(code)
+	}
+
 	background := hasArgument("--background")
 	rootDir, err := locateRoot()
 	if err != nil {

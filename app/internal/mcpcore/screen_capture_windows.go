@@ -20,18 +20,11 @@ const (
 	smCXVirtualScreen        = 78
 	smCYVirtualScreen        = 79
 	dwmwaExtendedFrameBounds = 9
-	dwmwaCloak               = 13
 	dwmwaCloaked             = 14
 	processQueryLimitedInfo  = 0x1000
 	pwRenderFullContent      = 0x00000002
 	gwHwndPrev               = 3
 	gwlExStyle               = 0xFFFFFFEC
-	wsExTopmost              = 0x00000008
-	swpNoSize                = 0x0001
-	swpNoMove                = 0x0002
-	swpNoActivate            = 0x0010
-	swpNoOwnerZOrder         = 0x0200
-	swpNoSendChanging        = 0x0400
 	srcCopy                  = 0x00CC0020
 	captureBLT               = 0x40000000
 	blackness                = 0x00000042
@@ -39,8 +32,6 @@ const (
 	biRGB                    = 0
 	maxScreenCapturePixels   = 40_000_000
 )
-
-const screenRevealWindowPosFlags = swpNoSize | swpNoMove | swpNoActivate | swpNoOwnerZOrder | swpNoSendChanging
 
 var (
 	screenUser32   = windows.NewLazySystemDLL("user32.dll")
@@ -54,8 +45,6 @@ var (
 	procIsIconic                 = screenUser32.NewProc("IsIconic")
 	procGetWindow                = screenUser32.NewProc("GetWindow")
 	procGetWindowLongW           = screenUser32.NewProc("GetWindowLongW")
-	procSetWindowPos             = screenUser32.NewProc("SetWindowPos")
-	procSetForegroundWindow      = screenUser32.NewProc("SetForegroundWindow")
 	procGetWindowTextLengthW     = screenUser32.NewProc("GetWindowTextLengthW")
 	procGetWindowTextW           = screenUser32.NewProc("GetWindowTextW")
 	procGetWindowThreadProcessID = screenUser32.NewProc("GetWindowThreadProcessId")
@@ -63,7 +52,6 @@ var (
 	procGetWindowRect            = screenUser32.NewProc("GetWindowRect")
 	procPrintWindow              = screenUser32.NewProc("PrintWindow")
 	procGetDC                    = screenUser32.NewProc("GetDC")
-	procGetWindowDC              = screenUser32.NewProc("GetWindowDC")
 	procReleaseDC                = screenUser32.NewProc("ReleaseDC")
 	procGetSystemMetrics         = screenUser32.NewProc("GetSystemMetrics")
 
@@ -77,7 +65,6 @@ var (
 	procGetDIBits              = screenGDI32.NewProc("GetDIBits")
 
 	procDwmGetWindowAttribute      = screenDWMAPI.NewProc("DwmGetWindowAttribute")
-	procDwmSetWindowAttribute      = screenDWMAPI.NewProc("DwmSetWindowAttribute")
 	procDwmFlush                   = screenDWMAPI.NewProc("DwmFlush")
 	procOpenProcess                = screenKernel32.NewProc("OpenProcess")
 	procQueryFullProcessImageNameW = screenKernel32.NewProc("QueryFullProcessImageNameW")
@@ -184,22 +171,7 @@ func platformActiveScreenWindow() (screenWindow, error) {
 }
 
 func platformCaptureScreenWindow(window screenWindow) (screenCaptureFrame, error) {
-	if window.Handle == 0 {
-		return screenCaptureFrame{}, errors.New("window handle is invalid")
-	}
-	valid, _, _ := procIsWindow.Call(window.Handle)
-	if valid == 0 {
-		return screenCaptureFrame{}, errors.New("window is no longer available")
-	}
-	minimized, _, _ := procIsIconic.Call(window.Handle)
-	if minimized != 0 {
-		return screenCaptureFrame{}, errors.New("selected window is minimized; use the dormant Screen Vision capture path")
-	}
-	rect, err := screenWindowRect(window.Handle)
-	if err != nil {
-		return screenCaptureFrame{}, err
-	}
-	return captureScreenRect(rect, window.Handle)
+	return platformCaptureScreenWindowForVision(window)
 }
 
 func platformCaptureScreenDesktop() (screenCaptureFrame, error) {
@@ -211,236 +183,113 @@ func platformCaptureScreenDesktop() (screenCaptureFrame, error) {
 	if err := validateScreenRect(rect); err != nil {
 		return screenCaptureFrame{}, fmt.Errorf("virtual desktop: %w", err)
 	}
-	return captureScreenRect(rect, 0)
+	return screenCaptureIsolated(screenWorkerRequest{Mode: "desktop", Bounds: rect})
 }
 
-// captureScreenRect never changes the target HWND's visibility, placement,
-// activation, or Z-order. Window captures use only HWND-owned rendering paths
-// first (PrintWindow / window DC), then Windows.Graphics.Capture for compositor
-// and GPU-backed surfaces. Reading desktop pixels is permitted only for the
-// actual foreground window or for an explicit whole-desktop capture.
+// captureScreenRect runs only inside the short-lived capture worker. No window
+// capture reads the desktop DC or changes an application's native window state.
 func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error) {
 	if err := validateScreenRect(rect); err != nil {
 		return screenCaptureFrame{}, err
 	}
-	screenDC, _, callErr := procGetDC.Call(0)
-	if screenDC == 0 {
-		return screenCaptureFrame{}, fmt.Errorf("GetDC failed: %v", callErr)
+	if hwnd == 0 {
+		return screenCaptureGDI(rect, 0)
 	}
-	defer procReleaseDC.Call(0, screenDC)
-	memoryDC, _, callErr := procCreateCompatibleDC.Call(screenDC)
-	if memoryDC == 0 {
-		return screenCaptureFrame{}, fmt.Errorf("CreateCompatibleDC failed: %v", callErr)
+	// Prefer the compositor. PrintWindow is a compatibility path, not the first
+	// operation against a Chromium/WebView2/WPF application.
+	frame, wgcErr := captureScreenWindowWGC(hwnd, rect)
+	if wgcErr == nil {
+		return frame, nil
 	}
-	defer procDeleteDC.Call(memoryDC)
-	bitmap, _, callErr := procCreateCompatibleBitmap.Call(screenDC, uintptr(rect.Width), uintptr(rect.Height))
-	if bitmap == 0 {
-		return screenCaptureFrame{}, fmt.Errorf("CreateCompatibleBitmap failed: %v", callErr)
+	iconic, _, _ := procIsIconic.Call(hwnd)
+	if iconic != 0 {
+		// PrintWindow may report success but paint only the minimized icon
+		// rectangle into a normal-sized bitmap. Never return that partial surface
+		// as a complete app window, and never restore the app to obtain pixels.
+		return screenCaptureFrame{}, fmt.Errorf("minimized compositor surface unavailable: %w; skipped icon-clipped PrintWindow output", wgcErr)
 	}
-	defer procDeleteObject.Call(bitmap)
-	previous, _, callErr := procSelectObject.Call(memoryDC, bitmap)
-	if previous == 0 || previous == ^uintptr(0) {
-		return screenCaptureFrame{}, fmt.Errorf("SelectObject failed: %v", callErr)
+	if !screenPrintWindowAllowed(hwnd) {
+		return screenCaptureFrame{}, fmt.Errorf("compositor capture failed: %w; synchronous PrintWindow is disabled for GPU/WebView/WPF or unresponsive windows", wgcErr)
 	}
-	defer procSelectObject.Call(memoryDC, previous)
+	frame, printErr := screenCaptureGDI(rect, hwnd)
+	if printErr == nil {
+		return frame, nil
+	}
+	return screenCaptureFrame{}, fmt.Errorf("state-neutral capture failed; WGC: %v; PrintWindow: %w; target state was not modified", wgcErr, printErr)
+}
 
-	method := "bitblt-desktop"
-	captured := uintptr(0)
-	if hwnd != 0 {
-		foreground, _, _ := procGetForegroundWindow.Call()
-		screenFlushDWM()
-
-		// Clear the destination before every HWND-owned attempt. Some GPU or
-		// Chromium windows return success from PrintWindow without writing usable
-		// pixels; a known black destination makes that failure detectable.
-		screenClearCaptureBitmap(memoryDC, rect.Width, rect.Height)
-		captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, pwRenderFullContent)
-		if captured != 0 && !screenCapturedBitmapLikelyArtifact(screenDC, bitmap, rect.Width, rect.Height) {
-			method = "print-window-full"
-		} else {
-			captured = 0
-		}
-		if captured == 0 {
-			screenClearCaptureBitmap(memoryDC, rect.Width, rect.Height)
-			captured, _, _ = procPrintWindow.Call(hwnd, memoryDC, 0)
-			if captured != 0 && !screenCapturedBitmapLikelyArtifact(screenDC, bitmap, rect.Width, rect.Height) {
-				method = "print-window"
-			} else {
-				captured = 0
-			}
-		}
-		if captured == 0 {
-			screenClearCaptureBitmap(memoryDC, rect.Width, rect.Height)
-			windowDC, _, _ := procGetWindowDC.Call(hwnd)
-			if windowDC != 0 {
-				ok, _, _ := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), windowDC, 0, 0, srcCopy|captureBLT)
-				procReleaseDC.Call(hwnd, windowDC)
-				if ok != 0 && !screenCapturedBitmapLikelyArtifact(screenDC, bitmap, rect.Width, rect.Height) {
-					captured = 1
-					method = "window-dc"
-				}
-			}
-		}
-
-		// PrintWindow commonly returns blank client surfaces for Chromium, WPF,
-		// VMware, WebView2 and other GPU/compositor-heavy applications. Switch to
-		// Windows.Graphics.Capture before considering any window-state mutation.
-		var wgcErr error
-		if captured == 0 {
-			wgcFrame, captureErr := captureScreenWindowWGC(hwnd, rect)
-			if captureErr == nil {
-				return wgcFrame, nil
-			}
-			wgcErr = captureErr
-		}
-
-		if captured == 0 {
-			if foreground != 0 && hwnd == foreground {
-				screenClearCaptureBitmap(memoryDC, rect.Width, rect.Height)
-				ok, _, foregroundErr := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), screenDC, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
-				if ok == 0 {
-					return screenCaptureFrame{}, fmt.Errorf("foreground BitBlt failed after Windows Graphics Capture fallback (%v): %v", wgcErr, foregroundErr)
-				}
-				captured = 1
-				method = "screen-foreground-fallback"
-			} else if wgcErr != nil {
-				return screenCaptureFrame{}, fmt.Errorf("capture selected background window without desktop mutation: %w", wgcErr)
-			} else {
-				return screenCaptureFrame{}, errors.New("selected background window could not be captured without mutating the desktop")
-			}
-		}
-	} else {
-		screenClearCaptureBitmap(memoryDC, rect.Width, rect.Height)
-		ok, _, callErr := procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), screenDC, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
-		if ok == 0 {
-			return screenCaptureFrame{}, fmt.Errorf("BitBlt failed: %v", callErr)
-		}
-		captured = 1
-	}
-	if captured == 0 {
-		return screenCaptureFrame{}, errors.New("screen capture did not produce pixels")
-	}
-	capturedImage, err := screenBitmapToNRGBA(screenDC, bitmap, rect.Width, rect.Height)
-	if err != nil {
+// screenCaptureGDI owns its DCs on one worker OS thread. GetDIBits requires the
+// bitmap to be deselected; an unreadable bitmap is an error, never valid pixels.
+func screenCaptureGDI(rect screenRect, hwnd uintptr) (screenCaptureFrame, error) {
+	if err := validateScreenRect(rect); err != nil {
 		return screenCaptureFrame{}, err
 	}
-	return screenCaptureFrame{Image: capturedImage, Bounds: rect, Method: method}, nil
-}
-
-// restoreBackgroundWindowAfterReveal is retained as a state-restoration helper
-// for the dormant off-screen fallback. No Screen Vision capture path reveals a
-// background window on the user's visible desktop anymore.
-func restoreBackgroundWindowAfterReveal(hwnd, originalAbove, foreground uintptr, wasTopmost, originalAboveSameBand bool) error {
-	var restoreErrors []string
-	if err := screenSetWindowPosition(hwnd, screenWindowBandInsertAfter(wasTopmost)); err != nil {
-		restoreErrors = append(restoreErrors, fmt.Sprintf("restore topmost state: %v", err))
+	dc, _, callErr := procGetDC.Call(0)
+	if dc == 0 {
+		return screenCaptureFrame{}, fmt.Errorf("GetDC: %v", callErr)
 	}
-	if originalAboveSameBand && originalAbove != 0 {
-		valid, _, _ := procIsWindow.Call(originalAbove)
-		if valid != 0 && screenWindowTopmost(originalAbove) == wasTopmost {
-			if err := screenSetWindowPosition(hwnd, originalAbove); err != nil {
-				restoreErrors = append(restoreErrors, fmt.Sprintf("restore Z-order: %v", err))
+	defer procReleaseDC.Call(0, dc)
+	memoryDC, _, callErr := procCreateCompatibleDC.Call(dc)
+	if memoryDC == 0 {
+		return screenCaptureFrame{}, fmt.Errorf("CreateCompatibleDC: %v", callErr)
+	}
+	defer procDeleteDC.Call(memoryDC)
+	bitmap, _, callErr := procCreateCompatibleBitmap.Call(dc, uintptr(rect.Width), uintptr(rect.Height))
+	if bitmap == 0 {
+		return screenCaptureFrame{}, fmt.Errorf("CreateCompatibleBitmap: %v", callErr)
+	}
+	defer procDeleteObject.Call(bitmap)
+	flags := []uintptr{pwRenderFullContent, 0}
+	if hwnd == 0 {
+		flags = []uintptr{0}
+	}
+	var lastErr error
+	for _, flag := range flags {
+		previous, _, selectErr := procSelectObject.Call(memoryDC, bitmap)
+		if previous == 0 || previous == ^uintptr(0) {
+			return screenCaptureFrame{}, fmt.Errorf("SelectObject: %v", selectErr)
+		}
+		screenClearCaptureBitmap(memoryDC, rect.Width, rect.Height)
+		var ok uintptr
+		method := "bitblt-desktop"
+		if hwnd == 0 {
+			ok, _, callErr = procBitBlt.Call(memoryDC, 0, 0, uintptr(rect.Width), uintptr(rect.Height), dc, uintptr(int32(rect.X)), uintptr(int32(rect.Y)), srcCopy|captureBLT)
+		} else {
+			ok, _, callErr = procPrintWindow.Call(hwnd, memoryDC, flag)
+			method = "print-window"
+			if flag == pwRenderFullContent {
+				method = "print-window-full"
 			}
 		}
-	}
-	screenFlushDWM()
-
-	// SWP_NOACTIVATE normally preserves foreground focus. If an application
-	// activates itself in reaction to a state change, restore the user's exact
-	// previous foreground window as a best-effort final cleanup step.
-	if foreground != 0 {
-		current, _, _ := procGetForegroundWindow.Call()
-		if current != foreground {
-			procSetForegroundWindow.Call(foreground)
+		selected, _, deselectErr := procSelectObject.Call(memoryDC, previous)
+		if selected == 0 || selected == ^uintptr(0) {
+			return screenCaptureFrame{}, fmt.Errorf("deselect capture bitmap: %v", deselectErr)
 		}
+		if ok == 0 {
+			lastErr = fmt.Errorf("%s failed: %v", method, callErr)
+			continue
+		}
+		pixels, err := screenBitmapToNRGBA(dc, bitmap, rect.Width, rect.Height)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if hwnd != 0 && screenImageLikelyPrintWindowArtifact(pixels) {
+			lastErr = errors.New("PrintWindow returned a blank/solid surface, not a verified application frame")
+			continue
+		}
+		return screenCaptureFrame{Image: pixels, Bounds: rect, Method: method}, nil
 	}
-	if len(restoreErrors) > 0 {
-		return errors.New(strings.Join(restoreErrors, "; "))
+	if lastErr == nil {
+		lastErr = errors.New("GDI capture produced no pixels")
 	}
-	return nil
-}
-
-func screenSetWindowPosition(hwnd, insertAfter uintptr) error {
-	ok, _, callErr := procSetWindowPos.Call(hwnd, insertAfter, 0, 0, 0, 0, uintptr(screenRevealWindowPosFlags))
-	if ok != 0 {
-		return nil
-	}
-	if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
-		return callErr
-	}
-	return errors.New("SetWindowPos failed")
-}
-
-func screenWindowBandInsertAfter(topmost bool) uintptr {
-	if topmost {
-		return ^uintptr(0) // HWND_TOPMOST (-1)
-	}
-	return ^uintptr(1) // HWND_NOTOPMOST (-2)
-}
-
-func screenWindowTopmost(hwnd uintptr) bool {
-	style, _, _ := procGetWindowLongW.Call(hwnd, uintptr(gwlExStyle))
-	return uint32(style)&wsExTopmost != 0
+	return screenCaptureFrame{}, lastErr
 }
 
 func screenFlushDWM() {
 	if err := procDwmFlush.Find(); err == nil {
 		procDwmFlush.Call()
 	}
-}
-
-// screenSetWindowCloak provides a no-visible-desktop guard for dormant-window
-// restoration. DWM cloak is preferred because it leaves the compositor surface
-// intact. Windows can reject DWMWA_CLOAK for another process with E_ACCESSDENIED;
-// in that case we install an empty Win32 window region before ShowWindowAsync and
-// restore the original region only after the HWND is safely off-screen. Callers
-// therefore keep the same strict fail-closed behavior without depending on
-// cross-process DWM cloak permission.
-func screenSetWindowCloak(hwnd uintptr, cloaked bool) error {
-	if hwnd == 0 {
-		return errors.New("window handle is invalid")
-	}
-
-	// If this HWND is currently protected by the Win32 region fallback, an
-	// "uncloak" request means restore its original region. Do not call DWM here:
-	// the DWM cloak operation never succeeded for this guard instance.
-	if !cloaked && screenWindowRegionGuardActive(hwnd) {
-		return screenDisableWindowRegionGuard(hwnd)
-	}
-
-	var dwmErr error
-	if findErr := procDwmSetWindowAttribute.Find(); findErr != nil {
-		dwmErr = fmt.Errorf("DwmSetWindowAttribute unavailable: %w", findErr)
-	} else {
-		var value uint32
-		if cloaked {
-			value = 1
-		}
-		result, _, callErr := procDwmSetWindowAttribute.Call(
-			hwnd,
-			dwmwaCloak,
-			uintptr(unsafe.Pointer(&value)),
-			unsafe.Sizeof(value),
-		)
-		if int32(result) == 0 {
-			screenFlushDWM()
-			return nil
-		}
-		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
-			dwmErr = fmt.Errorf("DwmSetWindowAttribute(DWMWA_CLOAK=%t) failed: HRESULT 0x%08X: %w", cloaked, uint32(result), callErr)
-		} else {
-			dwmErr = fmt.Errorf("DwmSetWindowAttribute(DWMWA_CLOAK=%t) failed: HRESULT 0x%08X", cloaked, uint32(result))
-		}
-	}
-
-	if cloaked {
-		if regionErr := screenEnableWindowRegionGuard(hwnd); regionErr == nil {
-			return nil
-		} else {
-			return fmt.Errorf("%v; Win32 window-region visibility fallback failed: %w", dwmErr, regionErr)
-		}
-	}
-	return dwmErr
 }
 
 func screenClearCaptureBitmap(memoryDC uintptr, width, height int) {
@@ -450,25 +299,9 @@ func screenClearCaptureBitmap(memoryDC uintptr, width, height int) {
 	procPatBlt.Call(memoryDC, 0, 0, uintptr(width), uintptr(height), blackness)
 }
 
-func screenCapturedBitmapLikelyBlank(dc, bitmap uintptr, width, height int) bool {
-	capturedImage, err := screenBitmapToNRGBA(dc, bitmap, width, height)
-	if err != nil {
-		return false
-	}
-	return screenImageLikelyBlank(capturedImage)
-}
-
-func screenCapturedBitmapLikelyArtifact(dc, bitmap uintptr, width, height int) bool {
-	capturedImage, err := screenBitmapToNRGBA(dc, bitmap, width, height)
-	if err != nil {
-		return false
-	}
-	return screenImageLikelyPrintWindowArtifact(capturedImage)
-}
-
 func screenImageLikelyBlank(capturedImage *image.NRGBA) bool {
 	if capturedImage == nil {
-		return false
+		return true
 	}
 	bounds := capturedImage.Bounds()
 	width := bounds.Dx()
@@ -510,7 +343,7 @@ func screenImageLikelyBlank(capturedImage *image.NRGBA) bool {
 // trusted as authoritative pixels.
 func screenImageLikelyPrintWindowArtifact(capturedImage *image.NRGBA) bool {
 	if capturedImage == nil {
-		return false
+		return true
 	}
 	if screenImageLikelyBlank(capturedImage) {
 		return true
@@ -597,7 +430,7 @@ func screenBitmapToNRGBA(dc, bitmap uintptr, width, height int) (*image.NRGBA, e
 	info.Header.BitCount = 32
 	info.Header.Compression = biRGB
 	lines, _, callErr := procGetDIBits.Call(dc, bitmap, 0, uintptr(height), uintptr(unsafe.Pointer(&pixels[0])), uintptr(unsafe.Pointer(&info)), dibRGBColors)
-	if lines == 0 {
+	if int(lines) != height {
 		return nil, fmt.Errorf("GetDIBits failed: %v", callErr)
 	}
 	result := image.NewNRGBA(image.Rect(0, 0, width, height))
@@ -632,8 +465,8 @@ func screenWindowRect(hwnd uintptr) (screenRect, error) {
 }
 
 func validateScreenRect(rect screenRect) error {
-	if rect.Width <= 0 || rect.Height <= 0 {
-		return errors.New("capture area has no visible size")
+	if rect.Width <= 0 || rect.Height <= 0 || rect.Width > 32768 || rect.Height > 32768 {
+		return errors.New("capture dimensions must be between 1 and 32768")
 	}
 	pixels := int64(rect.Width) * int64(rect.Height)
 	if pixels <= 0 || pixels > maxScreenCapturePixels {

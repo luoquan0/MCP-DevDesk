@@ -263,3 +263,9 @@ MCP DevDesk 的更新源由正式构建内置，界面不再显示或编辑 GitH
 ### 代理连通性测试
 
 更新代理支持只填写 IP/主机名和端口，程序自动尝试 HTTP CONNECT 与无认证 SOCKS5。设置页提供“测试代理”，测试请求有独立短超时并显示识别到的协议与耗时；错误代理不会再让“检查更新”长时间看起来无响应。代理仅用于 GitHub Release 元数据、SHA256 和更新包下载。
+
+### 原生命令失败不得继续打包
+
+`build.ps1` 在 npm、go test、go build 和多实例端到端测试之后立即检查 `$LASTEXITCODE`。PowerShell 的 `$ErrorActionPreference = "Stop"` 本身不保证原生程序非零退出会停止脚本，因此禁止只根据最终压缩包存在或工作流绿灯推断测试已成功。普通源码修复生成验证构建，不自动建立新的 Release/Tag；正式发布仍需明确指令。
+
+PR CI 在全部构建与 Screen Vision 回归通过后保存 7 天的验证 Artifact（Portable ZIP、SHA256、源码/合并提交标识和测试日志）。这是未发版验证构建，版本常量仍为开发基线，不创建 Release/Tag，不被在线更新通道自动提供。不得把它描述为正式发版或自动安装到用户运行目录。

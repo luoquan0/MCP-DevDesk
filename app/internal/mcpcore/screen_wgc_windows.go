@@ -15,41 +15,41 @@ import (
 )
 
 const (
-	screenWGCCaptureTimeout                = 650 * time.Millisecond
-	screenWGCPollInterval                  = 12 * time.Millisecond
-	screenWGCROInitMultithreaded           = 1
-	screenWGCD3DDriverTypeHardware         = 1
-	screenWGCD3DDriverTypeWarp             = 5
-	screenWGCD3D11CreateDeviceBGRASupport  = 0x20
-	screenWGCD3D11SDKVersion               = 7
-	screenWGCDirectXPixelFormatBGRA8UNorm  = 87
-	screenWGCD3D11UsageStaging             = 3
-	screenWGCD3D11CPUAccessRead            = 0x20000
-	screenWGCD3D11MapRead                  = 1
-	screenWGCTextureGetDescVTableIndex     = 10
-	screenWGCDeviceCreateTexture2DVTable   = 5
-	screenWGCContextMapVTableIndex         = 14
-	screenWGCContextUnmapVTableIndex       = 15
-	screenWGCContextCopyResourceVTable     = 47
-	screenWGCIInspectableMethodBase        = 6
-	screenWGCCaptureItemSizeVTableIndex    = 7
-	screenWGCFramePoolTryNextVTableIndex   = 7
-	screenWGCFramePoolCreateSessionVTable  = 10
-	screenWGCSessionStartVTableIndex       = 6
-	screenWGCSessionSetterVTableIndex      = 7
-	screenWGCFrameSurfaceVTableIndex       = 6
-	screenWGCIClosableCloseVTableIndex     = 6
-	screenWGCInteropCreateWindowVTable     = 3
-	screenWGCDXGIAccessGetInterfaceVTable  = 3
+	screenWGCCaptureTimeout               = 1500 * time.Millisecond
+	screenWGCPollInterval                 = 12 * time.Millisecond
+	screenWGCROInitMultithreaded          = 1
+	screenWGCD3DDriverTypeHardware        = 1
+	screenWGCD3DDriverTypeWarp            = 5
+	screenWGCD3D11CreateDeviceBGRASupport = 0x20
+	screenWGCD3D11SDKVersion              = 7
+	screenWGCDirectXPixelFormatBGRA8UNorm = 87
+	screenWGCD3D11UsageStaging            = 3
+	screenWGCD3D11CPUAccessRead           = 0x20000
+	screenWGCD3D11MapRead                 = 1
+	screenWGCTextureGetDescVTableIndex    = 10
+	screenWGCDeviceCreateTexture2DVTable  = 5
+	screenWGCContextMapVTableIndex        = 14
+	screenWGCContextUnmapVTableIndex      = 15
+	screenWGCContextCopyResourceVTable    = 47
+	screenWGCIInspectableMethodBase       = 6
+	screenWGCCaptureItemSizeVTableIndex   = 7
+	screenWGCFramePoolTryNextVTableIndex  = 7
+	screenWGCFramePoolCreateSessionVTable = 10
+	screenWGCSessionStartVTableIndex      = 6
+	screenWGCSessionSetterVTableIndex     = 7
+	screenWGCFrameSurfaceVTableIndex      = 6
+	screenWGCIClosableCloseVTableIndex    = 6
+	screenWGCInteropCreateWindowVTable    = 3
+	screenWGCDXGIAccessGetInterfaceVTable = 3
 )
 
 var (
 	screenCombase = windows.NewLazySystemDLL("combase.dll")
 	screenD3D11   = windows.NewLazySystemDLL("d3d11.dll")
 
-	procRoInitialize                        = screenCombase.NewProc("RoInitialize")
-	procRoUninitialize                      = screenCombase.NewProc("RoUninitialize")
-	procRoGetActivationFactory              = screenCombase.NewProc("RoGetActivationFactory")
+	procRoInitialize                         = screenCombase.NewProc("RoInitialize")
+	procRoUninitialize                       = screenCombase.NewProc("RoUninitialize")
+	procRoGetActivationFactory               = screenCombase.NewProc("RoGetActivationFactory")
 	procWindowsCreateString                  = screenCombase.NewProc("WindowsCreateString")
 	procWindowsDeleteString                  = screenCombase.NewProc("WindowsDeleteString")
 	procD3D11CreateDevice                    = screenD3D11.NewProc("D3D11CreateDevice")
@@ -230,6 +230,7 @@ func captureScreenWindowWGCOnThread(hwnd uintptr, fallbackBounds screenRect) (sc
 
 	deadline := time.Now().Add(screenWGCCaptureTimeout)
 	var lastHRESULT uintptr
+	blankFrames := 0
 	for time.Now().Before(deadline) {
 		var captureFrame uintptr
 		hr = screenCOMCall(framePool, screenWGCFramePoolTryNextVTableIndex, uintptr(unsafe.Pointer(&captureFrame)))
@@ -240,8 +241,12 @@ func captureScreenWindowWGCOnThread(hwnd uintptr, fallbackBounds screenRect) (sc
 			if convertErr != nil {
 				return screenCaptureFrame{}, convertErr
 			}
-			if screenImageLikelyBlank(capturedImage) {
-				return screenCaptureFrame{}, errors.New("Windows Graphics Capture returned a likely blank frame")
+			if screenImageLikelyPrintWindowArtifact(capturedImage) {
+				// A resumed compositor may first produce an empty frame. Release
+				// it and wait within the same bounded session; never show a window.
+				blankFrames++
+				time.Sleep(screenWGCPollInterval)
+				continue
 			}
 			bounds := fallbackBounds
 			bounds.Width = capturedImage.Bounds().Dx()
@@ -256,7 +261,7 @@ func captureScreenWindowWGCOnThread(hwnd uintptr, fallbackBounds screenRect) (sc
 	if lastHRESULT != 0 {
 		return screenCaptureFrame{}, fmt.Errorf("Windows Graphics Capture timed out waiting for a frame after HRESULT 0x%08X", uint32(lastHRESULT))
 	}
-	return screenCaptureFrame{}, errors.New("Windows Graphics Capture timed out waiting for a frame")
+	return screenCaptureFrame{}, fmt.Errorf("Windows Graphics Capture timed out waiting for a usable frame (blank frames: %d)", blankFrames)
 }
 
 func screenWGCCreateCaptureItem(hwnd uintptr) (uintptr, error) {
@@ -503,6 +508,11 @@ func screenWGCSizeArg(width, height int32) uintptr {
 	return uintptr(uint64(uint32(width)) | uint64(uint32(height))<<32)
 }
 
+// screenCOMCall forwards Go pointers encoded as uintptr to native COM methods.
+// Retain them on the heap until the syscall completes; otherwise stack growth
+// while constructing callArgs can leave native code with stale output pointers.
+//
+//go:uintptrescapes
 func screenCOMCall(object uintptr, index int, args ...uintptr) uintptr {
 	if object == 0 {
 		return ^uintptr(0)

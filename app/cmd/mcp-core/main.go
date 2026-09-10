@@ -23,6 +23,10 @@ import (
 )
 
 func main() {
+	if handled, code := mcpcore.RunScreenCaptureWorker(os.Args[1:], os.Stdin, os.Stdout); handled {
+		os.Exit(code)
+	}
+
 	var allowedRoots stringListFlag
 	workspace := flag.String("workspace", ".", "workspace exposed by the Go MCP core")
 	host := flag.String("host", "127.0.0.1", "listen host")

@@ -329,7 +329,7 @@ async function savePermissions() {
           <div class="screen-window-picker-heading">
             <div>
               <strong>选择允许读取的窗口</strong>
-              <small>目标用窗口 ID + 进程 ID 锁定。后台、已最小化以及仍保留主窗体的托盘应用都会显示；读取休眠目标时会在后台无焦点恢复一帧，截图后恢复原来的最小化/隐藏状态。纯服务或已经销毁主窗体的进程不会显示。窗口关闭或身份变化后必须重新选择。</small>
+              <small>目标用窗口 ID + 进程 ID 锁定。后台、已最小化以及仍保留主窗体的托盘应用都会显示；截图不会恢复、移动或修改目标窗口的绘制区域。最小化/隐藏应用只有仍提供有效画面时才能读取，否则会明确报错并保持原状态。纯服务或已经销毁主窗体的进程不会显示。窗口关闭或身份变化后必须重新选择。</small>
             </div>
             <AppButton tone="secondary" icon="refresh" compact :loading="screenWindowsLoading" :disabled="screenVisionSaving" @click="refreshScreenWindows">刷新窗口</AppButton>
           </div>
@@ -386,7 +386,7 @@ async function savePermissions() {
           <div><AppIcon name="shield" :size="16" /><span>截图历史</span><StatusPill tone="success">不保存</StatusPill></div>
           <div><AppIcon name="terminal" :size="16" /><span>鼠标与键盘控制</span><StatusPill tone="neutral">未开放</StatusPill></div>
         </div>
-        <p class="field-hint">当前测试功能仅由 Go MCP Core 提供。指定窗口可在后台读取；最小化/托盘窗口会尝试临时无焦点恢复并在截图后恢复原状态。个别程序可能出现极短的层级刷新；如果应用在进托盘后销毁主窗体，或 DRM/GPU 渲染拒绝恢复，仍会明确失败而不会改抓前台窗口。</p>
+        <p class="field-hint">当前测试功能仅由 Go MCP Core 提供。指定窗口优先使用 Windows Graphics Capture 无状态读取。为避免白屏或窗口无法恢复，已移除临时恢复、离屏移动、DWM Cloak 和 Window Region 操作。最小化/托盘应用暂停渲染时可能无法读取；截图失败不会改抓前台窗口，也不会强行唤醒应用。</p>
       </AppCard>
     </section>
   </section>

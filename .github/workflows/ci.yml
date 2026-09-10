@@ -39,6 +39,7 @@ jobs:
         run: |
           Set-Location frontend
           npm ci
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
 
       - name: Guard public repository secrets
         shell: pwsh
@@ -49,3 +50,50 @@ jobs:
         env:
           MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
         run: .\build.ps1 -Arch amd64 -RunTests
+
+
+      - name: Screen capture state and timeout regression tests
+        shell: pwsh
+        run: |
+          Push-Location app
+          try {
+            go test -mod=vendor ./internal/mcpcore -run TestScreen -count=1 -v | Tee-Object -FilePath ../dist/screen-regression-tests.txt
+            if ($LASTEXITCODE -ne 0) { throw "Screen capture regression tests failed" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Prepare validation artifact metadata
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          $archive = "dist/MCP-DevDesk-Portable-amd64.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath ($archive + ".sha256") -Encoding ASCII -Value ($hash + "  MCP-DevDesk-Portable-amd64.zip")
+          $metadata = @(
+            "UNRELEASED VALIDATION BUILD - NOT A GITHUB RELEASE",
+            "Source PR commit: $env:SOURCE_HEAD",
+            "Compiled merge commit: $env:BUILD_COMMIT",
+            "Application version remains the development baseline; use commit IDs for provenance.",
+            "Capture safety repair removes region/cloak/restore/move mutations.",
+            "Minimized/hidden capture is not guaranteed: unavailable surfaces return explicit errors.",
+            "No migration or recovery of already-damaged third-party windows is performed.",
+            "Do not overwrite a running installation or unsaved application state."
+          )
+          Set-Content -LiteralPath "dist/VALIDATION-BUILD.txt" -Value $metadata -Encoding utf8
+
+      - name: Upload verified PR build without publishing a release
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: MCP-DevDesk-validation-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            dist/MCP-DevDesk-Portable-amd64.zip
+            dist/MCP-DevDesk-Portable-amd64.zip.sha256
+            dist/VALIDATION-BUILD.txt
+            dist/screen-regression-tests.txt

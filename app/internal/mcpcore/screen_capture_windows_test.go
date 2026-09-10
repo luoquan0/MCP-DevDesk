@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-func TestScreenWindowBandInsertAfter(t *testing.T) {
-	if screenWindowBandInsertAfter(true) != ^uintptr(0) {
-		t.Fatal("topmost restore band must use HWND_TOPMOST")
-	}
-	if screenWindowBandInsertAfter(false) != ^uintptr(1) {
-		t.Fatal("normal restore band must use HWND_NOTOPMOST")
-	}
-}
-
 func TestScreenImageLikelyBlank(t *testing.T) {
 	black := image.NewNRGBA(image.Rect(0, 0, 320, 200))
 	if !screenImageLikelyBlank(black) {
@@ -50,7 +41,7 @@ func TestScreenImageLikelyPrintWindowArtifact(t *testing.T) {
 	textured := image.NewNRGBA(image.Rect(0, 0, 320, 200))
 	for y := 0; y < 200; y++ {
 		for x := 0; x < 320; x++ {
-			value := uint8((x*3 + y*5) % 180 + 32)
+			value := uint8((x*3+y*5)%180 + 32)
 			textured.SetNRGBA(x, y, color.NRGBA{R: value, G: uint8(255 - value/2), B: uint8(64 + (x+y)%128), A: 0xff})
 		}
 	}

@@ -93,7 +93,7 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_capture_window",
 			Title:       "Capture Window",
-			Description: "Primary GUI inspection tool for a named, open, or background app. When the user asks what an app window currently displays, use this after screen_list_windows instead of answering from process/port metadata or asking the user to bring the app forward. Background, minimized, and tray-hidden targets are captured when Windows keeps a restorable main surface; dormant targets are temporarily restored without focus and returned to their prior state. Only ask the user to foreground the app after this capture actually fails. Nothing is saved to disk.",
+			Description: "Primary GUI inspection tool for a named, open, or background app. When the user asks what an app window currently displays, use this after screen_list_windows instead of answering from process/port metadata or asking the user to bring the app forward. Window capture is state-neutral and bounded: it never restores, moves, clips or activates the target. Minimized/tray-hidden targets can be read only while the renderer supplies a usable surface; otherwise an explicit error is returned with no state changes. Only ask the user to foreground the app after this capture actually fails. Nothing is saved to disk.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
