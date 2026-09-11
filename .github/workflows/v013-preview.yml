@@ -5,8 +5,9 @@ on:
     branches:
       - "preview/v0.13.0"
     paths:
-      - "tools/v013_bootstrap.py"
-      - "tools/v013_fix1.py"
+      - "tools/v013_supplement.py"
+      - "app/internal/mcpcore/code_navigation.go"
+      - "installer/**"
       - ".github/workflows/v013-preview.yml"
   workflow_dispatch:
 
@@ -23,11 +24,9 @@ jobs:
           ref: preview/v0.13.0
           fetch-depth: 0
 
-      - name: Generate v0.13 preview source
+      - name: Apply v0.13 supplemental integration
         shell: pwsh
-        run: |
-          python .\tools\v013_bootstrap.py
-          python .\tools\v013_fix1.py
+        run: python .\tools\v013_supplement.py
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -45,7 +44,7 @@ jobs:
       - name: Format Go sources
         shell: pwsh
         run: |
-          gofmt -w app\internal\mcpcore\task_tools.go app\internal\mcpcore\code_navigation.go app\internal\mcpcore\server.go app\internal\mcpcore\file_tools.go app\internal\mcpcore\screen_tools.go app\internal\mcpcore\screen_capture_windows.go
+          gofmt -w app\internal\mcpcore\code_navigation.go app\internal\mcpcore\server.go app\internal\mcpcore\file_tools.go app\internal\mcpcore\screen_tools.go app\internal\mcpcore\screen_policy.go app\internal\process\manager.go app\internal\model\types.go app\internal\application\instances.go
 
       - name: Install frontend dependencies
         shell: pwsh
@@ -59,11 +58,17 @@ jobs:
           Set-Location frontend
           npm run build
 
-      - name: Go tests
+      - name: Agent Runtime targeted tests
         shell: pwsh
         run: |
           Set-Location app
-          go test ./...
+          go test -mod=vendor ./internal/agentstate ./internal/mcpcore ./internal/application ./internal/web ./internal/config ./internal/secrets ./internal/process -count=1
+
+      - name: Go full tests
+        shell: pwsh
+        run: |
+          Set-Location app
+          go test -mod=vendor ./... -count=1
 
       - name: Public secret guard
         shell: pwsh
@@ -75,17 +80,46 @@ jobs:
           MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
         run: .\build.ps1 -Arch amd64 -RunTests
 
-      - name: Persist generated preview source
+      - name: Persist validated preview source
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- app/internal/mcpcore app/internal/buildinfo/version.go docs/ROADMAP.md docs/V013_PREVIEW.md
+          git add -- app/internal/mcpcore app/internal/process/manager.go app/internal/model/types.go app/internal/application/instances.go docs/ROADMAP.md docs/V013_PREVIEW.md
           if (-not (git diff --cached --quiet)) {
-            git commit -m "feat: add v0.13 AI Coding Workspace preview"
+            git commit -m "feat: complete v0.13 beta preview integration"
             git push origin HEAD:preview/v0.13.0
           }
           "PREVIEW_SHA=$((git rev-parse HEAD).Trim())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build NSIS setup
+        shell: pwsh
+        run: |
+          if (Test-Path dist\installer-staging) { Remove-Item -Recurse -Force dist\installer-staging }
+          Expand-Archive -LiteralPath dist\MCP-DevDesk-Portable-amd64.zip -DestinationPath dist\installer-staging -Force
+          choco install nsis -y --no-progress
+          $makeNsis = Get-ChildItem "${env:ProgramFiles(x86)}\NSIS\makensis.exe", "$env:ProgramFiles\NSIS\makensis.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $makeNsis) { throw "makensis.exe not found after NSIS installation" }
+          & $makeNsis.FullName /V2 installer\MCP-DevDesk.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path dist\MCP-DevDesk-Setup-x64.exe)) { throw "NSIS setup was not created" }
+
+      - name: Optional Authenticode signing
+        if: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 != '' && secrets.WINDOWS_SIGN_CERT_PASSWORD != '' }}
+        shell: pwsh
+        env:
+          SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
+          SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP "mcp-devdesk-signing.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SIGN_CERT_BASE64))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool.FullName sign /fd SHA256 /f $certPath /p $env:SIGN_CERT_PASSWORD /tr http://timestamp.digicert.com /td SHA256 dist\MCP-DevDesk-amd64.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $signtool.FullName sign /fd SHA256 /f $certPath /p $env:SIGN_CERT_PASSWORD /tr http://timestamp.digicert.com /td SHA256 dist\MCP-DevDesk-Setup-x64.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item -Force $certPath
 
       - name: Create SHA256 files
         shell: pwsh
@@ -93,11 +127,13 @@ jobs:
           $assets = @(
             "dist\MCP-DevDesk-amd64.exe",
             "dist\MCP-DevDesk-Portable-amd64.zip",
+            "dist\MCP-DevDesk-Setup-x64.exe",
             "dist\devdesk-updater-amd64.exe",
             "dist\devdeskctl-amd64.exe",
             "dist\mcp-core-amd64.exe"
           )
           foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset)) { throw "Missing preview asset: $asset" }
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
             $name = Split-Path -Leaf $asset
             Set-Content -LiteralPath ($asset + ".sha256") -Value ($hash + "  " + $name) -Encoding ASCII
@@ -108,7 +144,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v0.13.0-preview.1"
+          $tag = "v0.13.0-beta.1"
           git tag -f $tag $env:PREVIEW_SHA
           git push origin "refs/tags/$tag" --force
           $assets = @(
@@ -116,6 +152,8 @@ jobs:
             "dist\MCP-DevDesk-amd64.exe.sha256",
             "dist\MCP-DevDesk-Portable-amd64.zip",
             "dist\MCP-DevDesk-Portable-amd64.zip.sha256",
+            "dist\MCP-DevDesk-Setup-x64.exe",
+            "dist\MCP-DevDesk-Setup-x64.exe.sha256",
             "dist\devdesk-updater-amd64.exe",
             "dist\devdesk-updater-amd64.exe.sha256",
             "dist\devdeskctl-amd64.exe",
@@ -126,7 +164,7 @@ jobs:
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $assets --clobber
-            gh release edit $tag --title "MCP DevDesk v0.13.0 Preview 1" --prerelease --notes-file docs/V013_PREVIEW.md
+            gh release edit $tag --title "MCP DevDesk v0.13.0 Beta 1" --prerelease --notes-file docs/V013_PREVIEW.md
           } else {
-            gh release create $tag $assets --target $env:PREVIEW_SHA --title "MCP DevDesk v0.13.0 Preview 1" --prerelease --notes-file docs/V013_PREVIEW.md --verify-tag
+            gh release create $tag $assets --target $env:PREVIEW_SHA --title "MCP DevDesk v0.13.0 Beta 1" --prerelease --notes-file docs/V013_PREVIEW.md --verify-tag
           }
