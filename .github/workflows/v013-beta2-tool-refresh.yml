@@ -1,0 +1,59 @@
+name: MCP DevDesk v0.13 Beta 2 Tool Refresh
+
+on:
+  push:
+    branches:
+      - "preview/v0.13.0"
+    paths:
+      - "tools/v013_beta2_tool_refresh.py"
+      - ".github/workflows/v013-beta2-tool-refresh.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair-tool-catalog-refresh:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout preview branch
+        uses: actions/checkout@v4
+        with:
+          ref: preview/v0.13.0
+          fetch-depth: 0
+
+      - name: Apply Beta 2 source migration
+        shell: pwsh
+        run: python .\tools\v013_beta2_tool_refresh.py
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Format changed Go sources
+        shell: pwsh
+        run: gofmt -w app\internal\mcpcore\server.go app\internal\mcpcore\server_test.go app\internal\mcpcore\screen_tools.go app\internal\buildinfo\version.go
+
+      - name: MCP Core targeted tests
+        shell: pwsh
+        run: |
+          Set-Location app
+          go test -mod=vendor ./internal/mcpcore -count=1
+
+      - name: Go full tests
+        shell: pwsh
+        run: |
+          Set-Location app
+          go test -mod=vendor ./... -count=1
+
+      - name: Persist validated Beta 2 source
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- app/internal/mcpcore/server.go app/internal/mcpcore/server_test.go app/internal/mcpcore/screen_tools.go app/internal/buildinfo/version.go docs/ROADMAP.md docs/V013_PREVIEW.md
+          if (git diff --cached --quiet) { throw "Beta 2 migration produced no source changes" }
+          git commit -m "fix: refresh MCP tool catalog after upgrades"
+          git push origin HEAD:preview/v0.13.0
