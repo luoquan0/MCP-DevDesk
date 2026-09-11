@@ -6,6 +6,7 @@ on:
       - "preview/v0.13.0"
     paths:
       - "tools/v013_bootstrap.py"
+      - "tools/v013_fix1.py"
       - ".github/workflows/v013-preview.yml"
   workflow_dispatch:
 
@@ -24,7 +25,9 @@ jobs:
 
       - name: Generate v0.13 preview source
         shell: pwsh
-        run: python .\tools\v013_bootstrap.py
+        run: |
+          python .\tools\v013_bootstrap.py
+          python .\tools\v013_fix1.py
 
       - name: Setup Go
         uses: actions/setup-go@v5
