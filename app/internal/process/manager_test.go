@@ -217,3 +217,38 @@ func argumentPairExists(values []string, key, expected string) bool {
 	}
 	return false
 }
+
+func TestOpenAITunnelArgumentsKeepSecretsOutOfArgv(t *testing.T) {
+	cfg := model.Config{
+		MCPHost:           "127.0.0.1",
+		MCPPort:           8765,
+		OpenAITunnelID:    "tunnel_0123456789abcdef0123456789abcdef",
+		OpenAITunnelProxy: "http://127.0.0.1:7890",
+	}
+	args := openAITunnelArguments(cfg, `C:\state\local-token.txt`)
+	joined := strings.Join(args, " ")
+	for _, expected := range []string{
+		"--control-plane.tunnel-id tunnel_0123456789abcdef0123456789abcdef",
+		"--mcp.server-url url=http://127.0.0.1:8765/mcp,channel=main",
+		`X-MCP-DevDesk-Tunnel-Token: file:C:\state\local-token.txt`,
+		"--control-plane.http-proxy http://127.0.0.1:7890",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("args missing %q: %s", expected, joined)
+		}
+	}
+	if strings.Contains(strings.ToLower(joined), "api-key") {
+		t.Fatalf("API key must not be placed in argv: %s", joined)
+	}
+}
+
+func TestMCPServerURLUsesLoopbackOutsideCloudflareMode(t *testing.T) {
+	cfg := model.Config{MCPHost: "127.0.0.1", MCPPort: 8765, Domain: "mcp.example.com", ConnectionMode: "openai"}
+	if got := mcpServerURL(cfg); got != "http://127.0.0.1:8765" {
+		t.Fatalf("OpenAI mode MCP URL = %q", got)
+	}
+	cfg.ConnectionMode = "local"
+	if got := mcpServerURL(cfg); got != "http://127.0.0.1:8765" {
+		t.Fatalf("local mode MCP URL = %q", got)
+	}
+}

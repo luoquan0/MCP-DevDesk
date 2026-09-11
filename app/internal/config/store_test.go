@@ -207,3 +207,31 @@ func TestFailedConfigSaveRollsBackMemory(t *testing.T) {
 		t.Fatalf("in-memory port = %d after failed save, want %d", got, previous.MCPPort)
 	}
 }
+
+func TestConnectionModeDefaultsAndOpenAITunnelValidation(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Get().ConnectionMode; got != "cloudflare" {
+		t.Fatalf("default connection mode = %q", got)
+	}
+	openai := "openai"
+	validID := "tunnel_0123456789abcdef0123456789abcdef"
+	cfg, err := store.Update(model.ConfigUpdate{ConnectionMode: &openai, OpenAITunnelID: &validID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConnectionMode != "openai" || cfg.OpenAITunnelID != validID {
+		t.Fatalf("unexpected OpenAI config: %#v", cfg)
+	}
+	invalidID := "tunnel_NOT_VALID"
+	if _, err := store.Update(model.ConfigUpdate{OpenAITunnelID: &invalidID}); err == nil {
+		t.Fatal("invalid OpenAI Tunnel ID was accepted")
+	}
+	local := "local"
+	if _, err := store.Update(model.ConfigUpdate{ConnectionMode: &local}); err != nil {
+		t.Fatal(err)
+	}
+}

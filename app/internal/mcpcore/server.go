@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"mcp-devdesk/internal/agentstate"
 )
 
 const (
@@ -51,6 +53,7 @@ type Options struct {
 	AllowedRoots            []string
 	ToolProfile             string
 	MaxConcurrentTools      int
+	AgentStateDir           string
 }
 
 type Server struct {
@@ -67,6 +70,8 @@ type Server struct {
 	toolProfile             string
 	audit                   *auditLogger
 	commands                *commandManager
+	tasks                   *agentstate.TaskStore
+	jobs                    *agentstate.JobStore
 	imageHTTPClient         *http.Client
 	imageURLValidator       func(*url.URL) error
 	fileScope               string
@@ -216,9 +221,16 @@ func New(options Options) (*Server, error) {
 	}
 	tools = append(tools, previewFileTools()...)
 	tools = append(tools, gitTools()...)
+	tasks := taskTools()
+	if options.ToolProfile == "read-only" {
+		tasks = filterTools(tasks, func(tool Tool) bool { return !isMutatingOrCommandTool(tool.Name) })
+	}
+	tools = append(tools, tasks...)
+	tools = append(tools, jobTools()...)
 	tools = append(tools, permissionTools()...)
 	if options.ScreenCaptureEnabled && (options.PermissionMode == "trusted" || options.PermissionMode == "dangerous") {
 		tools = append(tools, screenTools()...)
+		tools = append(tools, uiAutomationTools()...)
 	}
 	compatibility := compatibilityTools()
 	if options.ToolProfile == "read-only" {
@@ -228,6 +240,7 @@ func New(options Options) (*Server, error) {
 	} else {
 		tools = append(tools, writeFileTools()...)
 		tools = append(tools, commandTools()...)
+		tools = append(tools, checkTools()...)
 	}
 	tools = append(tools, compatibility...)
 	oauth, err := newOAuthServer(options.OAuth)
@@ -270,6 +283,11 @@ func New(options Options) (*Server, error) {
 	}
 	server.imageURLValidator = validateImageDownloadURL
 	server.imageHTTPClient = newImageDownloadClient(server.imageURLValidator)
+	if agentStateDir := strings.TrimSpace(options.AgentStateDir); agentStateDir != "" {
+		server.tasks = agentstate.NewTaskStore(agentStateDir)
+		server.jobs = agentstate.NewJobStore(agentStateDir)
+		_ = server.jobs.RecoverInterrupted()
+	}
 	server.commands = newCommandManager(server)
 	return server, nil
 }

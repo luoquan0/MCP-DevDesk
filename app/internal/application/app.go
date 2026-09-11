@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"mcp-devdesk/internal/agentstate"
 	"mcp-devdesk/internal/appearance"
 	"mcp-devdesk/internal/buildinfo"
 	"mcp-devdesk/internal/config"
@@ -45,6 +46,7 @@ type App struct {
 	instances  *instancestore.Store
 	tunnel     *tunnel.Client
 	updates    *appupdater.Manager
+	agentTasks *agentstate.TaskStore
 
 	mu              sync.RWMutex
 	desiredRunning  bool
@@ -104,6 +106,7 @@ func New(rootDir, dataDir string) (*App, error) {
 		instances:       instanceStore,
 		tunnel:          tunnel.NewClient(),
 		updates:         updateManager,
+		agentTasks:      agentstate.NewTaskStore(dataDir),
 		instanceRuntime: map[string]*managedInstance{},
 	}
 	if err := app.loadManagedInstances(); err != nil {
@@ -594,6 +597,15 @@ func (a *App) VerifyWebControlPassword(password string) bool {
 
 func (a *App) UpdateConfig(update model.ConfigUpdate) (model.PublicConfig, error) {
 	oldCfg := a.config.Get()
+	if update.ConnectionMode != nil && connectionModeValue(*update.ConnectionMode) != connectionModeValue(oldCfg.ConnectionMode) {
+		mcp, tunnelStatus, _ := a.process.Status()
+		a.mu.RLock()
+		desiredRunning := a.desiredRunning
+		a.mu.RUnlock()
+		if mcp.Running || tunnelStatus.Running || desiredRunning {
+			return model.PublicConfig{}, errors.New("切换连接方式前请先停止主实例，避免正在使用的 MCP 或 Tunnel 会话被中断")
+		}
+	}
 	if update.CoreMode != nil && *update.CoreMode != oldCfg.CoreMode {
 		mcp, tunnelStatus, _ := a.process.Status()
 		a.mu.RLock()
@@ -621,7 +633,7 @@ func (a *App) Status() model.ServiceStatus {
 	cfg := a.config.Get()
 	mcp, tunnelStatus, login := a.process.Status()
 	tunnelInventory, tunnelInventoryErr := a.tunnelInventoryForConfig(cfg, tunnelStatus)
-	if tunnelInventoryErr == nil && !tunnelStatus.Running {
+	if connectionModeValue(cfg.ConnectionMode) == "cloudflare" && tunnelInventoryErr == nil && !tunnelStatus.Running {
 		for _, process := range tunnelInventory.Processes {
 			if !process.MatchesConfig {
 				continue
@@ -653,9 +665,18 @@ func (a *App) Status() model.ServiceStatus {
 	localMCPURL := "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort) + "/mcp"
 	remoteMCPURL := ""
 	authorizeURL := ""
-	if cfg.Domain != "" {
+	if connectionModeValue(cfg.ConnectionMode) == "cloudflare" && cfg.Domain != "" {
 		remoteMCPURL = "https://" + cfg.Domain + "/mcp"
 		authorizeURL = "https://" + cfg.Domain + "/oauth/authorize"
+	}
+	secretSummary, _ := a.secrets.Summary(false)
+	openAIStatus := model.OpenAITunnelStatus{
+		Configured:       strings.TrimSpace(cfg.OpenAITunnelID) != "",
+		CredentialsReady: secretSummary.HasOpenAITunnelAPIKey,
+		Installed:        pathIsFile(cfg.OpenAITunnelClientExecutable),
+		TunnelID:         cfg.OpenAITunnelID,
+		ClientExecutable: cfg.OpenAITunnelClientExecutable,
+		Proxy:            cfg.OpenAITunnelProxy,
 	}
 	ok, message := a.configurationStatus(cfg)
 
@@ -671,6 +692,8 @@ func (a *App) Status() model.ServiceStatus {
 		OAuthClientType: "confidential",
 		OAuthTokenAuth:  "client_secret_post",
 		CoreMode:        cfg.CoreMode,
+		ConnectionMode:  connectionModeValue(cfg.ConnectionMode),
+		OpenAITunnel:    openAIStatus,
 		MCP:             mcp,
 		MCPPortOwner: model.PortOwner{
 			Occupied:    portOwner.Occupied,
@@ -697,7 +720,7 @@ func (a *App) StartServices(ctx context.Context) error {
 	defer a.mu.Unlock()
 	a.desiredRunning = true
 	cfg := a.config.Get()
-	a.tunnelDesired = cfg.Domain != "" && cfg.TunnelID != ""
+	a.tunnelDesired = a.tunnelDesiredForConfig(cfg)
 	return a.startServicesLocked(ctx, cfg)
 }
 
@@ -732,17 +755,19 @@ func (a *App) startServicesLocked(ctx context.Context, cfg model.Config) error {
 		}
 	}
 
-	if a.tunnelDesired && cfg.Domain != "" && cfg.TunnelID != "" && !tunnelStatus.Running {
-		inventory, err := a.tunnelInventoryForConfig(cfg, tunnelStatus)
-		if err != nil {
-			return fmt.Errorf("MCP 已启动，但无法检查 Tunnel 进程: %w", err)
-		}
-		if inventory.MatchingCount > 0 {
-			return nil
-		}
-		for _, process := range inventory.Processes {
-			if tunnelIdentityMatches(process, cfg) {
-				return fmt.Errorf("检测到同一 Cloudflare Tunnel 仍在指向 %s（PID %d），为避免重复连接已阻止启动；请同步端口或关闭旧进程", displayTunnelTarget(process), process.PID)
+	if a.tunnelDesired && !tunnelStatus.Running {
+		if connectionModeValue(cfg.ConnectionMode) == "cloudflare" {
+			inventory, err := a.tunnelInventoryForConfig(cfg, tunnelStatus)
+			if err != nil {
+				return fmt.Errorf("MCP 已启动，但无法检查 Tunnel 进程: %w", err)
+			}
+			if inventory.MatchingCount > 0 {
+				return nil
+			}
+			for _, process := range inventory.Processes {
+				if tunnelIdentityMatches(process, cfg) {
+					return fmt.Errorf("检测到同一 Cloudflare Tunnel 仍在指向 %s（PID %d），为避免重复连接已阻止启动；请同步端口或关闭旧进程", displayTunnelTarget(process), process.PID)
+				}
 			}
 		}
 		if err := a.process.StartTunnel(cfg); err != nil {
@@ -860,6 +885,9 @@ func (a *App) SyncTunnelPort(ctx context.Context) error {
 	defer a.mu.Unlock()
 
 	cfg := a.config.Get()
+	if connectionModeValue(cfg.ConnectionMode) != "cloudflare" {
+		return errors.New("同步 Tunnel 端口仅用于 Cloudflare 连接方式")
+	}
 	if cfg.TunnelID == "" || cfg.TunnelName == "" || cfg.Domain == "" {
 		return errors.New("请先完成 Cloudflare Tunnel 和固定域名配置")
 	}
@@ -979,7 +1007,7 @@ func (a *App) ChangeMCPPort(ctx context.Context, port int) error {
 		} else if owner, ownerErr := processmanager.FindTCPListener(oldCfg.MCPPort); ownerErr == nil {
 			oldMCPReady = owner.Occupied && strings.EqualFold(owner.ProcessName, "coding-tools-mcp.exe")
 		}
-		if oldTunnelStopped && oldTunnelWasActive && oldCfg.TunnelID != "" && oldMCPReady {
+		if oldTunnelStopped && oldTunnelWasActive && a.tunnelDesiredForConfig(oldCfg) && oldMCPReady {
 			if startErr := a.process.StartTunnel(oldCfg); startErr != nil {
 				rollbackProblems = append(rollbackProblems, "恢复旧 Tunnel 失败: "+startErr.Error())
 			}
@@ -999,8 +1027,8 @@ func (a *App) ChangeMCPPort(ctx context.Context, port int) error {
 		return rollback(fmt.Errorf("新端口 MCP 未就绪: %w", err), false)
 	}
 
-	oldTunnelStopped := false
-	if oldCfg.TunnelID != "" || (oldCfg.Domain != "" && oldCfg.TunnelName != "") {
+	oldTunnelStopped := tunnelStatus.Running
+	if connectionModeValue(oldCfg.ConnectionMode) == "cloudflare" && (oldCfg.TunnelID != "" || (oldCfg.Domain != "" && oldCfg.TunnelName != "")) {
 		oldTunnelStopped = true
 		if err := a.stopTunnelIdentityProcesses(oldCfg); err != nil {
 			return rollback(fmt.Errorf("关闭旧 Tunnel 连接失败: %w", err), true)
@@ -1010,16 +1038,16 @@ func (a *App) ChangeMCPPort(ctx context.Context, port int) error {
 		}
 	}
 
-	if newCfg.Domain != "" && newCfg.TunnelID != "" {
+	if a.tunnelDesiredForConfig(newCfg) {
 		if err := a.process.StartTunnel(newCfg); err != nil {
-			return rollback(fmt.Errorf("Cloudflare 切换到新端口失败: %w", err), oldTunnelStopped)
+			return rollback(fmt.Errorf("Tunnel 切换到新端口失败: %w", err), oldTunnelStopped)
 		}
 	}
 	if _, err := a.config.Replace(newCfg); err != nil {
 		return rollback(fmt.Errorf("保存新端口失败: %w", err), oldTunnelStopped)
 	}
 	a.desiredRunning = true
-	a.tunnelDesired = newCfg.Domain != "" && newCfg.TunnelID != ""
+	a.tunnelDesired = a.tunnelDesiredForConfig(newCfg)
 	return nil
 }
 
@@ -1187,16 +1215,55 @@ func (a *App) configurationStatus(cfg model.Config) (bool, string) {
 	if !pathIsFile(selectedCoreExecutable(cfg)) {
 		problems = append(problems, "MCP 核心程序不存在")
 	}
-	if !pathIsFile(cfg.CloudflaredExecutable) {
-		problems = append(problems, "cloudflared.exe 不存在")
-	}
-	if cfg.Domain != "" && cfg.TunnelID == "" {
-		problems = append(problems, "已填写域名但尚未配置 Tunnel")
+	switch connectionModeValue(cfg.ConnectionMode) {
+	case "cloudflare":
+		if !pathIsFile(cfg.CloudflaredExecutable) {
+			problems = append(problems, "cloudflared.exe 不存在")
+		}
+		if cfg.Domain != "" && cfg.TunnelID == "" {
+			problems = append(problems, "已填写域名但尚未配置 Tunnel")
+		}
+	case "openai":
+		if cfg.CoreMode != "go" {
+			problems = append(problems, "OpenAI Secure Tunnel 需要 Go MCP Core")
+		}
+		if strings.TrimSpace(cfg.OpenAITunnelID) == "" {
+			problems = append(problems, "尚未配置 OpenAI Tunnel ID")
+		}
+		if !pathIsFile(cfg.OpenAITunnelClientExecutable) {
+			problems = append(problems, "tunnel-client.exe 不存在")
+		}
+		if summary, err := a.secrets.Summary(false); err != nil || !summary.HasOpenAITunnelAPIKey {
+			problems = append(problems, "尚未配置 OpenAI Tunnel Runtime API Key")
+		}
+	case "local":
 	}
 	if len(problems) == 0 {
 		return true, "配置完整"
 	}
 	return false, strings.Join(problems, "；")
+}
+
+func connectionModeValue(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "openai":
+		return "openai"
+	case "local":
+		return "local"
+	default:
+		return "cloudflare"
+	}
+}
+
+func (a *App) tunnelDesiredForConfig(cfg model.Config) bool {
+	switch connectionModeValue(cfg.ConnectionMode) {
+	case "cloudflare":
+		return strings.TrimSpace(cfg.Domain) != "" && strings.TrimSpace(cfg.TunnelID) != ""
+	case "openai":
+		return strings.TrimSpace(cfg.OpenAITunnelID) != ""
+	default:
+		return false
+	}
 }
 
 func (a *App) startWatchdog() {
@@ -1251,19 +1318,21 @@ func (a *App) watchdogTick(ctx context.Context) {
 			return
 		}
 	}
-	if tunnelDesired && cfg.Domain != "" && cfg.TunnelID != "" && !tunnelStatus.Running {
-		inventory, err := a.tunnelInventoryForConfig(cfg, tunnelStatus)
-		if err != nil {
-			a.logWatchdog("Tunnel 进程检查失败: " + err.Error())
-			return
-		}
-		if inventory.MatchingCount > 0 {
-			return
-		}
-		for _, process := range inventory.Processes {
-			if tunnelIdentityMatches(process, cfg) {
-				a.logWatchdog(fmt.Sprintf("同一 Tunnel PID %d 仍指向 %s，watchdog 不会重复启动", process.PID, displayTunnelTarget(process)))
+	if tunnelDesired && a.tunnelDesiredForConfig(cfg) && !tunnelStatus.Running {
+		if connectionModeValue(cfg.ConnectionMode) == "cloudflare" {
+			inventory, err := a.tunnelInventoryForConfig(cfg, tunnelStatus)
+			if err != nil {
+				a.logWatchdog("Tunnel 进程检查失败: " + err.Error())
 				return
+			}
+			if inventory.MatchingCount > 0 {
+				return
+			}
+			for _, process := range inventory.Processes {
+				if tunnelIdentityMatches(process, cfg) {
+					a.logWatchdog(fmt.Sprintf("同一 Tunnel PID %d 仍指向 %s，watchdog 不会重复启动", process.PID, displayTunnelTarget(process)))
+					return
+				}
 			}
 		}
 		a.logWatchdog("Tunnel 进程退出，正在重启")
@@ -1274,6 +1343,9 @@ func (a *App) watchdogTick(ctx context.Context) {
 }
 
 func (a *App) tunnelInventoryForConfig(cfg model.Config, managedStatus model.ProcessStatus) (model.TunnelInventory, error) {
+	if connectionModeValue(cfg.ConnectionMode) != "cloudflare" {
+		return model.TunnelInventory{ExpectedLocalURL: "http://" + cfg.MCPHost + ":" + strconv.Itoa(cfg.MCPPort), Processes: []model.TunnelProcess{}}, nil
+	}
 	processes, err := processmanager.ListCloudflaredProcesses()
 	if err != nil {
 		return model.TunnelInventory{}, err

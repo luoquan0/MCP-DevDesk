@@ -187,3 +187,33 @@ func TestUpdateRejectsInvalidTokenSecret(t *testing.T) {
 		t.Fatal("expected invalid token secret to be rejected")
 	}
 }
+
+func TestOpenAITunnelSecretIsProtectedAndSummaryDoesNotRevealIt(t *testing.T) {
+	dataDir := t.TempDir()
+	store := NewStore(dataDir)
+	apiKey := "sk-runtime-test-key-that-is-long-enough"
+	if _, err := store.Update(model.SecretUpdateRequest{OpenAITunnelAPIKey: &apiKey}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := store.Summary(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !summary.HasOpenAITunnelAPIKey || summary.OpenAITunnelAPIKey != "" {
+		t.Fatalf("non-reveal summary leaked or lost key state: %#v", summary)
+	}
+	stored, err := os.ReadFile(filepath.Join(dataDir, "secrets.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encryptionAvailable() && strings.Contains(string(stored), apiKey) {
+		t.Fatal("OpenAI Tunnel API key was stored in plaintext")
+	}
+	gotKey, token, err := store.OpenAITunnelCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != apiKey || len(token) != 64 {
+		t.Fatalf("credentials mismatch: key=%q tokenLen=%d", gotKey, len(token))
+	}
+}

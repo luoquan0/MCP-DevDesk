@@ -196,3 +196,9 @@ docs/RELEASE.md
 ```
 
 没有用户明确发版指令时，只提交源码，不创建 Release。
+
+## 11. Agent Runtime 与连接层 Beta
+
+`app/internal/agentstate/` 负责持久化 Task/Job；`mcpcore` 提供任务、结构化检查和只读 UI Automation 工具；`application` 只把任务接受/拒绝暴露给本机管理面。修改这些模块时至少覆盖 Worktree fail-closed、跨重启状态、密码 UIA 元素和本地 tunnel sidecar 授权测试。
+
+主实例连接模式由 `Config.ConnectionMode` 选择 `cloudflare / openai / local`。OpenAI 模式仍由现有 Process Manager/Watchdog 管理子进程，但不复用 Cloudflare 的公网域名假设。新增或修改 tunnel-client 参数前必须对照 OpenAI 官方 `tunnel-client` 当前配置文档。

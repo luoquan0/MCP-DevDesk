@@ -263,3 +263,9 @@ MCP DevDesk 的更新源由正式构建内置，界面不再显示或编辑 GitH
 ### 代理连通性测试
 
 更新代理支持只填写 IP/主机名和端口，程序自动尝试 HTTP CONNECT 与无认证 SOCKS5。设置页提供“测试代理”，测试请求有独立短超时并显示识别到的协议与耗时；错误代理不会再让“检查更新”长时间看起来无响应。代理仅用于 GitHub Release 元数据、SHA256 和更新包下载。
+
+## 14. 功能分支 Beta / Prerelease
+
+重大能力可以在不改变 `main` 稳定线的前提下，从已同步 `main` 的 `feature/*` 分支发布显式 prerelease。Beta 必须使用带 prerelease 后缀的程序版本与 Tag（例如 `v0.13.0-beta.1`），GitHub Release 必须设置 `prerelease=true` 且不得标记为 Latest；稳定通道仍指向 `main` 上最新正式版。
+
+Beta 同样必须先通过 GitHub Actions Windows runner 的完整 `build.ps1 -Arch amd64 -RunTests`、前端 `npm ci`/构建、公开仓库敏感信息检查和发布资产 SHA256 校验。Beta 发布工作流不得向 `main` 写版本提交；源版本在功能分支中显式记录，便于 Tag、二进制和更新器保持同一 prerelease 版本。功能验证完成后再通过正常 PR/正式发布流程进入稳定线。

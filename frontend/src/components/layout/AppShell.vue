@@ -14,7 +14,8 @@ const ui = useUiStore();
 const navigation = [
   { to: "/", label: "概览", icon: "overview" },
   { to: "/workspace", label: "项目与运行", icon: "projects" },
-  { to: "/cloudflare", label: "Cloudflare", icon: "cloud" },
+  { to: "/agent-tasks", label: "AI 任务", icon: "command" },
+  { to: "/cloudflare", label: "连接方式", icon: "cloud" },
   { to: "/logs", label: "日志与诊断", icon: "logs" },
   { to: "/settings", label: "设置", icon: "settings" },
 ];
@@ -137,7 +138,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleShortcut));
           </div>
           <span class="topbar-endpoint">
             <AppIcon name="globe" :size="15" />
-            {{ app.status?.remoteMcpUrl?.replace(/^https?:\/\//, '') || '本地模式' }}
+            {{ app.status?.connectionMode === 'openai' ? (app.status.openAITunnel.tunnelId || 'OpenAI Tunnel') : app.status?.remoteMcpUrl?.replace(/^https?:\/\//, '') || '本地模式' }}
           </span>
           <AppButton tone="quiet" icon="refresh" compact :loading="app.refreshing" @click="app.refreshStatus()">刷新</AppButton>
         </div>

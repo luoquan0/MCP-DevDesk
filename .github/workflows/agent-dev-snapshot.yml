@@ -1,0 +1,25 @@
+name: Agent Runtime Dev Snapshot
+
+on:
+  push:
+    branches:
+      - "feature/agent-runtime-v1"
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Pack source snapshot
+        run: tar -czf "$RUNNER_TEMP/mcp-devdesk-source.tgz" --exclude=.git .
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-runtime-source-${{ github.sha }}
+          path: ${{ runner.temp }}/mcp-devdesk-source.tgz
+          retention-days: 1

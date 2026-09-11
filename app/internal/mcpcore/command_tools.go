@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"mcp-devdesk/internal/agentstate"
 )
 
 const (
@@ -32,9 +34,12 @@ type commandManager struct {
 type commandSession struct {
 	mu        sync.RWMutex
 	id        string
+	taskID    string
+	kind      string
 	command   string
 	args      []string
 	cwd       string
+	manager   *commandManager
 	cmd       *exec.Cmd
 	stdin     io.WriteCloser
 	output    *boundedOutput
@@ -56,6 +61,7 @@ type boundedOutput struct {
 }
 
 type execCommandArgs struct {
+	Kind           string            `json:"-"`
 	Command        string            `json:"command"`
 	CommandLine    string            `json:"cmd,omitempty"`
 	Args           []string          `json:"args,omitempty"`
@@ -220,6 +226,9 @@ func (s *Server) executeCommandTool(name string, arguments map[string]any) (map[
 }
 
 func (m *commandManager) start(args execCommandArgs) (map[string]any, error) {
+	if err := m.server.requireTaskEditable(); err != nil {
+		return nil, err
+	}
 	command := strings.TrimSpace(args.Command)
 	displayCommand := command
 	legacyLine := strings.TrimSpace(args.CommandLine)
@@ -308,8 +317,12 @@ func (m *commandManager) start(args execCommandArgs) (map[string]any, error) {
 		return nil, err
 	}
 	session := &commandSession{
-		id: sessionID, command: displayCommand, args: append([]string(nil), args.Args...), cwd: cwd,
+		id: sessionID, taskID: m.server.activeTaskID(), kind: strings.TrimSpace(args.Kind),
+		command: displayCommand, args: append([]string(nil), args.Args...), cwd: cwd, manager: m,
 		cmd: cmd, stdin: stdin, output: output, running: true, cancel: cancel, done: make(chan struct{}),
+	}
+	if session.kind == "" {
+		session.kind = "command"
 	}
 	m.mu.Lock()
 	m.cleanupLocked(time.Now())
@@ -328,6 +341,7 @@ func (m *commandManager) start(args execCommandArgs) (map[string]any, error) {
 	session.startedAt = time.Now()
 	m.sessions[sessionID] = session
 	m.mu.Unlock()
+	_ = m.persistSession(session)
 	go session.wait()
 	if args.Stdin != "" {
 		if _, err := io.WriteString(stdin, args.Stdin); err != nil {
@@ -352,7 +366,6 @@ func (s *commandSession) wait() {
 	err := s.cmd.Wait()
 	_ = s.stdin.Close()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.running = false
 	s.endedAt = time.Now()
 	if s.cmd.ProcessState != nil {
@@ -366,12 +379,24 @@ func (s *commandSession) wait() {
 		s.cancel()
 	}
 	close(s.done)
+	manager := s.manager
+	s.mu.Unlock()
+	if manager != nil {
+		_ = manager.persistSession(s)
+	}
 }
 
 func (m *commandManager) read(args readOutputArgs) (map[string]any, error) {
 	session, err := m.get(args.SessionID)
 	if err != nil {
-		return nil, err
+		if m.server.jobs == nil {
+			return nil, err
+		}
+		job, jobErr := m.server.jobs.Get(args.SessionID)
+		if jobErr != nil {
+			return nil, err
+		}
+		return persistedJobSnapshot(job, args.Offset, args.MaxBytes), nil
 	}
 	if args.MaxBytes <= 0 {
 		args.MaxBytes = defaultCommandRead
@@ -523,6 +548,10 @@ func (s *commandSession) snapshot(relativeCWD string, offset int64, maxBytes int
 	result := map[string]any{
 		"sessionId":   s.id,
 		"session_id":  s.id,
+		"jobId":       s.id,
+		"taskId":      s.taskID,
+		"kind":        s.kind,
+		"persistent":  true,
 		"command":     s.command,
 		"args":        append([]string(nil), s.args...),
 		"cwd":         relativeCWD,
@@ -543,6 +572,96 @@ func (s *commandSession) snapshot(relativeCWD string, offset int64, maxBytes int
 	if s.lastError != "" {
 		result["lastError"] = s.lastError
 		result["last_error"] = s.lastError
+	}
+	return result
+}
+
+func (m *commandManager) persistSession(session *commandSession) error {
+	if m == nil || m.server == nil || m.server.jobs == nil || session == nil {
+		return nil
+	}
+	session.mu.RLock()
+	job := agentstate.Job{
+		ID:        session.id,
+		TaskID:    session.taskID,
+		Kind:      session.kind,
+		Command:   session.command,
+		Args:      append([]string(nil), session.args...),
+		CWD:       session.cwd,
+		Running:   session.running,
+		ExitCode:  cloneIntPointer(session.exitCode),
+		LastError: session.lastError,
+	}
+	if !session.startedAt.IsZero() {
+		job.StartedAt = session.startedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !session.endedAt.IsZero() {
+		job.EndedAt = session.endedAt.UTC().Format(time.RFC3339Nano)
+	}
+	session.mu.RUnlock()
+	data, _, truncated := session.output.read(0, maxPersistedCommandOutputBytes)
+	job.Output = string(data)
+	job.Truncated = truncated
+	job.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	return m.server.jobs.Upsert(job)
+}
+
+const maxPersistedCommandOutputBytes = 512 * 1024
+
+func cloneIntPointer(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func persistedJobSnapshot(job agentstate.Job, offset int64, maxBytes int) map[string]any {
+	if maxBytes <= 0 {
+		maxBytes = defaultCommandRead
+	}
+	if maxBytes > 1024*1024 {
+		maxBytes = 1024 * 1024
+	}
+	data := []byte(job.Output)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > int64(len(data)) {
+		offset = int64(len(data))
+	}
+	end := offset + int64(maxBytes)
+	if end > int64(len(data)) {
+		end = int64(len(data))
+	}
+	result := map[string]any{
+		"sessionId":   job.ID,
+		"session_id":  job.ID,
+		"jobId":       job.ID,
+		"taskId":      job.TaskID,
+		"kind":        job.Kind,
+		"persistent":  true,
+		"recovered":   true,
+		"command":     job.Command,
+		"args":        append([]string(nil), job.Args...),
+		"cwd":         job.CWD,
+		"running":     job.Running,
+		"output":      string(data[offset:end]),
+		"nextOffset":  end,
+		"next_offset": end,
+		"truncated":   job.Truncated || end < int64(len(data)),
+		"startedAt":   job.StartedAt,
+	}
+	if job.EndedAt != "" {
+		result["endedAt"] = job.EndedAt
+	}
+	if job.ExitCode != nil {
+		result["exitCode"] = *job.ExitCode
+		result["exit_code"] = *job.ExitCode
+	}
+	if job.LastError != "" {
+		result["lastError"] = job.LastError
+		result["last_error"] = job.LastError
 	}
 	return result
 }

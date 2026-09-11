@@ -106,6 +106,9 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 	mux.HandleFunc("POST /api/services/takeover", s.handleTakeoverServices)
 	mux.HandleFunc("POST /api/services/change-port", s.handleChangeMCPPort)
 	mux.HandleFunc("POST /api/services/change-workspace", s.handleChangeWorkspace)
+	mux.HandleFunc("GET /api/agent/tasks", s.handleAgentTasks)
+	mux.HandleFunc("POST /api/agent/tasks/{id}/accept", s.handleAcceptAgentTask)
+	mux.HandleFunc("POST /api/agent/tasks/{id}/reject", s.handleRejectAgentTask)
 	mux.HandleFunc("POST /api/cloudflare/login", s.handleCloudflareLogin)
 	mux.HandleFunc("POST /api/cloudflare/configure", s.handleCloudflareConfigure)
 	mux.HandleFunc("POST /api/cloudflared/update/check", s.handleCheckCloudflaredUpdate)
@@ -141,6 +144,33 @@ func NewWithDesktop(app *application.App, address string, desktop DesktopControl
 		MaxHeaderBytes:    16 * 1024,
 	}
 	return s, nil
+}
+
+func (s *Server) handleAgentTasks(w http.ResponseWriter, _ *http.Request) {
+	result, err := s.app.AgentTasks()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleAcceptAgentTask(w http.ResponseWriter, r *http.Request) {
+	task, err := s.app.AcceptAgentTask(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
+func (s *Server) handleRejectAgentTask(w http.ResponseWriter, r *http.Request) {
+	task, err := s.app.RejectAgentTask(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }

@@ -2,6 +2,8 @@ import { defineStore } from "pinia";
 import { api } from "@/services/api";
 import { useUiStore } from "@/stores/ui";
 import type {
+  AgentTask,
+  AgentTaskList,
   AppearanceSettings,
   Config,
   ConfigureTunnelRequest,
@@ -50,6 +52,8 @@ export const useAppStore = defineStore("app", {
     projectDiffs: {} as Record<string, ProjectDiff>,
     projectHistories: {} as Record<string, GitHistory>,
     instances: [] as MCPInstance[],
+    agentTasks: [] as AgentTask[],
+    activeAgentTaskId: "" as string,
     loading: true,
     refreshing: false,
     actionPending: "" as string,
@@ -60,7 +64,11 @@ export const useAppStore = defineStore("app", {
     mcpOnline: (state) => Boolean(state.status?.mcp.running),
     tunnelOnline: (state) => Boolean(state.status?.tunnel.running),
     healthy(state): boolean {
-      return Boolean(state.status?.mcp.running && (!state.status.cloudflare.tunnelId || state.status.tunnel.running));
+      const status = state.status;
+      if (!status?.mcp.running) return false;
+      if (status.connectionMode === "local") return true;
+      if (status.connectionMode === "openai") return !status.openAITunnel.configured || status.tunnel.running;
+      return !status.cloudflare.tunnelId || status.tunnel.running;
     },
   },
   actions: {
@@ -79,6 +87,7 @@ export const useAppStore = defineStore("app", {
           this.loadProjectPromptSettings(),
           this.loadWebControl(),
           this.loadInstances(),
+          this.loadAgentTasks(),
         ]);
       } finally {
         this.loading = false;
@@ -263,6 +272,7 @@ export const useAppStore = defineStore("app", {
         this.loadProjectPromptSettings(),
         this.loadWebControl(),
         this.loadInstances(),
+        this.loadAgentTasks(),
       ]);
       this.connectionError = "";
       this.lastUpdatedAt = new Date();
@@ -310,6 +320,26 @@ export const useAppStore = defineStore("app", {
     async loadInstances() {
       this.instances = await api<MCPInstance[]>("/api/instances");
       return this.instances;
+    },
+    async loadAgentTasks() {
+      const result = await api<AgentTaskList>("/api/agent/tasks");
+      this.agentTasks = result.tasks;
+      this.activeAgentTaskId = result.activeTaskId || "";
+      return result;
+    },
+    async acceptAgentTask(id: string) {
+      const ui = useUiStore();
+      const task = await this.runAction(`accept-agent-task-${id}`, () => api<AgentTask>(`/api/agent/tasks/${encodeURIComponent(id)}/accept`, { method: "POST" }));
+      await this.loadAgentTasks();
+      ui.toast("AI 任务已接受", `${task.title} 已快进合并回原项目。`, "success");
+      return task;
+    },
+    async rejectAgentTask(id: string) {
+      const ui = useUiStore();
+      const task = await this.runAction(`reject-agent-task-${id}`, () => api<AgentTask>(`/api/agent/tasks/${encodeURIComponent(id)}/reject`, { method: "POST" }));
+      await this.loadAgentTasks();
+      ui.toast("AI 任务已放弃", `${task.title} 的隔离 Worktree 已清理。`, "success");
+      return task;
     },
     async createInstance(request: MCPInstanceCreateRequest) {
       const ui = useUiStore();
@@ -527,7 +557,7 @@ export const useAppStore = defineStore("app", {
         body: { port } as unknown as BodyInit,
       }));
       await this.loadConfig();
-      ui.toast("端口已切换", `MCP 与 Cloudflare Tunnel 已同步到端口 ${port}。`, "success");
+      ui.toast("端口已切换", `MCP 与当前连接方式已同步到端口 ${port}。`, "success");
     },
     async changeWorkspace(path: string) {
       const ui = useUiStore();

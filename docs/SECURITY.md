@@ -128,3 +128,11 @@ Go 核心还会过滤命令子进程继承的常见敏感环境变量，包括�
 - 其他 Cloudflare Tunnel 不会被批量终止。
 - 进程命令行中的 `--token` 值在返回管理 API 前会被替换为 `***`。
 - 修改端口采用新 MCP 先就绪、旧 Tunnel 后关闭的顺序，降低公网连接中断时间。
+
+## Agent Runtime 与 OpenAI Secure Tunnel（0.13 Beta）
+
+隔离任务的最终接受/拒绝属于人工批准动作：MCP Tool 不提供 `task_accept` / `task_reject`，局域网页控制入口也拒绝对应管理 API。接受前再次校验基础工作区干净且 HEAD 未移动，只允许 fast-forward 应用任务结果。
+
+Windows UI Automation 与 Screen Vision 使用同一显式 opt-in 和窗口选择策略。语义读取不执行输入动作；标记为密码的 UIA 元素不会读取 `ValuePattern`。
+
+OpenAI Secure Tunnel 的 Runtime API Key 只保存在现有加密 secrets 中，并通过子进程环境传给官方 tunnel-client，不进入命令行。DevDesk 另生成本机随机 sidecar token；Go MCP Core 仅对来源为 loopback 且 token 正确的请求接受该本机授权头。公网/局域网来源不能利用这个旁路。详细流程见 `docs/OPENAI_SECURE_TUNNEL.md`。

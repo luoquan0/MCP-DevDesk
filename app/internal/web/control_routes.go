@@ -123,6 +123,10 @@ func (s *Server) controlRequireAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, errors.New("敏感凭据只能在本机桌面应用中查看或修改"))
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/api/agent/tasks/") && (strings.HasSuffix(r.URL.Path, "/accept") || strings.HasSuffix(r.URL.Path, "/reject")) {
+			writeError(w, http.StatusForbidden, errors.New("AI 任务接受/拒绝只能在本机桌面应用中执行"))
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

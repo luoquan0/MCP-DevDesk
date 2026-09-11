@@ -10,7 +10,9 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 
 ## 当前里程碑
 
-当前版本 `0.12.34` 已完成：
+`0.13.0-beta.1` 功能测试线在 `0.12.34` 稳定基线上新增：任务级自动 Git Worktree 隔离与本机接受/拒绝、持久化 Task/Job ID、`checks_run` 结构化验证、Windows UI Automation 只读语义树，以及主实例 `Cloudflare / OpenAI Secure Tunnel / Local` 三种连接方式。测试线不会替换稳定通道。
+
+当前稳定版本 `0.12.34` 已完成：
 
 - 可视化仪表盘
 - 本地配置管理
@@ -109,6 +111,8 @@ MCP DevDesk 是一个面向 Windows 的可视化本地开发 MCP 管理器。项
 - [总体架构](docs/ARCHITECTURE.md)
 - [安全模型](docs/SECURITY.md)
 - [Cloudflare 流程](docs/CLOUDFLARE.md)
+- [Agent Runtime](docs/AGENT_RUNTIME.md)
+- [OpenAI Secure Tunnel](docs/OPENAI_SECURE_TUNNEL.md)
 - [Windows 桌面模式](docs/DESKTOP.md)
 - [发布与在线更新](docs/RELEASE.md)
 - [开发路线图](docs/ROADMAP.md)

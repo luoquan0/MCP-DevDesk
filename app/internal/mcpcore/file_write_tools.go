@@ -232,6 +232,9 @@ func (s *Server) executeWriteTool(name string, arguments map[string]any) (map[st
 }
 
 func (s *Server) requireWritePermission(destructive, confirmed bool) error {
+	if err := s.requireTaskEditable(); err != nil {
+		return err
+	}
 	switch s.permissionMode {
 	case "safe":
 		return errors.New("write operation denied in safe permission mode")

@@ -45,17 +45,18 @@ const (
 )
 
 type OAuthOptions struct {
-	Enabled         bool
-	Issuer          string
-	Resource        string
-	OwnerPassword   string
-	ClientID        string
-	ClientSecret    string
-	RedirectURIs    []string
-	TokenSecret     string
-	DataDir         string
-	AccessTokenTTL  time.Duration
-	RefreshTokenTTL time.Duration
+	Enabled          bool
+	Issuer           string
+	Resource         string
+	OwnerPassword    string
+	ClientID         string
+	ClientSecret     string
+	RedirectURIs     []string
+	TokenSecret      string
+	LocalTunnelToken string
+	DataDir          string
+	AccessTokenTTL   time.Duration
+	RefreshTokenTTL  time.Duration
 }
 
 type oauthServer struct {
@@ -67,6 +68,7 @@ type oauthServer struct {
 	staticSecret       string
 	staticRedirectURIs []string
 	tokenSecret        []byte
+	localTunnelToken   string
 	clientsPath        string
 	refreshTokensPath  string
 	accessTokenTTL     time.Duration
@@ -183,6 +185,7 @@ func newOAuthServer(options OAuthOptions) (*oauthServer, error) {
 		staticSecret:       options.ClientSecret,
 		staticRedirectURIs: append([]string(nil), options.RedirectURIs...),
 		tokenSecret:        secretBytes,
+		localTunnelToken:   strings.TrimSpace(options.LocalTunnelToken),
 		accessTokenTTL:     options.AccessTokenTTL,
 		refreshTokenTTL:    options.RefreshTokenTTL,
 		clients:            make(map[string]oauthClient),
@@ -220,6 +223,10 @@ func (s *oauthServer) protect(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if s.allowLocalTunnelRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		header := strings.TrimSpace(r.Header.Get("Authorization"))
 		if !strings.HasPrefix(strings.ToLower(header), "bearer ") {
 			s.writeUnauthorized(w, "invalid_token", "Bearer access token is required")
@@ -236,6 +243,26 @@ func (s *oauthServer) protect(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *oauthServer) allowLocalTunnelRequest(r *http.Request) bool {
+	token := s.localTunnelToken
+	if token == "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		host = strings.Trim(strings.TrimSpace(r.RemoteAddr), "[]")
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return false
+	}
+	provided := strings.TrimSpace(r.Header.Get("X-MCP-DevDesk-Tunnel-Token"))
+	if len(provided) != len(token) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
 }
 
 func (s *oauthServer) writeUnauthorized(w http.ResponseWriter, code, description string) {
