@@ -3,7 +3,7 @@ name: MCP DevDesk v0.13 Beta 4 Fix
 on:
   push:
     branches:
-      - "preview/v0.13.0"
+      - "fix/v0.13.0-beta4-runtime"
     paths:
       - "tools/v013_beta4_fix.py"
       - ".github/workflows/v013-beta4-fix.yml"
@@ -16,10 +16,10 @@ jobs:
   validate-and-persist:
     runs-on: windows-latest
     steps:
-      - name: Checkout preview branch
+      - name: Checkout Beta 4 fix branch
         uses: actions/checkout@v4
         with:
-          ref: preview/v0.13.0
+          ref: fix/v0.13.0-beta4-runtime
           fetch-depth: 0
 
       - name: Apply Beta 4 migration
@@ -75,15 +75,13 @@ jobs:
           if (-not $roadmap.Contains('0.13.0-beta.4')) { throw 'roadmap missing beta.4' }
           if (-not $preview.Contains('active 52')) { throw 'preview docs missing mode-aware catalog contract' }
 
-      - name: Persist validated Beta 4 source and remove temporary diagnostics
+      - name: Persist validated Beta 4 product source
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          Remove-Item -Force .github\workflows\beta3-release-core-diagnose.yml -ErrorAction SilentlyContinue
-          Remove-Item -Force .github\workflows\v013-beta4-fix.yml -ErrorAction SilentlyContinue
-          Remove-Item -Force tools\v013_beta4_fix.py -ErrorAction SilentlyContinue
-          git add -A
+          git restore .github\workflows\v013-preview.yml
+          git add app\internal\mcpcore\screen_policy.go app\internal\mcpcore\screen_policy_test.go app\internal\mcpcore\ui_automation_windows.go app\internal\mcpcore\ui_automation_windows_test.go app\internal\buildinfo\version.go docs\V013_PREVIEW.md docs\ROADMAP.md tools\smoke-mcp-core-catalog.ps1
           git diff --cached --check
           git commit -m "fix: beta4 runtime screen catalog and UI automation"
-          git push origin HEAD:preview/v0.13.0
+          git push origin HEAD:fix/v0.13.0-beta4-runtime
