@@ -1,0 +1,84 @@
+name: MCP DevDesk v0.13 Finalize Source
+
+on:
+  push:
+    branches:
+      - "preview/v0.13.0"
+    paths:
+      - "tools/v013_finalize.py"
+      - ".github/workflows/v013-finalize.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  finalize-windows-amd64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout preview branch
+        uses: actions/checkout@v4
+        with:
+          ref: preview/v0.13.0
+          fetch-depth: 0
+
+      - name: Apply final Task v2 migration
+        shell: pwsh
+        run: python .\tools\v013_finalize.py
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Format changed Go sources
+        shell: pwsh
+        run: |
+          gofmt -w app\internal\agentstate\tasks.go app\internal\agentstate\tasks_test.go app\internal\application\agent_tasks.go app\internal\mcpcore\command_tools.go app\internal\mcpcore\task_tools.go app\internal\mcpcore\file_tools.go app\internal\mcpcore\check_tools.go app\internal\mcpcore\check_tools_test.go app\internal\mcpcore\server_test.go
+
+      - name: Build frontend
+        shell: pwsh
+        run: |
+          Set-Location frontend
+          npm ci
+          npm run build
+
+      - name: Agent Runtime targeted tests
+        shell: pwsh
+        run: |
+          Set-Location app
+          go test -mod=vendor ./internal/agentstate ./internal/mcpcore ./internal/application ./internal/web ./internal/config ./internal/secrets ./internal/process -count=1
+
+      - name: Go full tests
+        shell: pwsh
+        run: |
+          Set-Location app
+          go test -mod=vendor ./... -count=1
+
+      - name: Public secret guard
+        shell: pwsh
+        run: .\tools\check-public-release.ps1
+
+      - name: Full Windows build and regression tests
+        shell: pwsh
+        env:
+          MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: .\build.ps1 -Arch amd64 -RunTests
+
+      - name: Persist validated final source
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- app/internal/agentstate/tasks.go app/internal/agentstate/tasks_test.go app/internal/application/agent_tasks.go app/internal/mcpcore/command_tools.go app/internal/mcpcore/task_tools.go app/internal/mcpcore/file_tools.go app/internal/mcpcore/check_tools.go app/internal/mcpcore/check_tools_test.go app/internal/mcpcore/server_test.go frontend/src/types/api.ts frontend/src/pages/AgentTasksPage.vue docs/ROADMAP.md docs/V013_PREVIEW.md
+          if (git diff --cached --quiet) { throw "finalize migration produced no source changes" }
+          git commit -m "feat: finalize v0.13 task center and project validation"
+          git push origin HEAD:preview/v0.13.0
