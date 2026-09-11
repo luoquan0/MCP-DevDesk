@@ -1,0 +1,129 @@
+name: MCP DevDesk v0.13 Preview
+
+on:
+  push:
+    branches:
+      - "preview/v0.13.0"
+    paths:
+      - "tools/v013_bootstrap.py"
+      - ".github/workflows/v013-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  preview-windows-amd64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout preview branch
+        uses: actions/checkout@v4
+        with:
+          ref: preview/v0.13.0
+          fetch-depth: 0
+
+      - name: Generate v0.13 preview source
+        shell: pwsh
+        run: python .\tools\v013_bootstrap.py
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Format Go sources
+        shell: pwsh
+        run: |
+          gofmt -w app\internal\mcpcore\task_tools.go app\internal\mcpcore\code_navigation.go app\internal\mcpcore\server.go app\internal\mcpcore\file_tools.go app\internal\mcpcore\screen_tools.go app\internal\mcpcore\screen_capture_windows.go
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: |
+          Set-Location frontend
+          npm ci
+
+      - name: Build frontend
+        shell: pwsh
+        run: |
+          Set-Location frontend
+          npm run build
+
+      - name: Go tests
+        shell: pwsh
+        run: |
+          Set-Location app
+          go test ./...
+
+      - name: Public secret guard
+        shell: pwsh
+        run: .\tools\check-public-release.ps1
+
+      - name: Full Windows build and regression tests
+        shell: pwsh
+        env:
+          MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: .\build.ps1 -Arch amd64 -RunTests
+
+      - name: Persist generated preview source
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- app/internal/mcpcore app/internal/buildinfo/version.go docs/ROADMAP.md docs/V013_PREVIEW.md
+          if (-not (git diff --cached --quiet)) {
+            git commit -m "feat: add v0.13 AI Coding Workspace preview"
+            git push origin HEAD:preview/v0.13.0
+          }
+          "PREVIEW_SHA=$((git rev-parse HEAD).Trim())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Create SHA256 files
+        shell: pwsh
+        run: |
+          $assets = @(
+            "dist\MCP-DevDesk-amd64.exe",
+            "dist\MCP-DevDesk-Portable-amd64.zip",
+            "dist\devdesk-updater-amd64.exe",
+            "dist\devdeskctl-amd64.exe",
+            "dist\mcp-core-amd64.exe"
+          )
+          foreach ($asset in $assets) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
+            $name = Split-Path -Leaf $asset
+            Set-Content -LiteralPath ($asset + ".sha256") -Value ($hash + "  " + $name) -Encoding ASCII
+          }
+
+      - name: Publish prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v0.13.0-preview.1"
+          git tag -f $tag $env:PREVIEW_SHA
+          git push origin "refs/tags/$tag" --force
+          $assets = @(
+            "dist\MCP-DevDesk-amd64.exe",
+            "dist\MCP-DevDesk-amd64.exe.sha256",
+            "dist\MCP-DevDesk-Portable-amd64.zip",
+            "dist\MCP-DevDesk-Portable-amd64.zip.sha256",
+            "dist\devdesk-updater-amd64.exe",
+            "dist\devdesk-updater-amd64.exe.sha256",
+            "dist\devdeskctl-amd64.exe",
+            "dist\devdeskctl-amd64.exe.sha256",
+            "dist\mcp-core-amd64.exe",
+            "dist\mcp-core-amd64.exe.sha256"
+          )
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $assets --clobber
+            gh release edit $tag --title "MCP DevDesk v0.13.0 Preview 1" --prerelease --notes-file docs/V013_PREVIEW.md
+          } else {
+            gh release create $tag $assets --target $env:PREVIEW_SHA --title "MCP DevDesk v0.13.0 Preview 1" --prerelease --notes-file docs/V013_PREVIEW.md --verify-tag
+          }
