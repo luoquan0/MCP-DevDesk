@@ -5,11 +5,12 @@ on:
     branches:
       - "preview/v0.13.0"
     paths:
-      - "tools/v013_supplement.py"
-      - "tools/v013_fix2.py"
-      - "tools/v013_fix3.py"
-      - "tools/v013_fix4.py"
+      - "app/**"
+      - "frontend/**"
+      - "docs/**"
       - "installer/**"
+      - "build.ps1"
+      - "package-portable.ps1"
       - ".github/workflows/v013-preview.yml"
   workflow_dispatch:
 
@@ -26,12 +27,10 @@ jobs:
           ref: preview/v0.13.0
           fetch-depth: 0
 
-      - name: Apply v0.13 supplemental integration
+      - name: Resolve preview commit
         shell: pwsh
         run: |
-          python .\tools\v013_supplement.py
-          python .\tools\v013_fix2.py
-          python .\tools\v013_fix4.py
+          "PREVIEW_SHA=$((git rev-parse HEAD).Trim())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -46,10 +45,16 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Format Go sources
+      - name: Verify Go formatting
         shell: pwsh
         run: |
-          gofmt -w app\internal\mcpcore\code_navigation.go app\internal\mcpcore\server.go app\internal\mcpcore\file_tools.go app\internal\mcpcore\screen_tools.go app\internal\mcpcore\screen_policy.go app\internal\mcpcore\screen_capture_windows.go app\internal\mcpcore\screen_minimized_windows.go app\internal\mcpcore\server_test.go app\internal\mcpcore\task_tools_test.go app\internal\mcpcore\ui_automation_windows_test.go app\internal\process\manager.go app\internal\process\screen_vision_args_test.go app\internal\model\types.go app\internal\application\instances.go app\internal\agentstate\tasks_test.go
+          $files = Get-ChildItem app -Recurse -Filter *.go | Select-Object -ExpandProperty FullName
+          $bad = @(gofmt -l $files)
+          if ($bad.Count -gt 0) {
+            Write-Host "The following Go files need gofmt:"
+            $bad | ForEach-Object { Write-Host $_ }
+            exit 1
+          }
 
       - name: Install frontend dependencies
         shell: pwsh
@@ -75,6 +80,20 @@ jobs:
           Set-Location app
           go test -mod=vendor ./... -count=1
 
+      - name: Documentation consistency
+        shell: pwsh
+        run: |
+          $versionText = Get-Content app\internal\buildinfo\version.go -Raw
+          $match = [regex]::Match($versionText, 'Version\s*=\s*"([^"]+)"')
+          if (-not $match.Success) { throw "Unable to read buildinfo.Version" }
+          $version = $match.Groups[1].Value
+          $roadmap = Get-Content docs\ROADMAP.md -Raw
+          $preview = Get-Content docs\V013_PREVIEW.md -Raw
+          if (-not $roadmap.Contains($version)) { throw "ROADMAP does not mention build version $version" }
+          if (-not $preview.Contains($version)) { throw "V013_PREVIEW does not mention build version $version" }
+          if (-not $roadmap.Contains('0.12.34')) { throw "ROADMAP lost stable version 0.12.34" }
+          if ($roadmap.Contains('当前稳定开发版本：`0.12.8`')) { throw "ROADMAP contains stale stable version 0.12.8" }
+
       - name: Public secret guard
         shell: pwsh
         run: .\tools\check-public-release.ps1
@@ -84,18 +103,6 @@ jobs:
         env:
           MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
         run: .\build.ps1 -Arch amd64 -RunTests
-
-      - name: Persist validated preview source
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- app/internal/mcpcore app/internal/process/manager.go app/internal/process/screen_vision_args_test.go app/internal/model/types.go app/internal/application/instances.go app/internal/agentstate/tasks_test.go frontend/src/types/api.ts frontend/src/pages/InstancesPage.vue docs/ROADMAP.md docs/V013_PREVIEW.md
-          if (-not (git diff --cached --quiet)) {
-            git commit -m "feat: complete v0.13 beta preview integration"
-            git push origin HEAD:preview/v0.13.0
-          }
-          "PREVIEW_SHA=$((git rev-parse HEAD).Trim())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build NSIS setup
         shell: pwsh
@@ -172,7 +179,7 @@ jobs:
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $assets --clobber
-            gh release edit $tag --title "MCP DevDesk v0.13.0 Beta 1" --prerelease --notes-file docs/V013_PREVIEW.md
+            gh release edit $tag --target $env:PREVIEW_SHA --title "MCP DevDesk v0.13.0 Beta 1" --prerelease --notes-file docs/V013_PREVIEW.md
           } else {
             gh release create $tag $assets --target $env:PREVIEW_SHA --title "MCP DevDesk v0.13.0 Beta 1" --prerelease --notes-file docs/V013_PREVIEW.md --verify-tag
           }
