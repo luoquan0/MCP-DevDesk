@@ -105,12 +105,15 @@ jobs:
           if (-not (Test-Path dist\MCP-DevDesk-Setup-x64.exe)) { throw "NSIS setup was not created" }
 
       - name: Optional Authenticode signing
-        if: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 != '' && secrets.WINDOWS_SIGN_CERT_PASSWORD != '' }}
         shell: pwsh
         env:
           SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
           SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:SIGN_CERT_BASE64) -or [string]::IsNullOrWhiteSpace($env:SIGN_CERT_PASSWORD)) {
+            Write-Host "No signing certificate configured; publishing unsigned beta assets."
+            exit 0
+          }
           $certPath = Join-Path $env:RUNNER_TEMP "mcp-devdesk-signing.pfx"
           [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SIGN_CERT_BASE64))
           $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
