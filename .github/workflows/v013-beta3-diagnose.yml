@@ -1,0 +1,59 @@
+name: MCP DevDesk v0.13 Beta 3 Diagnose
+
+on:
+  push:
+    branches:
+      - "preview/v0.13.0"
+    paths:
+      - ".github/workflows/v013-beta3-diagnose.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: preview/v0.13.0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Write temporary catalog test
+        shell: pwsh
+        run: |
+          @'
+          package mcpcore
+
+          import (
+              "sort"
+              "testing"
+          )
+
+          func TestBeta3DiagnoseScreenCatalog(t *testing.T) {
+              server := mustNewServer(t, Options{
+                  Workspace: t.TempDir(),
+                  PermissionMode: "dangerous",
+                  ScreenCaptureEnabled: true,
+                  ToolProfile: "full",
+              })
+              names := make([]string, 0, len(server.tools))
+              for _, tool := range server.tools {
+                  names = append(names, tool.Name)
+              }
+              sort.Strings(names)
+              t.Logf("toolCount=%d", len(names))
+              for _, name := range names {
+                  t.Log(name)
+              }
+          }
+          '@ | Set-Content app\internal\mcpcore\beta3_diag_test.go -Encoding UTF8
+          gofmt -w app\internal\mcpcore\beta3_diag_test.go
+      - name: Run catalog diagnosis
+        shell: pwsh
+        run: |
+          Set-Location app
+          go test -mod=vendor ./internal/mcpcore -run TestBeta3DiagnoseScreenCatalog -v -count=1
