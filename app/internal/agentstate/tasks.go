@@ -14,23 +14,37 @@ import (
 	"time"
 )
 
-const taskStoreVersion = 1
+const (
+	taskStoreVersion = 2
+	maxTaskJobIDs    = 64
+)
 
 type Task struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	Summary       string `json:"summary,omitempty"`
-	Status        string `json:"status"`
-	BaseWorkspace string `json:"baseWorkspace"`
-	WorktreePath  string `json:"worktreePath"`
-	Branch        string `json:"branch"`
-	BaseCommit    string `json:"baseCommit"`
-	ResultCommit  string `json:"resultCommit,omitempty"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt"`
-	FinishedAt    string `json:"finishedAt,omitempty"`
-	AcceptedAt    string `json:"acceptedAt,omitempty"`
-	RejectedAt    string `json:"rejectedAt,omitempty"`
+	ID                    string   `json:"id"`
+	Title                 string   `json:"title"`
+	Summary               string   `json:"summary,omitempty"`
+	Status                string   `json:"status"`
+	BaseWorkspace         string   `json:"baseWorkspace"`
+	WorktreePath          string   `json:"worktreePath"`
+	Branch                string   `json:"branch"`
+	BaseCommit            string   `json:"baseCommit"`
+	ResultCommit          string   `json:"resultCommit,omitempty"`
+	BaseDirtyFilesAtStart []string `json:"baseDirtyFilesAtStart,omitempty"`
+	CurrentStep           string   `json:"currentStep,omitempty"`
+	NextStep              string   `json:"nextStep,omitempty"`
+	ChangedFiles          []string `json:"changedFiles,omitempty"`
+	JobIDs                []string `json:"jobIds,omitempty"`
+	CheckJobIDs           []string `json:"checkJobIds,omitempty"`
+	LastJobID             string   `json:"lastJobId,omitempty"`
+	LastValidationStatus  string   `json:"lastValidationStatus,omitempty"`
+	LastValidationAt      string   `json:"lastValidationAt,omitempty"`
+	LastHeartbeatAt       string   `json:"lastHeartbeatAt,omitempty"`
+	FailureReason         string   `json:"failureReason,omitempty"`
+	CreatedAt             string   `json:"createdAt"`
+	UpdatedAt             string   `json:"updatedAt"`
+	FinishedAt            string   `json:"finishedAt,omitempty"`
+	AcceptedAt            string   `json:"acceptedAt,omitempty"`
+	RejectedAt            string   `json:"rejectedAt,omitempty"`
 }
 
 type taskFile struct {
@@ -70,10 +84,9 @@ func (s *TaskStore) Start(workspace, title, summary string) (Task, error) {
 	if inside, _, err := runGit(workspace, "rev-parse", "--is-inside-work-tree"); err != nil || strings.TrimSpace(inside) != "true" {
 		return Task{}, errors.New("task isolation requires a Git working tree")
 	}
-	if status, _, err := runGit(workspace, "status", "--porcelain"); err != nil {
+	baseDirtyFiles, err := gitDirtyPaths(workspace)
+	if err != nil {
 		return Task{}, fmt.Errorf("read Git status: %w", err)
-	} else if strings.TrimSpace(status) != "" {
-		return Task{}, errors.New("task isolation requires a clean base working tree; commit or stash existing changes first")
 	}
 	baseCommit, _, err := runGit(workspace, "rev-parse", "HEAD")
 	if err != nil {
@@ -88,7 +101,22 @@ func (s *TaskStore) Start(workspace, title, summary string) (Task, error) {
 	branch := "mcp-task/" + strings.TrimPrefix(id, "tsk_")
 	worktree := filepath.Join(s.worktreeRoot, id)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	task := Task{ID: id, Title: title, Summary: summary, Status: "editing", BaseWorkspace: workspace, WorktreePath: worktree, Branch: branch, BaseCommit: baseCommit, CreatedAt: now, UpdatedAt: now}
+	task := Task{
+		ID:                    id,
+		Title:                 title,
+		Summary:               summary,
+		Status:                "editing",
+		BaseWorkspace:         workspace,
+		WorktreePath:          worktree,
+		Branch:                branch,
+		BaseCommit:            baseCommit,
+		BaseDirtyFilesAtStart: baseDirtyFiles,
+		CurrentStep:           "已创建隔离 Worktree",
+		NextStep:              "分析任务并修改代码",
+		LastHeartbeatAt:       now,
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
 
 	err = s.withLock(func(state *taskFile) error {
 		if state.ActiveTaskID != "" {
@@ -180,13 +208,136 @@ func (s *TaskStore) Resume(id string) (Task, error) {
 		if info, err := os.Stat(task.WorktreePath); err != nil || !info.IsDir() {
 			return errors.New("task worktree is unavailable")
 		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
 		task.Status = "editing"
-		task.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		task.CurrentStep = "继续修改任务"
+		if strings.TrimSpace(task.NextStep) == "" {
+			task.NextStep = "完成修改并运行项目验证"
+		}
+		task.LastHeartbeatAt = now
+		task.UpdatedAt = now
 		state.ActiveTaskID = task.ID
 		result = *task
 		return s.save(state)
 	})
 	return result, err
+}
+
+func (s *TaskStore) UpdateProgress(id, currentStep, nextStep, failureReason string, clearFailure bool) (Task, error) {
+	id = strings.TrimSpace(id)
+	currentStep = strings.TrimSpace(currentStep)
+	nextStep = strings.TrimSpace(nextStep)
+	failureReason = strings.TrimSpace(failureReason)
+	if len(currentStep) > 512 {
+		return Task{}, errors.New("current step cannot exceed 512 characters")
+	}
+	if len(nextStep) > 512 {
+		return Task{}, errors.New("next step cannot exceed 512 characters")
+	}
+	if len(failureReason) > 4000 {
+		return Task{}, errors.New("failure reason cannot exceed 4000 characters")
+	}
+	var result Task
+	err := s.withLock(func(state *taskFile) error {
+		if id == "" {
+			id = state.ActiveTaskID
+		}
+		task := findTask(state.Tasks, id)
+		if task == nil {
+			return errors.New("task not found")
+		}
+		if task.Status != "editing" && task.Status != "review" {
+			return fmt.Errorf("task %s is %s and cannot be updated", task.ID, task.Status)
+		}
+		if currentStep != "" {
+			task.CurrentStep = currentStep
+		}
+		if nextStep != "" {
+			task.NextStep = nextStep
+		}
+		if clearFailure {
+			task.FailureReason = ""
+		} else if failureReason != "" {
+			task.FailureReason = failureReason
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		task.LastHeartbeatAt = now
+		task.UpdatedAt = now
+		result = *task
+		return s.save(state)
+	})
+	return result, err
+}
+
+func (s *TaskStore) RefreshChangedFiles(id string) (Task, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		if active, ok, err := s.Active(); err != nil {
+			return Task{}, err
+		} else if ok {
+			id = active.ID
+		}
+	}
+	task, err := s.Get(id)
+	if err != nil {
+		return Task{}, err
+	}
+	if task.Status != "editing" && task.Status != "review" {
+		return task, nil
+	}
+	changed, err := gitDirtyPaths(task.WorktreePath)
+	if err != nil {
+		return Task{}, err
+	}
+	var result Task
+	err = s.withLock(func(state *taskFile) error {
+		current := findTask(state.Tasks, id)
+		if current == nil {
+			return errors.New("task not found")
+		}
+		current.ChangedFiles = changed
+		result = *current
+		return s.save(state)
+	})
+	return result, err
+}
+
+func (s *TaskStore) RecordJob(job Job) error {
+	if strings.TrimSpace(job.TaskID) == "" || strings.TrimSpace(job.ID) == "" {
+		return nil
+	}
+	return s.withLock(func(state *taskFile) error {
+		task := findTask(state.Tasks, strings.TrimSpace(job.TaskID))
+		if task == nil {
+			return nil
+		}
+		task.JobIDs = appendBoundedUniqueID(task.JobIDs, job.ID, maxTaskJobIDs)
+		task.LastJobID = job.ID
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(job.Kind)), "check:") {
+			task.CheckJobIDs = appendBoundedUniqueID(task.CheckJobIDs, job.ID, maxTaskJobIDs)
+			if job.Running {
+				task.LastValidationStatus = "running"
+			} else if job.ExitCode != nil && *job.ExitCode == 0 && strings.TrimSpace(job.LastError) == "" {
+				task.LastValidationStatus = "passed"
+				task.FailureReason = ""
+			} else {
+				task.LastValidationStatus = "failed"
+				if strings.TrimSpace(job.LastError) != "" {
+					task.FailureReason = compact(job.LastError)
+				} else {
+					task.FailureReason = "project validation failed; inspect job " + job.ID
+				}
+			}
+			task.LastValidationAt = job.UpdatedAt
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if strings.TrimSpace(job.UpdatedAt) != "" {
+			now = job.UpdatedAt
+		}
+		task.LastHeartbeatAt = now
+		task.UpdatedAt = now
+		return s.save(state)
+	})
 }
 
 func (s *TaskStore) Finish(id, summary string) (Task, error) {
@@ -207,12 +358,20 @@ func (s *TaskStore) Finish(id, summary string) (Task, error) {
 		if task.Status != "editing" && task.Status != "review" {
 			return fmt.Errorf("task %s is %s and cannot be finished", task.ID, task.Status)
 		}
+		changed, err := gitDirtyPaths(task.WorktreePath)
+		if err != nil {
+			return fmt.Errorf("read task changes: %w", err)
+		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		task.Status = "review"
 		if summary != "" {
 			task.Summary = summary
 		}
+		task.ChangedFiles = changed
+		task.CurrentStep = "等待人工验收"
+		task.NextStep = "在 MCP DevDesk 中审查 Diff 并选择接受或放弃"
 		task.FinishedAt = now
+		task.LastHeartbeatAt = now
 		task.UpdatedAt = now
 		state.ActiveTaskID = task.ID
 		result = *task
@@ -232,28 +391,33 @@ func (s *TaskStore) Accept(id string) (Task, error) {
 		if task.Status != "review" {
 			return errors.New("task must be finished and awaiting review before it can be accepted")
 		}
+		fail := func(message string) error {
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			task.FailureReason = compact(message)
+			task.CurrentStep = "验收被安全边界阻止"
+			task.NextStep = "处理主工作区冲突后再次验收，或放弃此任务"
+			task.LastHeartbeatAt = now
+			task.UpdatedAt = now
+			if saveErr := s.save(state); saveErr != nil {
+				return fmt.Errorf("%s; persist task failure: %w", message, saveErr)
+			}
+			return errors.New(message)
+		}
 		if _, err := cleanExistingDir(task.BaseWorkspace); err != nil {
-			return err
+			return fail(err.Error())
 		}
 		if _, err := cleanExistingDir(task.WorktreePath); err != nil {
-			return err
-		}
-		baseStatus, _, err := runGit(task.BaseWorkspace, "status", "--porcelain")
-		if err != nil {
-			return fmt.Errorf("read base Git status: %w", err)
-		}
-		if strings.TrimSpace(baseStatus) != "" {
-			return errors.New("base working tree changed while the task was isolated; commit or stash those changes before accepting")
+			return fail(err.Error())
 		}
 		baseHead, _, err := runGit(task.BaseWorkspace, "rev-parse", "HEAD")
 		if err != nil {
-			return fmt.Errorf("resolve base HEAD: %w", err)
+			return fail("resolve base HEAD: " + err.Error())
 		}
 		if !strings.EqualFold(strings.TrimSpace(baseHead), task.BaseCommit) {
-			return errors.New("base branch advanced while the task was isolated; rebase or create a new task before accepting")
+			return fail("base branch advanced while the task was isolated; rebase or create a new task before accepting")
 		}
 		if output, stderr, err := runGit(task.WorktreePath, "add", "-A"); err != nil {
-			return fmt.Errorf("stage task changes: %w: %s", err, compact(output+"\n"+stderr))
+			return fail(fmt.Sprintf("stage task changes: %v: %s", err, compact(output+"\n"+stderr)))
 		}
 		_, _, diffErr := runGit(task.WorktreePath, "diff", "--cached", "--quiet")
 		if diffErr != nil {
@@ -262,25 +426,42 @@ func (s *TaskStore) Accept(id string) (Task, error) {
 				message += ": " + task.Title
 			}
 			if output, stderr, err := runGit(task.WorktreePath, "commit", "-m", message); err != nil {
-				return fmt.Errorf("commit accepted task changes: %w: %s", err, compact(output+"\n"+stderr))
+				return fail(fmt.Sprintf("commit accepted task changes: %v: %s", err, compact(output+"\n"+stderr)))
 			}
 		}
 		taskHead, _, err := runGit(task.WorktreePath, "rev-parse", "HEAD")
 		if err != nil {
-			return fmt.Errorf("resolve task HEAD: %w", err)
+			return fail("resolve task HEAD: " + err.Error())
 		}
 		taskHead = strings.TrimSpace(taskHead)
+		changed, err := gitDiffPaths(task.WorktreePath, task.BaseCommit, taskHead)
+		if err != nil {
+			return fail("resolve task changed files: " + err.Error())
+		}
+		task.ChangedFiles = changed
+		baseDirty, err := gitDirtyPaths(task.BaseWorkspace)
+		if err != nil {
+			return fail("read base Git status: " + err.Error())
+		}
+		conflicts := conflictingTaskPaths(baseDirty, changed)
+		if len(conflicts) > 0 {
+			return fail("base working tree has local changes that overlap this task: " + strings.Join(conflicts, ", "))
+		}
 		if output, stderr, err := runGit(task.BaseWorkspace, "merge", "--ff-only", taskHead); err != nil {
-			return fmt.Errorf("apply accepted task to base branch: %w: %s", err, compact(output+"\n"+stderr))
+			return fail(fmt.Sprintf("apply accepted task to base branch: %v: %s", err, compact(output+"\n"+stderr)))
 		}
 		if output, stderr, err := runGit(task.BaseWorkspace, "worktree", "remove", task.WorktreePath); err != nil {
-			return fmt.Errorf("remove accepted task worktree: %w: %s", err, compact(output+"\n"+stderr))
+			return fail(fmt.Sprintf("remove accepted task worktree: %v: %s", err, compact(output+"\n"+stderr)))
 		}
 		_, _, _ = runGit(task.BaseWorkspace, "branch", "-D", task.Branch)
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		task.Status = "accepted"
 		task.ResultCommit = taskHead
+		task.CurrentStep = "修改已安全应用"
+		task.NextStep = ""
+		task.FailureReason = ""
 		task.AcceptedAt = now
+		task.LastHeartbeatAt = now
 		task.UpdatedAt = now
 		if state.ActiveTaskID == task.ID {
 			state.ActiveTaskID = ""
@@ -310,7 +491,10 @@ func (s *TaskStore) Reject(id string) (Task, error) {
 		_, _, _ = runGit(task.BaseWorkspace, "branch", "-D", task.Branch)
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		task.Status = "rejected"
+		task.CurrentStep = "任务已放弃"
+		task.NextStep = ""
 		task.RejectedAt = now
+		task.LastHeartbeatAt = now
 		task.UpdatedAt = now
 		if state.ActiveTaskID == task.ID {
 			state.ActiveTaskID = ""
@@ -333,13 +517,42 @@ func (s *TaskStore) load() (taskFile, error) {
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return taskFile{}, fmt.Errorf("parse agent task state: %w", err)
 	}
-	if state.Version != taskStoreVersion {
+	if state.Version != 1 && state.Version != taskStoreVersion {
 		return taskFile{}, fmt.Errorf("unsupported agent task state version %d", state.Version)
 	}
 	if state.Tasks == nil {
 		state.Tasks = []Task{}
 	}
+	if state.Version == 1 {
+		state.Version = taskStoreVersion
+		for i := range state.Tasks {
+			migrateTaskV1(&state.Tasks[i])
+		}
+	}
 	return state, nil
+}
+
+func migrateTaskV1(task *Task) {
+	if task == nil {
+		return
+	}
+	if strings.TrimSpace(task.LastHeartbeatAt) == "" {
+		task.LastHeartbeatAt = task.UpdatedAt
+	}
+	if strings.TrimSpace(task.CurrentStep) == "" {
+		switch task.Status {
+		case "review":
+			task.CurrentStep = "等待人工验收"
+			task.NextStep = "在 MCP DevDesk 中审查 Diff 并选择接受或放弃"
+		case "accepted":
+			task.CurrentStep = "修改已安全应用"
+		case "rejected":
+			task.CurrentStep = "任务已放弃"
+		default:
+			task.CurrentStep = "继续任务"
+			task.NextStep = "完成修改并运行项目验证"
+		}
+	}
 }
 
 func (s *TaskStore) save(state *taskFile) error {
@@ -417,6 +630,122 @@ func findTask(tasks []Task, id string) *Task {
 		}
 	}
 	return nil
+}
+
+func appendBoundedUniqueID(values []string, value string, limit int) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	result := make([]string, 0, len(values)+1)
+	for _, current := range values {
+		if current != value {
+			result = append(result, current)
+		}
+	}
+	result = append(result, value)
+	if limit > 0 && len(result) > limit {
+		result = result[len(result)-limit:]
+	}
+	return result
+}
+
+func gitDirtyPaths(workspace string) ([]string, error) {
+	status, stderr, err := runGit(workspace, "-c", "core.quotepath=false", "status", "--porcelain")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", err, compact(stderr))
+	}
+	return porcelainPaths(status), nil
+}
+
+func gitDiffPaths(workspace, baseCommit, headCommit string) ([]string, error) {
+	output, stderr, err := runGit(workspace, "-c", "core.quotepath=false", "diff", "--name-only", baseCommit+".."+headCommit)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", err, compact(stderr))
+	}
+	seen := map[string]struct{}{}
+	result := make([]string, 0)
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r", ""), "\n") {
+		path := normalizeTaskPath(line)
+		if path == "" {
+			continue
+		}
+		key := strings.ToLower(path)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, path)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func porcelainPaths(output string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0)
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r", ""), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if index := strings.LastIndex(path, " -> "); index >= 0 {
+			path = path[index+4:]
+		}
+		path = normalizeTaskPath(path)
+		if path == "" {
+			continue
+		}
+		key := strings.ToLower(path)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, path)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func normalizeTaskPath(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, "\"")
+	value = filepath.ToSlash(filepath.Clean(value))
+	value = strings.TrimPrefix(value, "./")
+	if value == "." || value == "" {
+		return ""
+	}
+	return value
+}
+
+func conflictingTaskPaths(baseDirty, taskChanged []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0)
+	for _, dirty := range baseDirty {
+		for _, changed := range taskChanged {
+			if !taskPathOverlap(dirty, changed) {
+				continue
+			}
+			key := strings.ToLower(normalizeTaskPath(dirty))
+			if _, exists := seen[key]; exists {
+				break
+			}
+			seen[key] = struct{}{}
+			result = append(result, normalizeTaskPath(dirty))
+			break
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func taskPathOverlap(left, right string) bool {
+	left = strings.ToLower(normalizeTaskPath(left))
+	right = strings.ToLower(normalizeTaskPath(right))
+	if left == "" || right == "" {
+		return false
+	}
+	return left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/")
 }
 
 func cleanExistingDir(value string) (string, error) {
