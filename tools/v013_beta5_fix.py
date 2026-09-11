@@ -49,8 +49,8 @@ replace_once(
 # Raw Task git subprocesses also need the no-console policy.
 replace_once(
     "app/internal/agentstate/tasks.go",
-    '''\tcommand := exec.Command("git", args...)\n\tcommand.Dir = workdir\n''',
-    '''\tcommand := exec.Command("git", args...)\n\tconfigureBackgroundCommand(command)\n\tcommand.Dir = workdir\n''',
+    '''\tcommand := exec.Command("git", args...)\n\tcommand.Dir = cwd\n''',
+    '''\tcommand := exec.Command("git", args...)\n\tconfigureBackgroundCommand(command)\n\tcommand.Dir = cwd\n''',
 )
 write(
     "app/internal/agentstate/command_platform_windows.go",
