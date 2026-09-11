@@ -337,6 +337,7 @@ func inside(root, path string) bool {
 
 func restart(executable string, args []string) error {
 	command := exec.Command(executable, args...)
+	configureRestartCommand(command)
 	command.Dir = filepath.Dir(executable)
 	if err := command.Start(); err != nil {
 		return err

@@ -23,6 +23,23 @@ func TestConfigureChildProcessHidesConsoleWindow(t *testing.T) {
 	if command.SysProcAttr.CreationFlags&syscall.CREATE_NEW_PROCESS_GROUP == 0 {
 		t.Fatal("child process group flag is missing")
 	}
+	if command.SysProcAttr.CreationFlags&createNoWindow == 0 {
+		t.Fatal("CREATE_NO_WINDOW is missing for hidden child process")
+	}
+}
+
+func TestConfigureChildProcessVisibleModeDoesNotForceNoWindow(t *testing.T) {
+	command := exec.Command("netstat.exe", "-ano")
+	configureChildProcess(command, false)
+	if command.SysProcAttr == nil {
+		t.Fatal("SysProcAttr was not configured")
+	}
+	if command.SysProcAttr.HideWindow {
+		t.Fatal("visible child process unexpectedly has HideWindow")
+	}
+	if command.SysProcAttr.CreationFlags&createNoWindow != 0 {
+		t.Fatal("visible child process unexpectedly has CREATE_NO_WINDOW")
+	}
 }
 
 func TestCloudflareLoginCommandDetection(t *testing.T) {

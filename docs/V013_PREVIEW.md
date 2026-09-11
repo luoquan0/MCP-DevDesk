@@ -1,4 +1,4 @@
-# MCP DevDesk v0.13.0-beta.4
+# MCP DevDesk v0.13.0-beta.5
 
 0.13 Preview 把 MCP DevDesk 从 MCP 管理器推进为可恢复、可审核的 Windows AI Coding Workspace。
 
@@ -10,7 +10,7 @@
 - 代码导航：正式暴露 `document_symbols`、`workspace_symbols`、`find_definition`、`find_references`；`list_symbols` 继续作为 Beta 2 兼容调用别名，但不再单独占用 tools/list 槽位。Preview 会探测已安装 language-server，但当前结果明确标记 `lexical-fallback`，不把未接入的 LSP 会话伪装成完整 LSP。
 - OpenAI Secure Tunnel：主实例可在 Cloudflare / OpenAI / Local 之间选择；OpenAI API Key 使用现有 Windows 加密 secrets，sidecar token 仅允许 loopback。
 - Screen Vision：改为每 MCP 实例读取自己的 `config.json`，新增无截图的 `screen_capture_probe` 兼容性探针。后台窗口仅尝试 PrintWindow / WindowDC 等不改 Z-order 的 HWND 自有路径；最小化窗口直接 fail closed，不再临时恢复。Windows Graphics Capture 原生后端暂不在未完成实机矩阵前启用。
-- 文档状态同步：稳定版仍为 0.12.34，0.13.0-beta.4 是独立 prerelease。
+- 文档状态同步：稳定版仍为 0.12.34，0.13.0-beta.5 是独立 prerelease。
 
 ## 已知 Preview 边界
 
@@ -18,6 +18,14 @@
 - Authenticode 需要实际代码签名证书；本测试版可能触发 Windows SmartScreen。
 - OpenAI Secure Tunnel Preview 使用用户提供的官方 `tunnel-client.exe`，当前不捆绑第三方二进制。
 - macOS / Linux 不属于 0.13 范围。
+
+## Beta 5：后台无黑框、UIA UTF-8 与 Connector 目录代际修复
+
+- Windows 后台子进程统一补齐 `CREATE_NO_WINDOW`：覆盖 MCP Core/Cloudflare/OpenAI tunnel 进程、端口/进程探测、Task Git、Updater、自动重启和桌面启动检查；继续保留显式可见模式，不影响需要用户交互的流程。
+- UI Automation PowerShell 5.1 stdout 固定为 UTF-8 no-BOM，并新增真实 Unicode JSON 回归，避免中文窗口标题和“最小化/关闭”等控件名出现 mojibake。
+- MCP Core serverInfo 做一次性 catalog identity 升级为 `mcp-devdesk-go-core-v013-catalog2`，帮助会缓存旧 tools/list 的 Connector 建立新的工具目录代际。
+- `check_exec_environment` 增加目录诊断兜底：公开 catalog generation、实际广告工具数、`screen_capture_probe` 是否被服务端广告、旧 `list_symbols` 是否仍在 tools/list；即使第三方 Connector 自身缓存异常也可以判定问题所在层。
+- 正式 built-core smoke 继续要求 active 52 / window 52 / desktop 55，并额外断言新 server identity、probe 存在、`list_symbols` 不再广告以及 fallback 目录状态一致。
 
 ## Beta 4：生产运行时工具目录与 UIA 集合修复
 

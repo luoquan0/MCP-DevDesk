@@ -227,24 +227,28 @@ func (s *Server) executeCompatibilityTool(name string, arguments map[string]any)
 	switch name {
 	case "check_exec_environment":
 		return map[string]any{
-			"runtime":             runtime.GOOS + "/" + runtime.GOARCH,
-			"workspace":           s.workspace,
-			"defaultCwd":          s.currentDefaultCWD(),
-			"permissionMode":      s.permissionMode,
-			"toolProfile":         s.toolProfile,
-			"fileScope":           s.fileScope,
-			"allowedRoots":        append([]string(nil), s.allowedRoots...),
-			"allowNetwork":        s.allowNetwork,
-			"implicitShell":       false,
-			"maxCommandOutput":    maxCommandOutputBytes,
-			"maxReadableFile":     maxReadableFileBytes,
-			"maxWritableFile":     maxWritableFileBytes,
-			"maxBatchReadFiles":   maxBatchReadFiles,
-			"maxBatchReadBytes":   maxBatchReadTotalBytes,
-			"projectInstructions": projectRuleMetadata(s.currentProjectRules()),
-			"oauthEnabled":        s.oauth != nil,
-			"streamableHTTP":      true,
-			"sseReplaySupported":  true,
+			"runtime":                      runtime.GOOS + "/" + runtime.GOARCH,
+			"workspace":                    s.workspace,
+			"defaultCwd":                   s.currentDefaultCWD(),
+			"permissionMode":               s.permissionMode,
+			"toolProfile":                  s.toolProfile,
+			"fileScope":                    s.fileScope,
+			"allowedRoots":                 append([]string(nil), s.allowedRoots...),
+			"allowNetwork":                 s.allowNetwork,
+			"implicitShell":                false,
+			"maxCommandOutput":             maxCommandOutputBytes,
+			"maxReadableFile":              maxReadableFileBytes,
+			"maxWritableFile":              maxWritableFileBytes,
+			"maxBatchReadFiles":            maxBatchReadFiles,
+			"maxBatchReadBytes":            maxBatchReadTotalBytes,
+			"projectInstructions":          projectRuleMetadata(s.currentProjectRules()),
+			"oauthEnabled":                 s.oauth != nil,
+			"streamableHTTP":               true,
+			"sseReplaySupported":           true,
+			"toolCatalogGeneration":        "v013-catalog2",
+			"advertisedToolCount":          len(s.tools),
+			"screenCaptureProbeAdvertised": s.isToolAdvertised("screen_capture_probe"),
+			"legacyListSymbolsAdvertised":  s.isToolAdvertised("list_symbols"),
 		}, nil
 	case "get_default_cwd":
 		cwd := s.currentDefaultCWD()
@@ -294,6 +298,15 @@ func (s *Server) executeCompatibilityTool(name string, arguments map[string]any)
 	default:
 		return nil, fmt.Errorf("unknown compatibility tool: %s", name)
 	}
+}
+
+func (s *Server) isToolAdvertised(name string) bool {
+	for _, tool := range s.tools {
+		if tool.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) currentDefaultCWD() string {
