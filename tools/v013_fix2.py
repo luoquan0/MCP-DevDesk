@@ -27,10 +27,8 @@ for path in ["app/internal/model/types.go", "app/internal/application/instances.
     text = text.replace("screenVisionMode", "screenCaptureMode")
     write(path, text)
 
-# Relative paths need to follow the active Agent Task worktree. Map the current
-# default CWD from the configured base workspace to the canonical active workspace.
-# This also normalizes GitHub Windows runner long-path / 8.3-path aliases because
-# target construction is anchored on workspaceRoot(), not the original spelling.
+# First-stage relative path repair; fix3 below then anchors this to the raw active
+# workspace before Windows canonicalization changes its spelling.
 replace_once(
     "app/internal/mcpcore/file_tools.go",
     '''\t} else {\n\t\tbase := filepath.Clean(s.currentDefaultCWD())\n\t\tif absolute, absErr := filepath.Abs(base); absErr == nil {\n\t\t\tbase = filepath.Clean(absolute)\n\t\t}\n\t\tif evaluated, evalErr := filepath.EvalSymlinks(base); evalErr == nil {\n\t\t\tbase = filepath.Clean(evaluated)\n\t\t}\n\t\ttarget = filepath.Join(base, value)\n\t}\n''',
@@ -38,7 +36,6 @@ replace_once(
 )
 
 # The product intentionally moved from machine-global to per-instance Screen Vision.
-# Update the old regression test to assert the new privacy boundary.
 process_test = read("app/internal/process/screen_vision_args_test.go")
 process_test = process_test.replace(
     "func TestMCPArgumentsManagedInstanceUsesPrimaryScreenVisionConfig(t *testing.T)",
@@ -50,8 +47,7 @@ process_test = process_test.replace(
 )
 write("app/internal/process/screen_vision_args_test.go", process_test)
 
-# Git on Windows may check out/apply the accepted text with CRLF. This test is about
-# task isolation/accept semantics, not line-ending policy, so normalize for comparison.
+# Normalize CRLF for a semantic task-accept assertion.
 tasks_test = read("app/internal/agentstate/tasks_test.go")
 tasks_test = tasks_test.replace(
     '''\tif string(raw) != "updated\\n" {\n\t\tt.Fatalf("accepted content = %q", raw)\n\t}\n''',
@@ -59,10 +55,8 @@ tasks_test = tasks_test.replace(
 )
 write("app/internal/agentstate/tasks_test.go", tasks_test)
 
-# Windows UI Automation requires an interactive desktop. Hosted GitHub Actions uses
-# a service session where UIA can legitimately time out even though compilation and
-# pure logic are healthy. Keep the real UIA integration test for local/interactive
-# Windows runs and skip only this environmental integration probe in hosted CI.
+# Hosted Actions has no interactive desktop; keep UIA integration coverage for real
+# interactive Windows while skipping only that environmental probe in CI.
 uia_test = read("app/internal/mcpcore/ui_automation_windows_test.go")
 uia_test = uia_test.replace('import (\n\t"encoding/base64"', 'import (\n\t"encoding/base64"\n\t"os"')
 uia_test = uia_test.replace(
@@ -70,5 +64,10 @@ uia_test = uia_test.replace(
     '''func TestUIAutomationReadsOwnedNativeWindow(t *testing.T) {\n\tif strings.EqualFold(strings.TrimSpace(os.Getenv("GITHUB_ACTIONS")), "true") {\n\t\tt.Skip("hosted GitHub Actions has no interactive Windows desktop for UI Automation")\n\t}\n''',
 )
 write("app/internal/mcpcore/ui_automation_windows_test.go", uia_test)
+
+# Apply the stricter active-workspace canonicalization repair after the first-stage
+# edit above. Kept in a separate file so the repair is easy to review independently.
+fix3 = ROOT / "tools" / "v013_fix3.py"
+exec(compile(fix3.read_text(encoding="utf-8"), str(fix3), "exec"), globals(), globals())
 
 print("v0.13 fix2 applied")
