@@ -202,6 +202,7 @@ func (a *App) LaunchPreparedUpdate(prepared appupdater.PreparedUpdate) error {
 		"--log", filepath.Join(a.dataDir, "logs", "updater.log"),
 	}
 	command := exec.Command(tempUpdater, args...)
+	configureDetachedProcess(command)
 	command.Dir = a.rootDir
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("launch updater: %w", err)

@@ -37,8 +37,13 @@ function SafeInt {
   } catch { return 0 }
 }`
 
+const uiAutomationPowerShellEncoding = `$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+`
+
 const uiAutomationPowerShell = `$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName UIAutomationClient
+` + uiAutomationPowerShellEncoding + `Add-Type -AssemblyName UIAutomationClient
 $handle = [IntPtr]([Int64]$env:MCP_UIA_HWND)
 $maxDepth = [int]$env:MCP_UIA_DEPTH
 $maxNodes = [int]$env:MCP_UIA_NODES

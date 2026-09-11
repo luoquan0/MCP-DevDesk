@@ -782,6 +782,7 @@ func newID(prefix string, bytes int) (string, error) {
 
 func runGit(cwd string, args ...string) (string, string, error) {
 	command := exec.Command("git", args...)
+	configureBackgroundCommand(command)
 	command.Dir = cwd
 	var stdout, stderr strings.Builder
 	command.Stdout = &stdout

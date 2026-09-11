@@ -493,7 +493,10 @@ func startupEnabled(executable string) bool {
 
 func hiddenCommand(name string, args ...string) *exec.Cmd {
 	command := exec.Command(name, args...)
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	command.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+	}
 	return command
 }
 

@@ -114,6 +114,32 @@ func TestUIAutomationPowerShellHelpersHandleScalarValues(t *testing.T) {
 	}
 }
 
+func TestUIAutomationPowerShellUnicodeJSONIsUTF8(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	script := uiAutomationPowerShellEncoding + `[pscustomobject]@{ title='微信情报'; minimize='最小化'; close='关闭' } | ConvertTo-Json -Compress`
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShellCommand(script))
+	configureCommand(cmd)
+	output, err := cmd.Output()
+	if ctx.Err() != nil {
+		t.Fatal("PowerShell Unicode regression test timed out")
+	}
+	if err != nil {
+		t.Fatalf("PowerShell Unicode regression test failed: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	var payload struct {
+		Title    string `json:"title"`
+		Minimize string `json:"minimize"`
+		Close    string `json:"close"`
+	}
+	if err := json.Unmarshal(output, &payload); err != nil {
+		t.Fatalf("decode PowerShell Unicode result: %v: %q", err, string(output))
+	}
+	if payload.Title != "微信情报" || payload.Minimize != "最小化" || payload.Close != "关闭" {
+		t.Fatalf("PowerShell Unicode output was corrupted: %#v, raw=%q", payload, string(output))
+	}
+}
+
 func TestUIAutomationPowerShellCollectionPayloadIsJSONSafe(t *testing.T) {
 	if !strings.Contains(uiAutomationPowerShell, "$items.ToArray()") {
 		t.Fatal("UI Automation script must materialize the Generic.List before JSON conversion")

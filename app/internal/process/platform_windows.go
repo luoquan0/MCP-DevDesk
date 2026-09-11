@@ -11,6 +11,8 @@ import (
 	"syscall"
 )
 
+const createNoWindow = 0x08000000
+
 func configureChildProcess(cmd *exec.Cmd, hidden bool) {
 	// cloudflared refuses `tunnel login` when the default origin certificate
 	// already exists. Treat an explicit login action as credential rotation so
@@ -19,9 +21,13 @@ func configureChildProcess(cmd *exec.Cmd, hidden bool) {
 	if isCloudflareLoginCommand(cmd.Args) {
 		_ = clearCloudflareLoginCertificate(CertificatePath())
 	}
+	flags := uint32(syscall.CREATE_NEW_PROCESS_GROUP)
+	if hidden {
+		flags |= createNoWindow
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    hidden,
-		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
+		CreationFlags: flags,
 	}
 }
 

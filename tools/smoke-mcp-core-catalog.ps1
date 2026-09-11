@@ -92,12 +92,21 @@ function Test-Mode {
             }
         }
         if (-not $session) { throw "[$Mode] core did not initialize" }
+        $serverName = [string]$init.Body.result.serverInfo.name
+        if ($serverName -ne "mcp-devdesk-go-core-v013-catalog2") {
+            throw "[$Mode] unexpected server identity: $serverName"
+        }
 
         $listed = Send-McpRequest -Client $client -Uri $uri -Session $session -Payload @{ jsonrpc = "2.0"; id = 2; method = "tools/list"; params = @{} }
         $names = @($listed.Body.result.tools | ForEach-Object { [string]$_.name } | Sort-Object)
         $info = Send-McpRequest -Client $client -Uri $uri -Session $session -Payload @{ jsonrpc = "2.0"; id = 3; method = "tools/call"; params = @{ name = "server_info"; arguments = @{} } }
         $toolCount = [int]$info.Body.result.structuredContent.toolCount
-        Write-Host "mode=$Mode toolsListCount=$($names.Count) serverToolCount=$toolCount"
+        $environment = Send-McpRequest -Client $client -Uri $uri -Session $session -Payload @{ jsonrpc = "2.0"; id = 4; method = "tools/call"; params = @{ name = "check_exec_environment"; arguments = @{} } }
+        $environmentData = $environment.Body.result.structuredContent
+        if ([string]$environmentData.toolCatalogGeneration -ne "v013-catalog2") { throw "[$Mode] catalog generation fallback missing" }
+        if (-not [bool]$environmentData.screenCaptureProbeAdvertised) { throw "[$Mode] fallback says probe is not advertised" }
+        if ([bool]$environmentData.legacyListSymbolsAdvertised) { throw "[$Mode] fallback says list_symbols is still advertised" }
+        Write-Host "mode=$Mode toolsListCount=$($names.Count) serverToolCount=$toolCount catalog=$serverName"
         if ($names.Count -ne $ExpectedCount -or $toolCount -ne $ExpectedCount) {
             throw "[$Mode] catalog count $($names.Count)/$toolCount, want $ExpectedCount"
         }
