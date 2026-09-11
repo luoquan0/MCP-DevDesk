@@ -22,8 +22,13 @@ def write(path, content):
 # 1) Background Windows child processes: HideWindow alone can still flash a console.
 replace_once(
     "app/internal/process/platform_windows.go",
-    '''func configureChildProcess(cmd *exec.Cmd, hidden bool) {\n\tcmd.SysProcAttr = &syscall.SysProcAttr{\n\t\tHideWindow:    hidden,\n\t\tCreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,\n\t}\n}\n''',
-    '''const createNoWindow = 0x08000000\n\nfunc configureChildProcess(cmd *exec.Cmd, hidden bool) {\n\tflags := uint32(syscall.CREATE_NEW_PROCESS_GROUP)\n\tif hidden {\n\t\tflags |= createNoWindow\n\t}\n\tcmd.SysProcAttr = &syscall.SysProcAttr{\n\t\tHideWindow:    hidden,\n\t\tCreationFlags: flags,\n\t}\n}\n''',
+    '''func configureChildProcess(cmd *exec.Cmd, hidden bool) {\n''',
+    '''const createNoWindow = 0x08000000\n\nfunc configureChildProcess(cmd *exec.Cmd, hidden bool) {\n''',
+)
+replace_once(
+    "app/internal/process/platform_windows.go",
+    '''\tcmd.SysProcAttr = &syscall.SysProcAttr{\n\t\tHideWindow:    hidden,\n\t\tCreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,\n\t}\n''',
+    '''\tflags := uint32(syscall.CREATE_NEW_PROCESS_GROUP)\n\tif hidden {\n\t\tflags |= createNoWindow\n\t}\n\tcmd.SysProcAttr = &syscall.SysProcAttr{\n\t\tHideWindow:    hidden,\n\t\tCreationFlags: flags,\n\t}\n''',
 )
 replace_once(
     "app/internal/process/platform_windows_test.go",
@@ -93,7 +98,7 @@ replace_once(
 replace_once(
     "app/internal/mcpcore/ui_automation_windows_test.go",
     '''func TestUIAutomationPowerShellCollectionPayloadIsJSONSafe(t *testing.T) {\n''',
-    '''func TestUIAutomationPowerShellUnicodeJSONIsUTF8(t *testing.T) {\n\tctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)\n\tdefer cancel()\n\tscript := uiAutomationPowerShellEncoding + `[pscustomobject]@{ title='微信情报'; minimize='最小化'; close='关闭' } | ConvertTo-Json -Compress`\n\tcmd := exec.CommandContext(ctx, "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShellCommand(script))\n\tconfigureCommand(cmd)\n\toutput, err := cmd.Output()\n\tif ctx.Err() != nil {\n\t\tt.Fatal("PowerShell Unicode regression test timed out")\n\t}\n\tif err != nil {\n\t\tt.Fatalf("PowerShell Unicode regression test failed: %v: %s", err, strings.TrimSpace(string(output)))\n\t}\n\tvar payload struct {\n\t\tTitle string `json:"title"`\n\t\tMinimize string `json:"minimize"`\n\t\tClose string `json:"close"`\n\t}\n\tif err := json.Unmarshal(output, &payload); err != nil {\n\t\tt.Fatalf("decode PowerShell Unicode result: %v: %q", err, string(output))\n\t}\n\tif payload.Title != "微信情报" || payload.Minimize != "最小化" || payload.Close != "关闭" {\n\t\tt.Fatalf("PowerShell Unicode output was corrupted: %#v, raw=%q", payload, string(output))\n\t}\n}\n\nfunc TestUIAutomationPowerShellCollectionPayloadIsJSONSafe(t *testing.T) {\n''',
+    '''func TestUIAutomationPowerShellUnicodeJSONIsUTF8(t *testing.T) {\n\tctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)\n\tdefer cancel()\n\tscript := uiAutomationPowerShellEncoding + `[pscustomobject]@{ title='微信情报'; minimize='最小化'; close='关闭' } | ConvertTo-Json -Compress`\n\tcmd := exec.CommandContext(ctx, "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShellCommand(script))\n\tconfigureCommand(cmd)\n\toutput, err := cmd.Output()\n\tif ctx.Err() != nil {\n\t\tt.Fatal("PowerShell Unicode regression test timed out")\n\t}\n\tif err != nil {\n\t\tt.Fatalf("PowerShell Unicode regression test failed: %v: %s", err, strings.TrimSpace(string(output)))\n\t}\n\tvar payload struct {\n\t\tTitle    string `json:"title"`\n\t\tMinimize string `json:"minimize"`\n\t\tClose    string `json:"close"`\n\t}\n\tif err := json.Unmarshal(output, &payload); err != nil {\n\t\tt.Fatalf("decode PowerShell Unicode result: %v: %q", err, string(output))\n\t}\n\tif payload.Title != "微信情报" || payload.Minimize != "最小化" || payload.Close != "关闭" {\n\t\tt.Fatalf("PowerShell Unicode output was corrupted: %#v, raw=%q", payload, string(output))\n\t}\n}\n\nfunc TestUIAutomationPowerShellCollectionPayloadIsJSONSafe(t *testing.T) {\n''',
 )
 
 # 3) Catalog generation: one-time server identity bump plus fallback diagnostics on a stable tool.
@@ -105,7 +110,7 @@ replace_once(
 replace_once(
     "app/internal/mcpcore/compatibility_tools.go",
     '''\t\t\t"sseReplaySupported":  true,\n\t\t}, nil\n''',
-    '''\t\t\t"sseReplaySupported":          true,\n\t\t\t"toolCatalogGeneration":         "v013-catalog2",\n\t\t\t"advertisedToolCount":           len(s.tools),\n\t\t\t"screenCaptureProbeAdvertised":  s.isToolAdvertised("screen_capture_probe"),\n\t\t\t"legacyListSymbolsAdvertised":   s.isToolAdvertised("list_symbols"),\n\t\t}, nil\n''',
+    '''\t\t\t"sseReplaySupported":         true,\n\t\t\t"toolCatalogGeneration":        "v013-catalog2",\n\t\t\t"advertisedToolCount":          len(s.tools),\n\t\t\t"screenCaptureProbeAdvertised": s.isToolAdvertised("screen_capture_probe"),\n\t\t\t"legacyListSymbolsAdvertised":  s.isToolAdvertised("list_symbols"),\n\t\t}, nil\n''',
 )
 replace_once(
     "app/internal/mcpcore/compatibility_tools.go",
