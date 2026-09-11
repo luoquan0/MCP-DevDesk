@@ -25,7 +25,9 @@
 - 为避免第 56 个工具静默丢失，Beta 3 不再单独广告完全重复的 `list_symbols`；标准 `document_symbols` 保留，旧客户端直接调用 `list_symbols` 仍兼容。Screen Vision 开启后的完整公开目录固定为 55 个。
 - 新增目录契约测试：必须同时包含 `screen_capture_probe` 与 `ui_automation_tree`，并明确断言总数为 55。
 - 修复 `ui_automation_tree` 在部分 Windows UIA Provider 将 `FrameworkId` 返回为 `System.Int32` 时触发 `InvalidCastIConvertible` 的问题；UIA 标量和边界值现在先安全规范化，再生成 JSON。
+- PowerShell UIA 子进程改为 stdout/stderr 分离：结构化 JSON 只从 stdout 解码，首次模块加载产生的 CLIXML/progress 诊断不会再污染成功结果。
 - 新增 Windows 非交互回归测试，直接用 Int32/Double 验证同一套 PowerShell 安全转换函数。
+- Beta 3 修复已通过定向 MCP 测试、全量 Go 测试、版本/文档一致性检查后写回预览分支；正式发布仍需通过完整 Windows 构建、NSIS 与发布流水线。
 
 ## Beta 2：工具目录自动刷新
 
