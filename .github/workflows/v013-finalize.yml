@@ -6,6 +6,7 @@ on:
       - "preview/v0.13.0"
     paths:
       - "tools/v013_finalize.py"
+      - "tools/v013_finalize_fix.py"
       - ".github/workflows/v013-finalize.yml"
   workflow_dispatch:
 
@@ -24,7 +25,9 @@ jobs:
 
       - name: Apply final Task v2 migration
         shell: pwsh
-        run: python .\tools\v013_finalize.py
+        run: |
+          python .\tools\v013_finalize.py
+          python .\tools\v013_finalize_fix.py
 
       - name: Setup Go
         uses: actions/setup-go@v5
