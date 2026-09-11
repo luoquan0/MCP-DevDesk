@@ -603,7 +603,13 @@ func (m *commandManager) persistSession(session *commandSession) error {
 	job.Output = string(data)
 	job.Truncated = truncated
 	job.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	return m.server.jobs.Upsert(job)
+	if err := m.server.jobs.Upsert(job); err != nil {
+		return err
+	}
+	if m.server.tasks != nil {
+		return m.server.tasks.RecordJob(job)
+	}
+	return nil
 }
 
 const maxPersistedCommandOutputBytes = 512 * 1024

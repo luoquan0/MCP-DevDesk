@@ -313,7 +313,8 @@ func (s *TaskStore) RecordJob(job Job) error {
 		}
 		task.JobIDs = appendBoundedUniqueID(task.JobIDs, job.ID, maxTaskJobIDs)
 		task.LastJobID = job.ID
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(job.Kind)), "check:") {
+		kind := strings.ToLower(strings.TrimSpace(job.Kind))
+		if strings.HasPrefix(kind, "check:") || kind == "validate_project" {
 			task.CheckJobIDs = appendBoundedUniqueID(task.CheckJobIDs, job.ID, maxTaskJobIDs)
 			if job.Running {
 				task.LastValidationStatus = "running"

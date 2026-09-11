@@ -266,11 +266,11 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 		return s.executeWriteTool(name, arguments)
 	case "exec_command", "read_output", "write_stdin", "kill_session":
 		return s.executeCommandTool(name, arguments)
-	case "task_start", "task_list", "task_get", "task_resume", "task_diff", "task_finish":
+	case "task_start", "task_list", "task_get", "task_update", "task_resume", "task_diff", "task_finish":
 		return s.executeTaskTool(name, arguments)
 	case "job_list", "job_get":
 		return s.executeJobTool(name, arguments)
-	case "checks_run":
+	case "checks_run", "validate_project":
 		return s.executeCheckTool(name, arguments)
 	case "git_status", "git_diff", "git_log", "git_show", "git_worktrees":
 		return s.executeGitTool(name, arguments)
@@ -293,7 +293,7 @@ func isMutatingOrCommandTool(name string) bool {
 	switch name {
 	case "write_file", "replace_text", "apply_patch", "make_directory", "move_path", "delete_path",
 		"exec_command", "read_output", "write_stdin", "kill_session", "write_image", "save_chatgpt_image",
-		"task_start", "task_resume", "task_finish", "checks_run":
+		"task_start", "task_update", "task_resume", "task_finish", "checks_run", "validate_project":
 		return true
 	default:
 		return false

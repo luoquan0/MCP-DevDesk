@@ -27,7 +27,7 @@ function statusLabel(task: AgentTask) {
 async function accept(task: AgentTask) {
   const ok = await ui.ask({
     title: "接受 AI 任务",
-    message: `将把 ${task.branch} 的修改以 fast-forward 方式应用到原项目。只有原项目仍停留在任务开始时的提交且工作区干净时才会成功。`,
+    message: `将把 ${task.branch} 的修改以 fast-forward 方式应用到原项目。原项目 HEAD 必须仍是任务开始提交；未提交修改可以保留，但如果与任务改动文件重叠会拒绝应用。`,
     confirmLabel: "接受并应用",
   });
   if (!ok) return;
@@ -71,11 +71,20 @@ async function reject(task: AgentTask) {
           <StatusPill :tone="tone(task)">{{ statusLabel(task) }}</StatusPill>
         </div>
         <p v-if="task.summary" class="task-summary">{{ task.summary }}</p>
+        <div v-if="task.currentStep || task.nextStep" class="task-progress">
+          <div v-if="task.currentStep"><b>当前步骤</b><span>{{ task.currentStep }}</span></div>
+          <div v-if="task.nextStep"><b>下一步</b><span>{{ task.nextStep }}</span></div>
+        </div>
+        <div v-if="task.failureReason" class="task-failure"><AppIcon name="warning" :size="16" /><span>{{ task.failureReason }}</span></div>
         <div class="task-meta">
           <span><b>Branch</b><code>{{ task.branch }}</code></span>
           <span><b>Worktree</b><code>{{ task.worktreePath }}</code></span>
           <span><b>Base</b><code>{{ task.baseCommit.slice(0, 12) }}</code></span>
-          <span><b>更新</b>{{ new Date(task.updatedAt).toLocaleString('zh-CN') }}</span>
+          <span><b>改动文件</b>{{ task.changedFiles?.length || 0 }} 个<span v-if="task.changedFiles?.length" class="task-files">{{ task.changedFiles.slice(0, 8).join(' · ') }}<template v-if="task.changedFiles.length > 8"> · …</template></span></span>
+          <span><b>Jobs</b>{{ task.jobIds?.length || 0 }} 个<span v-if="task.lastJobId"><code>{{ task.lastJobId }}</code></span></span>
+          <span><b>验证</b>{{ task.lastValidationStatus || '尚未运行 validate_project' }}</span>
+          <span v-if="task.baseDirtyFilesAtStart?.length"><b>启动时本地修改</b>{{ task.baseDirtyFilesAtStart.length }} 个文件（已隔离保留）</span>
+          <span><b>心跳</b>{{ new Date(task.lastHeartbeatAt || task.updatedAt).toLocaleString('zh-CN') }}</span>
         </div>
         <div v-if="task.status === 'review'" class="task-actions">
           <AppButton tone="danger" :loading="app.actionPending === `reject-agent-task-${task.id}`" @click="reject(task)">放弃修改</AppButton>
@@ -96,12 +105,18 @@ async function reject(task: AgentTask) {
 .task-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
 .task-title code, .task-meta code { overflow-wrap: anywhere; }
 .task-summary { margin: 0; color: var(--text-secondary); white-space: pre-wrap; }
+.task-progress { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.task-progress > div { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-subtle); }
+.task-progress b { font-size: 11px; color: var(--text-tertiary); }
+.task-progress span { color: var(--text-secondary); font-size: 13px; }
+.task-failure { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 12px; color: var(--danger); }
 .task-meta { display: grid; gap: 7px; color: var(--text-tertiary); font-size: 12px; }
 .task-meta span { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
 .task-meta b { color: var(--text-secondary); font-weight: 600; }
+.task-files { overflow-wrap: anywhere; }
 .task-policy { display: flex; align-items: flex-start; gap: 12px; }
 .task-policy > div { display: grid; gap: 4px; }
 .task-policy span { color: var(--text-tertiary); font-size: 13px; }
 .task-actions { justify-content: flex-end; border-top: 1px solid var(--border-subtle); padding-top: 12px; }
-@media (max-width: 700px) { .task-actions { flex-direction: column-reverse; align-items: stretch; } .task-meta span { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .task-actions { flex-direction: column-reverse; align-items: stretch; } .task-progress { grid-template-columns: 1fr; } .task-meta span { grid-template-columns: 1fr; } }
 </style>

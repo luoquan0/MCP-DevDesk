@@ -15,6 +15,17 @@ export interface AgentTask {
   branch: string;
   baseCommit: string;
   resultCommit?: string;
+  baseDirtyFilesAtStart?: string[];
+  currentStep?: string;
+  nextStep?: string;
+  changedFiles?: string[];
+  jobIds?: string[];
+  checkJobIds?: string[];
+  lastJobId?: string;
+  lastValidationStatus?: string;
+  lastValidationAt?: string;
+  lastHeartbeatAt?: string;
+  failureReason?: string;
   createdAt: string;
   updatedAt: string;
   finishedAt?: string;

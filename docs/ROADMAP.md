@@ -39,7 +39,7 @@
 - [x] 桌面状态与控制 API
 - [x] 自定义 EXE、窗口和托盘图标
 - [x] WebView2 内嵌壳
-- [ ] NSIS 安装包
+- [x] NSIS 安装包
 
 ## M2.1：端口与 Tunnel 运行管理
 
@@ -144,7 +144,7 @@
 ## M5：发布
 
 - [x] ZIP 便携版
-- [ ] 安装版
+- [x] 安装版
 - [x] 自动更新
 - [ ] 签名
 - [ ] 中文与英文界面
@@ -154,8 +154,9 @@
 ## M6：0.13 AI Coding Workspace Preview
 
 - [x] 持久 Agent Task / Job 与桌面任务中心
-- [x] 每任务独立 Git Worktree，人工 Accept / Reject，基础工作区变化时 fail closed
-- [x] 结构化 checks_run 自动测试 / 检查 / 格式化
+- [x] 每任务独立 Git Worktree；主工作区允许未提交修改，Accept 仅在 HEAD 前进或文件级改动重叠时 fail closed
+- [x] Task v2 持久步骤 / 下一步 / 心跳 / 改动文件 / Job / 验证状态 / 失败原因
+- [x] 结构化 checks_run + validate_project 自动测试 / 检查 / 构建 / 格式化
 - [x] OpenAI Secure Tunnel / Cloudflare / Local 三种主实例连接模式
 - [x] 代码导航 Preview：list_symbols / document_symbols / workspace_symbols / find_definition / find_references
 - [x] 每 MCP 实例独立 Screen Vision 配置文件与管理 API 字段

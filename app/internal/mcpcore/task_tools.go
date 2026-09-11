@@ -29,11 +29,20 @@ type taskDiffArgs struct {
 	MaxBytes    int    `json:"maxBytes,omitempty"`
 }
 
+type taskUpdateArgs struct {
+	TaskID        string `json:"taskId,omitempty"`
+	TaskIDSnake   string `json:"task_id,omitempty"`
+	CurrentStep   string `json:"currentStep,omitempty"`
+	NextStep      string `json:"nextStep,omitempty"`
+	FailureReason string `json:"failureReason,omitempty"`
+	ClearFailure  bool   `json:"clearFailure,omitempty"`
+}
+
 func taskTools() []Tool {
 	return []Tool{
 		{
 			Name: "task_start", Title: "Start Isolated AI Task",
-			Description: "Create a persistent Task ID and a clean isolated Git worktree. After this succeeds, normal file, Git, and command tools automatically operate inside the task worktree until the task is accepted or rejected locally.",
+			Description: "Create a persistent Task ID and an isolated Git worktree from the current HEAD. The base workspace may already contain uncommitted edits; they stay untouched, and acceptance later fails closed only if local changes overlap files changed by the task.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
 				"title":   map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
 				"summary": map[string]any{"type": "string", "maxLength": 4000},
@@ -48,6 +57,18 @@ func taskTools() []Tool {
 			Name: "task_get", Title: "Get AI Task",
 			Description: "Return one persistent task record by Task ID.",
 			InputSchema: taskIDSchema(),
+		},
+		{
+			Name: "task_update", Title: "Update AI Task Progress",
+			Description: "Persist the task current step, next step, heartbeat, and optional failure reason so work can be recovered after reconnect or restart.",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+				"taskId":        map[string]any{"type": "string"},
+				"task_id":       map[string]any{"type": "string"},
+				"currentStep":   map[string]any{"type": "string", "maxLength": 512},
+				"nextStep":      map[string]any{"type": "string", "maxLength": 512},
+				"failureReason": map[string]any{"type": "string", "maxLength": 4000},
+				"clearFailure":  map[string]any{"type": "boolean", "default": false},
+			}, "additionalProperties": false},
 		},
 		{
 			Name: "task_resume", Title: "Resume AI Task",
@@ -117,6 +138,23 @@ func (s *Server) executeTaskTool(name string, arguments map[string]any) (map[str
 		if err != nil {
 			return nil, err
 		}
+		if refreshed, refreshErr := s.tasks.RefreshChangedFiles(task.ID); refreshErr == nil {
+			task = refreshed
+		}
+		active, ok, _ := s.tasks.Active()
+		return taskResult(task, ok && active.ID == task.ID), nil
+	case "task_update":
+		if err := s.requireWritePermission(false, true); err != nil {
+			return nil, err
+		}
+		var args taskUpdateArgs
+		if err := decodeToolArguments(arguments, &args); err != nil {
+			return nil, err
+		}
+		task, err := s.tasks.UpdateProgress(firstNonEmpty(args.TaskID, args.TaskIDSnake), args.CurrentStep, args.NextStep, args.FailureReason, args.ClearFailure)
+		if err != nil {
+			return nil, err
+		}
 		active, ok, _ := s.tasks.Active()
 		return taskResult(task, ok && active.ID == task.ID), nil
 	case "task_resume":
@@ -141,6 +179,9 @@ func (s *Server) executeTaskTool(name string, arguments map[string]any) (map[str
 		task, err := s.tasks.Get(firstNonEmpty(args.TaskID, args.TaskIDSnake))
 		if err != nil {
 			return nil, err
+		}
+		if refreshed, refreshErr := s.tasks.RefreshChangedFiles(task.ID); refreshErr == nil {
+			task = refreshed
 		}
 		if _, err := os.Stat(task.WorktreePath); err != nil {
 			return nil, errors.New("task worktree is unavailable")

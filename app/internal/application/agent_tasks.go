@@ -8,6 +8,9 @@ type AgentTaskList struct {
 }
 
 func (a *App) AgentTasks() (AgentTaskList, error) {
+	if active, ok, _ := a.agentTasks.Active(); ok {
+		_, _ = a.agentTasks.RefreshChangedFiles(active.ID)
+	}
 	tasks, activeID, err := a.agentTasks.List()
 	if err != nil {
 		return AgentTaskList{}, err

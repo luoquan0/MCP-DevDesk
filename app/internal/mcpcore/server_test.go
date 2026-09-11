@@ -70,7 +70,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 		} `json:"result"`
 	}
 	decodeJSON(t, listResponse.Body, &listResult)
-	if len(listResult.Result.Tools) != 47 {
+	if len(listResult.Result.Tools) != 49 {
 		t.Fatalf("tool count = %d", len(listResult.Result.Tools))
 	}
 
@@ -273,7 +273,7 @@ func TestExposedToolSchemasAreValidAndUnique(t *testing.T) {
 			t.Fatalf("tool %q input schema is not JSON encodable: %v", tool.Name, err)
 		}
 	}
-	if len(seen) != 47 {
+	if len(seen) != 49 {
 		t.Fatalf("tool count = %d", len(seen))
 	}
 }
