@@ -98,7 +98,7 @@ func screenTools() []Tool {
 		{
 			Name:        "screen_capture_window",
 			Title:       "Capture Window",
-			Description: "Capture one explicitly selected Windows application window on demand, including a background or minimized target when Windows allows it, and return a PNG image to the MCP client. Minimized targets are temporarily restored without focus and returned to minimized state. Nothing is saved to disk.",
+			Description: "Capture one explicitly selected Windows application window on demand without changing its Z-order or restoring a minimized window. Background capture uses non-state-changing fallbacks; minimized capture fails closed in this preview until a non-invasive backend passes compatibility validation. Nothing is saved to disk.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

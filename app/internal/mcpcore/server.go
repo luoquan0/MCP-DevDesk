@@ -424,6 +424,13 @@ func (s *Server) handlePostJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(request.ID) == 0 {
+		// A connector can keep a cached tool catalog across DevDesk upgrades.
+		// Advertise and emit the standard list-changed notification after the
+		// MCP initialized notification so clients re-run tools/list and pick up
+		// newly added tools without requiring the connection to be recreated.
+		if request.Method == "notifications/initialized" {
+			s.queueToolsListChanged(sessionID)
+		}
 		// Notifications do not receive JSON-RPC responses.
 		w.Header().Set(SessionHeader, sessionID)
 		w.WriteHeader(http.StatusAccepted)
@@ -484,7 +491,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, request rpcRequest) {
 	writeRPCResult(w, request.ID, map[string]any{
 		"protocolVersion": negotiatedVersion,
 		"capabilities": map[string]any{
-			"tools": map[string]any{"listChanged": false},
+			"tools": map[string]any{"listChanged": true},
 		},
 		"serverInfo": map[string]any{
 			"name":    s.name,
@@ -492,6 +499,11 @@ func (s *Server) handleInitialize(w http.ResponseWriter, request rpcRequest) {
 		},
 		"instructions": s.initializeInstructions(),
 	})
+}
+
+func (s *Server) queueToolsListChanged(sessionID string) {
+	const notification = `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}`
+	s.storeEvent(sessionID, []byte(notification))
 }
 
 func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, request rpcRequest) {
@@ -767,7 +779,8 @@ func (s *Server) handleGetSSE(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unsupported protocol version"})
 		return
 	}
-	events := s.eventsAfter(sessionID, strings.TrimSpace(r.Header.Get("Last-Event-ID")))
+	lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	events := s.eventsAfter(sessionID, lastEventID)
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("Connection", "keep-alive")
@@ -776,6 +789,7 @@ func (s *Server) handleGetSSE(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, ": connected\n\n")
 	for _, event := range events {
 		writeSSEEvent(w, event)
+		lastEventID = event.ID
 	}
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
@@ -783,13 +797,27 @@ func (s *Server) handleGetSSE(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(strings.ToLower(r.Header.Get("Prefer")), "wait=0") {
 		return
 	}
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
+	keepaliveTicker := time.NewTicker(15 * time.Second)
+	defer keepaliveTicker.Stop()
+	eventTicker := time.NewTicker(500 * time.Millisecond)
+	defer eventTicker.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ticker.C:
+		case <-eventTicker.C:
+			pending := s.eventsAfter(sessionID, lastEventID)
+			if len(pending) == 0 {
+				continue
+			}
+			for _, event := range pending {
+				writeSSEEvent(w, event)
+				lastEventID = event.ID
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		case <-keepaliveTicker.C:
 			_, _ = io.WriteString(w, ": keepalive "+strconv.FormatInt(time.Now().Unix(), 10)+"\n\n")
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()

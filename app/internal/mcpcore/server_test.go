@@ -775,3 +775,104 @@ func TestUIAutomationToolFollowsScreenVisionPermissionBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestV013ToolCatalogContainsNewGroups(t *testing.T) {
+	server := mustNewServer(t, Options{
+		Workspace:            t.TempDir(),
+		ToolProfile:          "full",
+		PermissionMode:       "dangerous",
+		ScreenCaptureEnabled: true,
+	})
+	seen := make(map[string]bool, len(server.tools))
+	for _, tool := range server.tools {
+		seen[tool.Name] = true
+	}
+	expected := []string{
+		"list_symbols", "document_symbols", "workspace_symbols", "find_definition", "find_references",
+		"task_start", "task_list", "task_get", "task_update", "task_resume", "task_diff", "task_finish",
+		"job_list", "job_get",
+		"checks_run", "validate_project",
+		"screen_capture_probe",
+	}
+	for _, name := range expected {
+		if !seen[name] {
+			t.Fatalf("v0.13 tool %q is missing from tools/list catalog", name)
+		}
+	}
+}
+
+func TestInitializeAdvertisesAndQueuesToolListChanged(t *testing.T) {
+	server := mustNewServer(t, Options{Workspace: t.TempDir()})
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	initialized := postRPC(t, httpServer.URL+"/mcp", "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": ProtocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "refresh-client", "version": "1"},
+		},
+	})
+	defer initialized.Body.Close()
+	if initialized.StatusCode != http.StatusOK {
+		t.Fatalf("initialize status = %d", initialized.StatusCode)
+	}
+	var initResult struct {
+		Result struct {
+			Capabilities struct {
+				Tools struct {
+					ListChanged bool `json:"listChanged"`
+				} `json:"tools"`
+			} `json:"capabilities"`
+		} `json:"result"`
+	}
+	decodeJSON(t, initialized.Body, &initResult)
+	if !initResult.Result.Capabilities.Tools.ListChanged {
+		t.Fatal("initialize did not advertise tools.listChanged=true")
+	}
+	sessionID := initialized.Header.Get(SessionHeader)
+	if sessionID == "" {
+		t.Fatal("initialize did not return a session ID")
+	}
+
+	notification, err := http.NewRequest(http.MethodPost, httpServer.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	notification.Header.Set("Content-Type", "application/json")
+	notification.Header.Set("Accept", "application/json, text/event-stream")
+	notification.Header.Set(SessionHeader, sessionID)
+	notification.Header.Set(ProtocolVersionHeader, ProtocolVersion)
+	notificationResponse, err := http.DefaultClient.Do(notification)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer notificationResponse.Body.Close()
+	if notificationResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("initialized notification status = %d", notificationResponse.StatusCode)
+	}
+
+	getRequest, err := http.NewRequest(http.MethodGet, httpServer.URL+"/mcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getRequest.Header.Set("Accept", "text/event-stream")
+	getRequest.Header.Set("Prefer", "wait=0")
+	getRequest.Header.Set(SessionHeader, sessionID)
+	getRequest.Header.Set(ProtocolVersionHeader, ProtocolVersion)
+	getResponse, err := http.DefaultClient.Do(getRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer getResponse.Body.Close()
+	body := readBody(t, getResponse.Body)
+	if getResponse.StatusCode != http.StatusOK {
+		t.Fatalf("SSE refresh status = %d, body = %s", getResponse.StatusCode, body)
+	}
+	if !strings.Contains(body, `"method":"notifications/tools/list_changed"`) {
+		t.Fatalf("SSE stream did not contain tools/list_changed notification: %s", body)
+	}
+}
