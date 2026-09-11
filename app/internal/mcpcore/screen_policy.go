@@ -64,6 +64,9 @@ func normalizeScreenVisionMode(mode string) string {
 }
 
 func (policy screenVisionPolicy) allows(name string) bool {
+	if name == "screen_capture_probe" {
+		return true
+	}
 	switch policy.mode {
 	case "window":
 		if name == "screen_list_windows" {

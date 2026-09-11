@@ -1,6 +1,6 @@
 # 开发路线图
 
-当前预览开发版本：`0.13.0-beta.3`（正式稳定版仍为 `0.12.34`）。新增 GitHub Releases 在线更新链路：可配置公开 `owner/repo`、稳定/预发布通道和启动检查，客户端强制校验 Release ZIP 的 SHA256，并通过独立 `devdesk-updater.exe` 等待主程序优雅退出后替换程序文件；`data/devdesk`、项目目录与 `AGENTS.md` 不进入更新替换范围，失败会自动回滚。新增 `v*` Tag 触发的 GitHub Actions Windows 发布工作流，自动测试、构建 EXE/Portable/updater、生成 SHA256 并创建 Release。品牌 `new-logo.png`、浅色冰白玻璃/深色烟熏黑曜石玻璃、自定义外观、项目与运行统一工作区、项目分类栏收起、四栏目设置、活动项目安全移除、Shift 批量归类、虚拟文件夹右键删除、项目独立 Cloudflare Tunnel、局域网网页端实时同步、密码认证、标准 `AGENTS.md` 和 Go MCP 核心继续保留。
+当前预览开发版本：`0.13.0-beta.4`（正式稳定版仍为 `0.12.34`）。新增 GitHub Releases 在线更新链路：可配置公开 `owner/repo`、稳定/预发布通道和启动检查，客户端强制校验 Release ZIP 的 SHA256，并通过独立 `devdesk-updater.exe` 等待主程序优雅退出后替换程序文件；`data/devdesk`、项目目录与 `AGENTS.md` 不进入更新替换范围，失败会自动回滚。新增 `v*` Tag 触发的 GitHub Actions Windows 发布工作流，自动测试、构建 EXE/Portable/updater、生成 SHA256 并创建 Release。品牌 `new-logo.png`、浅色冰白玻璃/深色烟熏黑曜石玻璃、自定义外观、项目与运行统一工作区、项目分类栏收起、四栏目设置、活动项目安全移除、Shift 批量归类、虚拟文件夹右键删除、项目独立 Cloudflare Tunnel、局域网网页端实时同步、密码认证、标准 `AGENTS.md` 和 Go MCP 核心继续保留。
 
 ## M0：仓库和文档
 
@@ -167,3 +167,5 @@
 - [ ] macOS / Linux：0.13 不做
 
 - Beta 3 实机修复：ChatGPT Connector 55 工具目录兼容、screen_capture_probe 保留、Windows UI Automation Int32 FrameworkId 安全转换。
+
+- Beta 4 实机修复：Screen Vision runtime policy 始终保留 metadata-only `screen_capture_probe`；发布门禁新增最终 mcp-core active/window/desktop 工具目录 E2E；UI Automation Generic.List 最终 JSON 使用 ToArray()。
