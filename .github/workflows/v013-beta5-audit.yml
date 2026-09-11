@@ -1,4 +1,4 @@
-name: MCP DevDesk v0.13 Beta 5 Audit
+name: MCP DevDesk v0.13 Beta 5 Validation
 
 on:
   push:
@@ -7,24 +7,82 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  audit:
+  validate-and-persist:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/v0.13.0-beta5-console-utf8-probe
           fetch-depth: 0
-      - name: Audit process launch sites
+      - name: Apply Beta 5 source migration
+        shell: pwsh
+        run: python tools/v013_beta5_fix.py
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Format and diff check
         shell: pwsh
         run: |
-          Write-Host '=== exec.Command / CommandContext ==='
-          git grep -n -E 'exec\.Command(Context)?\(' -- 'app/**/*.go' ':!app/vendor/**' || $true
-          Write-Host '=== SysProcAttr ==='
-          git grep -n 'SysProcAttr' -- 'app/**/*.go' ':!app/vendor/**' || $true
-          Write-Host '=== PowerShell / cmd launch literals ==='
-          git grep -n -E 'powershell\.exe|cmd\.exe|taskkill\.exe|wscript\.exe|cscript\.exe' -- 'app/**/*.go' ':!app/vendor/**' || $true
-          Write-Host '=== HideChildProcessWindows ==='
-          git grep -n 'HideChildProcessWindows' -- 'app/**/*.go' 'frontend/**' || $true
+          $files = @(git diff --name-only --diff-filter=ACM | Where-Object { $_ -like '*.go' })
+          if ($files.Count -gt 0) { gofmt -w $files }
+          git diff --check
+      - name: Targeted Windows regressions
+        shell: pwsh
+        run: |
+          Set-Location app
+          go test -mod=vendor ./internal/process ./internal/mcpcore ./internal/agentstate ./internal/application ./internal/selfupdate ./internal/tunnel ./internal/desktop -count=1
+      - name: Full Go tests
+        shell: pwsh
+        run: |
+          Set-Location app
+          go test -mod=vendor ./... -count=1
+      - name: Verify no-console launch coverage
+        shell: pwsh
+        run: |
+          $checks = @(
+            @{ Path='app/internal/process/platform_windows.go'; Needle='flags |= createNoWindow' },
+            @{ Path='app/internal/tunnel/platform_windows.go'; Needle='CreationFlags: createNoWindow' },
+            @{ Path='app/internal/desktop/desktop_windows.go'; Needle='CreationFlags: 0x08000000' },
+            @{ Path='app/internal/agentstate/tasks.go'; Needle='configureBackgroundCommand(command)' },
+            @{ Path='app/internal/application/app.go'; Needle='configureDetachedProcess(command)' },
+            @{ Path='app/internal/selfupdate/install.go'; Needle='configureRestartCommand(command)' }
+          )
+          foreach ($check in $checks) {
+            $text = Get-Content -LiteralPath $check.Path -Raw
+            if (-not $text.Contains($check.Needle)) { throw "missing no-console coverage: $($check.Path) -> $($check.Needle)" }
+          }
+          Write-Host 'No-console structural coverage passed.'
+      - name: Full Windows build and tests
+        shell: pwsh
+        env:
+          MCP_DEVDESK_GITHUB_REPOSITORY: luoquan0/MCP-DevDesk
+        run: .\build.ps1 -Arch amd64 -RunTests
+      - name: Built core catalog contract
+        shell: pwsh
+        run: .\tools\smoke-mcp-core-catalog.ps1 -CorePath .\dist\mcp-core-amd64.exe
+      - name: Version and docs consistency
+        shell: pwsh
+        run: |
+          $version = Get-Content app\internal\buildinfo\version.go -Raw
+          if (-not $version.Contains('0.13.0-beta.5')) { throw 'buildinfo is not beta.5' }
+          $preview = Get-Content docs\V013_PREVIEW.md -Raw
+          $roadmap = Get-Content docs\ROADMAP.md -Raw
+          if (-not $preview.Contains('0.13.0-beta.5')) { throw 'preview docs missing beta.5' }
+          if (-not $roadmap.Contains('0.13.0-beta.5')) { throw 'roadmap missing beta.5' }
+      - name: Persist validated product changes
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app docs tools/smoke-mcp-core-catalog.ps1
+          git diff --cached --check
+          if (git diff --cached --quiet) {
+            Write-Host 'No product changes to persist.'
+            exit 0
+          }
+          git commit -m "fix: beta5 hide consoles preserve unicode and refresh catalog"
+          git push origin HEAD:fix/v0.13.0-beta5-console-utf8-probe
