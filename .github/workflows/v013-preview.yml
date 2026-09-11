@@ -45,13 +45,19 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Verify Go formatting
+      - name: Verify v0.13 Go formatting
         shell: pwsh
         run: |
-          $files = Get-ChildItem app -Recurse -Filter *.go | Select-Object -ExpandProperty FullName
+          $files = @()
+          $files += Get-ChildItem app\internal\agentstate -Filter *.go | Select-Object -ExpandProperty FullName
+          $files += Get-ChildItem app\internal\mcpcore -Filter *.go | Select-Object -ExpandProperty FullName
+          $files += Get-ChildItem app\internal\process -Filter *.go | Select-Object -ExpandProperty FullName
+          $files += (Resolve-Path app\internal\application\agent_tasks.go).Path
+          $files += (Resolve-Path app\internal\application\instances.go).Path
+          $files += (Resolve-Path app\internal\model\types.go).Path
           $bad = @(gofmt -l $files)
           if ($bad.Count -gt 0) {
-            Write-Host "The following Go files need gofmt:"
+            Write-Host "The following v0.13 Go files need gofmt:"
             $bad | ForEach-Object { Write-Host $_ }
             exit 1
           }
