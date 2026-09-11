@@ -70,7 +70,7 @@ func TestInitializeListAndCallTools(t *testing.T) {
 		} `json:"result"`
 	}
 	decodeJSON(t, listResponse.Body, &listResult)
-	if len(listResult.Result.Tools) != 49 {
+	if len(listResult.Result.Tools) != 48 {
 		t.Fatalf("tool count = %d", len(listResult.Result.Tools))
 	}
 
@@ -273,7 +273,7 @@ func TestExposedToolSchemasAreValidAndUnique(t *testing.T) {
 			t.Fatalf("tool %q input schema is not JSON encodable: %v", tool.Name, err)
 		}
 	}
-	if len(seen) != 49 {
+	if len(seen) != 48 {
 		t.Fatalf("tool count = %d", len(seen))
 	}
 }
@@ -787,8 +787,14 @@ func TestV013ToolCatalogContainsNewGroups(t *testing.T) {
 	for _, tool := range server.tools {
 		seen[tool.Name] = true
 	}
+	if len(server.tools) != 55 {
+		t.Fatalf("Screen Vision full tool catalog = %d, want 55", len(server.tools))
+	}
+	if seen["list_symbols"] {
+		t.Fatal("list_symbols compatibility alias should not consume a separate tools/list slot")
+	}
 	expected := []string{
-		"list_symbols", "document_symbols", "workspace_symbols", "find_definition", "find_references",
+		"document_symbols", "workspace_symbols", "find_definition", "find_references",
 		"task_start", "task_list", "task_get", "task_update", "task_resume", "task_diff", "task_finish",
 		"job_list", "job_get",
 		"checks_run", "validate_project",

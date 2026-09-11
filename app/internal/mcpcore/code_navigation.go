@@ -37,12 +37,6 @@ type codeNavigationMatch struct {
 func codeNavigationTools() []Tool {
 	return []Tool{
 		{
-			Name:        "list_symbols",
-			Title:       "List Source Symbols",
-			Description: "List declarations in one source file using the v0.13 code-navigation engine. Installed language-server binaries are reported as capabilities; this preview falls back to a bounded lexical parser when no persistent LSP session is attached.",
-			InputSchema: codeSymbolSchema(true),
-		},
-		{
 			Name:        "document_symbols",
 			Title:       "Document Symbols",
 			Description: "Return symbols declared in one source document. This is an alias-shaped code-navigation surface intended for clients that use LSP terminology.",

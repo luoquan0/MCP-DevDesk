@@ -3,11 +3,15 @@
 package mcpcore
 
 import (
+	"context"
 	"encoding/base64"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 )
@@ -78,6 +82,35 @@ func TestUIAutomationPowerShellKeepsPasswordValuesOut(t *testing.T) {
 	}
 	if got := string(utf16.Decode(units)); got != "A中" {
 		t.Fatalf("PowerShell round trip = %q", got)
+	}
+}
+
+func TestUIAutomationPowerShellHelpersHandleScalarValues(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	script := uiAutomationPowerShellHelpers + `
+[pscustomobject]@{
+  text = (SafeText ([int]42))
+  number = (SafeInt ([double]12))
+} | ConvertTo-Json -Compress`
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShellCommand(script))
+	configureCommand(cmd)
+	output, err := cmd.Output()
+	if ctx.Err() != nil {
+		t.Fatal("PowerShell helper regression test timed out")
+	}
+	if err != nil {
+		t.Fatalf("PowerShell helper regression test failed: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	var payload struct {
+		Text   string `json:"text"`
+		Number int    `json:"number"`
+	}
+	if err := json.Unmarshal(output, &payload); err != nil {
+		t.Fatalf("decode PowerShell helper result: %v: %s", err, string(output))
+	}
+	if payload.Text != "42" || payload.Number != 12 {
+		t.Fatalf("unexpected PowerShell helper result: %#v", payload)
 	}
 }
 
