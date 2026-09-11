@@ -65,8 +65,8 @@ uia_test = uia_test.replace(
 )
 write("app/internal/mcpcore/ui_automation_windows_test.go", uia_test)
 
-# Apply the stricter active-workspace canonicalization repair after the first-stage
-# edit above. Kept in a separate file so the repair is easy to review independently.
+# Apply the stricter active-workspace canonicalization and filesystem-identity
+# containment repair after the first-stage edit above.
 fix3 = ROOT / "tools" / "v013_fix3.py"
 exec(compile(fix3.read_text(encoding="utf-8"), str(fix3), "exec"), globals(), globals())
 
