@@ -40,6 +40,8 @@ const createForm = reactive({
   autoStart: false,
   watchdog: true,
   loggingEnabled: true,
+  screenCaptureEnabled: false,
+  screenCaptureMode: "active" as "active" | "desktop",
 });
 
 const editForm = reactive({
@@ -55,6 +57,8 @@ const editForm = reactive({
   autoStart: false,
   watchdog: true,
   loggingEnabled: true,
+  screenCaptureEnabled: false,
+  screenCaptureMode: "active" as "active" | "desktop",
 });
 
 const tunnelForm = reactive({ domain: "", tunnelName: "", reuse: true });
@@ -75,6 +79,8 @@ function resetCreate() {
   createForm.autoStart = false;
   createForm.watchdog = true;
   createForm.loggingEnabled = true;
+  createForm.screenCaptureEnabled = false;
+  createForm.screenCaptureMode = "active";
 }
 
 function selectCreateProject() {
@@ -149,6 +155,8 @@ async function createInstance() {
     autoStart: createForm.autoStart,
     watchdog: createForm.watchdog,
     loggingEnabled: createForm.loggingEnabled,
+    screenCaptureEnabled: createForm.coreMode === "go" && createForm.screenCaptureEnabled,
+    screenCaptureMode: createForm.screenCaptureMode,
   };
   try {
     await app.createInstance(request);
@@ -174,6 +182,8 @@ function startEdit(instance: MCPInstance) {
   editForm.autoStart = instance.autoStart;
   editForm.watchdog = instance.watchdog;
   editForm.loggingEnabled = instance.loggingEnabled;
+  editForm.screenCaptureEnabled = Boolean(instance.screenCaptureEnabled);
+  editForm.screenCaptureMode = instance.screenCaptureMode === "desktop" ? "desktop" : "active";
 }
 
 async function saveEdit(instance: MCPInstance) {
@@ -218,6 +228,8 @@ async function saveEdit(instance: MCPInstance) {
     autoStart: editForm.autoStart,
     watchdog: editForm.watchdog,
     loggingEnabled: editForm.loggingEnabled,
+    screenCaptureEnabled: editForm.coreMode === "go" && editForm.screenCaptureEnabled,
+    screenCaptureMode: editForm.screenCaptureMode,
     confirmCoreSwitch,
   };
   try {
@@ -387,12 +399,14 @@ onMounted(async () => {
           <label class="field"><span>核心</span><select v-model="createForm.coreMode"><option value="go">Go 核心</option><option value="legacy">Python 兼容核心</option></select></label>
           <label class="field"><span>权限模式</span><select v-model="createForm.permissionMode"><option value="safe">安全</option><option value="trusted">受信任</option><option value="dangerous">高权限</option></select></label>
           <label class="field"><span>工具配置</span><select v-model="createForm.toolProfile"><option value="full">完整工具</option><option value="read-only">只读</option><option value="compat-readonly-all">兼容只读</option></select></label>
+          <label class="field"><span>Screen Vision 范围</span><select v-model="createForm.screenCaptureMode" :disabled="createForm.coreMode !== 'go' || !createForm.screenCaptureEnabled"><option value="active">仅当前窗口</option><option value="desktop">整个桌面 / 可读取窗口</option></select><small>指定窗口锁定仍在主安全设置中完成；此处先控制每实例是否拥有视觉能力。</small></label>
         </div>
         <div class="instance-toggle-grid">
           <ToggleSwitch v-model="createForm.autoStart" label="自动启动" description="打开管理器后自动启动此实例。" />
           <ToggleSwitch v-model="createForm.watchdog" label="运行守护" description="异常退出后自动重启。" />
           <ToggleSwitch v-model="createForm.loggingEnabled" label="记录日志" description="每类日志最多保留 100 条。" />
           <ToggleSwitch v-model="createForm.allowNetwork" label="允许网络" description="允许该实例的工具访问网络。" />
+          <ToggleSwitch v-model="createForm.screenCaptureEnabled" :disabled="createForm.coreMode !== 'go' || createForm.permissionMode === 'safe'" label="Screen Vision" description="只授权这个 MCP 实例按所选范围读取屏幕；安全模式和 Python 兼容核心不可用。" />
         </div>
         <div class="form-footer"><small>创建后可单独配置 Cloudflare 域名，不会影响现有实例。</small><AppButton type="submit" tone="primary" :loading="app.actionPending === 'create-instance'">创建实例</AppButton></div>
       </form>
@@ -418,6 +432,7 @@ onMounted(async () => {
           <div><span>核心</span><strong>{{ instance.coreMode === 'go' ? 'Go' : 'Python' }}</strong></div>
           <div><span>权限</span><strong>{{ instance.permissionMode }}</strong></div>
           <div><span>Tunnel</span><strong>{{ instance.tunnelId ? '已配置' : '未配置' }}</strong></div>
+          <div><span>Screen Vision</span><strong>{{ instance.screenCaptureEnabled ? (instance.screenCaptureMode === 'desktop' ? '桌面' : '当前窗口') : '关闭' }}</strong></div>
         </div>
 
         <div class="instance-endpoints">
@@ -446,12 +461,14 @@ onMounted(async () => {
             <label class="field"><span>核心</span><select v-model="editForm.coreMode" :disabled="instance.mcp.running || instance.tunnel.running"><option value="go">Go 核心</option><option value="legacy">Python 兼容核心</option></select><small v-if="instance.mcp.running || instance.tunnel.running">切换核心前必须先停止实例；也可以复制到另一核心。</small></label>
             <label class="field"><span>权限模式</span><select v-model="editForm.permissionMode"><option value="safe">安全</option><option value="trusted">受信任</option><option value="dangerous">高权限</option></select></label>
             <label class="field"><span>工具配置</span><select v-model="editForm.toolProfile"><option value="full">完整工具</option><option value="read-only">只读</option><option value="compat-readonly-all">兼容只读</option></select></label>
+            <label class="field"><span>Screen Vision 范围</span><select v-model="editForm.screenCaptureMode" :disabled="editForm.coreMode !== 'go' || !editForm.screenCaptureEnabled"><option value="active">仅当前窗口</option><option value="desktop">整个桌面 / 可读取窗口</option></select><small>配置仅属于当前 MCP 实例，不再继承其他实例的视觉权限。</small></label>
           </div>
           <div class="instance-toggle-grid">
             <ToggleSwitch v-model="editForm.autoStart" label="自动启动" />
             <ToggleSwitch v-model="editForm.watchdog" label="运行守护" />
             <ToggleSwitch v-model="editForm.loggingEnabled" label="记录日志" />
             <ToggleSwitch v-model="editForm.allowNetwork" label="允许网络" />
+            <ToggleSwitch v-model="editForm.screenCaptureEnabled" :disabled="editForm.coreMode !== 'go' || editForm.permissionMode === 'safe'" label="Screen Vision" description="只为这个实例授权视觉工具。" />
           </div>
           <div class="form-footer"><small>运行中的实例保存后会单独重启，不影响其他实例。</small><AppButton type="submit" tone="primary" :loading="app.actionPending === `update-instance-${instance.id}`">保存配置</AppButton></div>
         </form>

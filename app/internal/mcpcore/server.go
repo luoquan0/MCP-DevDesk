@@ -221,6 +221,7 @@ func New(options Options) (*Server, error) {
 	}
 	tools = append(tools, previewFileTools()...)
 	tools = append(tools, gitTools()...)
+	tools = append(tools, codeNavigationTools()...)
 	tasks := taskTools()
 	if options.ToolProfile == "read-only" {
 		tasks = filterTools(tasks, func(tool Tool) bool { return !isMutatingOrCommandTool(tool.Name) })

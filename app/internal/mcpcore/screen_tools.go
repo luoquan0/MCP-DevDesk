@@ -71,6 +71,12 @@ func screenTools() []Tool {
 	}
 	return []Tool{
 		{
+			Name:        "screen_capture_probe",
+			Title:       "Screen Vision Compatibility Probe",
+			Description: "Report the current Screen Vision capture policy and target state without taking pixels or changing window state. Use this before relying on background/minimized capture.",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{"window": map[string]any{"type": "string"}}, "additionalProperties": false},
+		},
+		{
 			Name:        "screen_list_windows",
 			Title:       "List App Windows",
 			Description: "List captureable top-level Windows application windows, including minimized apps. Screen Vision is explicit opt-in and this tool never starts continuous recording.",
@@ -126,6 +132,29 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 		return nil, err
 	}
 	switch name {
+	case "screen_capture_probe":
+		windowArg, _ := arguments["window"].(string)
+		result := map[string]any{
+			"captureActive":          false,
+			"policy":                 "explicit-opt-in-fail-closed",
+			"instanceScoped":         true,
+			"methods":                []string{"PrintWindow(PW_RENDERFULLCONTENT)", "PrintWindow", "WindowDC"},
+			"stateChangingFallbacks": false,
+			"windowsGraphicsCapture": "not-enabled-in-preview-until-real-machine-compatibility-validation",
+		}
+		if strings.TrimSpace(windowArg) != "" {
+			windows, err := platformListScreenWindowsForVision()
+			if err != nil {
+				return nil, err
+			}
+			window, err := resolveScreenWindow(windows, windowArg)
+			if err != nil {
+				return nil, err
+			}
+			result["window"] = window
+			result["minimized"] = window.Minimized
+		}
+		return result, nil
 	case "screen_list_windows":
 		var args screenListArgs
 		if err := decodeToolArguments(arguments, &args); err != nil {

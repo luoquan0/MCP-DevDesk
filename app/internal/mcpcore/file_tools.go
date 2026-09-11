@@ -274,9 +274,11 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 		return s.executeCheckTool(name, arguments)
 	case "git_status", "git_diff", "git_log", "git_show", "git_worktrees":
 		return s.executeGitTool(name, arguments)
+	case "list_symbols", "document_symbols", "workspace_symbols", "find_definition", "find_references":
+		return s.executeCodeNavigationTool(name, arguments)
 	case "permission_status", "request_permissions":
 		return s.executePermissionTool(name, arguments)
-	case "screen_list_windows", "screen_get_active_window", "screen_capture_window", "screen_capture_active_window", "screen_capture_desktop":
+	case "screen_capture_probe", "screen_list_windows", "screen_get_active_window", "screen_capture_window", "screen_capture_active_window", "screen_capture_desktop":
 		return s.executeScreenTool(name, arguments)
 	case "ui_automation_tree":
 		return s.executeUIAutomationTool(arguments)
@@ -881,10 +883,31 @@ func (s *Server) resolveWorkspacePath(value string) (root, target, relative stri
 	if value == "" {
 		value = "."
 	}
+	rawWorkspace := strings.TrimSpace(s.workspace)
+	if s.tasks != nil {
+		rawWorkspace = strings.TrimSpace(s.tasks.ActiveWorkspace(rawWorkspace))
+	}
+	if rawWorkspace != "" {
+		if absolute, absErr := filepath.Abs(rawWorkspace); absErr == nil {
+			rawWorkspace = filepath.Clean(absolute)
+		}
+	}
+	projectToCanonical := func(candidate string) string {
+		candidate = filepath.Clean(candidate)
+		if rawWorkspace == "" {
+			return candidate
+		}
+		rel, relErr := filepath.Rel(rawWorkspace, candidate)
+		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			return filepath.Join(workspace, rel)
+		}
+		return candidate
+	}
 	if filepath.IsAbs(value) {
-		target = filepath.Clean(value)
+		target = projectToCanonical(value)
 	} else {
-		target = filepath.Join(s.currentDefaultCWD(), value)
+		base := projectToCanonical(s.currentDefaultCWD())
+		target = filepath.Join(base, value)
 	}
 	target, err = filepath.Abs(target)
 	if err != nil {
@@ -959,10 +982,37 @@ func (s *Server) allowedRootFor(target string) (string, error) {
 
 func pathWithin(root, target string) bool {
 	relative, err := filepath.Rel(root, target)
-	if err != nil {
+	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative) {
+		return true
+	}
+	rootInfo, rootErr := os.Stat(root)
+	if rootErr != nil {
 		return false
 	}
-	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+	probe := filepath.Clean(target)
+	for {
+		if _, statErr := os.Lstat(probe); statErr == nil {
+			if evaluated, evalErr := filepath.EvalSymlinks(probe); evalErr == nil {
+				probe = filepath.Clean(evaluated)
+			}
+			break
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return false
+		}
+		probe = parent
+	}
+	for {
+		if info, statErr := os.Stat(probe); statErr == nil && os.SameFile(rootInfo, info) {
+			return true
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return false
+		}
+		probe = parent
+	}
 }
 
 func sameFilesystemPath(left, right string) bool {

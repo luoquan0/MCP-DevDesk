@@ -49,7 +49,7 @@ func TestTaskLifecycleAcceptsIsolatedWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) != "updated\n" {
+	if strings.ReplaceAll(string(raw), "\r\n", "\n") != "updated\n" {
 		t.Fatalf("accepted content = %q", raw)
 	}
 	if _, err := os.Stat(task.WorktreePath); !os.IsNotExist(err) {

@@ -4,6 +4,7 @@ package mcpcore
 
 import (
 	"encoding/base64"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
@@ -12,6 +13,9 @@ import (
 )
 
 func TestUIAutomationReadsOwnedNativeWindow(t *testing.T) {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("GITHUB_ACTIONS")), "true") {
+		t.Skip("hosted GitHub Actions has no interactive Windows desktop for UI Automation")
+	}
 	user32 := syscall.NewLazyDLL("user32.dll")
 	createWindowEx := user32.NewProc("CreateWindowExW")
 	destroyWindow := user32.NewProc("DestroyWindow")

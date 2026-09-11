@@ -237,7 +237,6 @@ func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error
 
 	method := "bitblt-desktop"
 	captured := uintptr(0)
-	var backgroundRevealErr error
 	if hwnd != 0 {
 		foreground, _, _ := procGetForegroundWindow.Call()
 
@@ -269,23 +268,10 @@ func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error
 			}
 		}
 
-		// VMware and other compositor-heavy windows commonly report successful
-		// PrintWindow calls while returning black client pixels. When the locked
-		// target is behind the user's browser and the nonintrusive paths were not
-		// usable, reveal only that HWND without activating it, capture one frame,
-		// then restore the original Z-order immediately.
-		if captured == 0 && screenBackgroundRevealRequired(hwnd, foreground) {
-			revealed, revealErr := captureBackgroundWindowByTemporaryReveal(memoryDC, screenDC, rect, hwnd, foreground)
-			if revealed {
-				if revealErr != nil {
-					return screenCaptureFrame{}, revealErr
-				}
-				captured = 1
-				method = "screen-background-reveal"
-			} else {
-				backgroundRevealErr = revealErr
-			}
-		}
+		// v0.13 beta intentionally refuses the old temporary Z-order reveal
+		// fallback. Background capture may use only HWND-owned non-activating
+		// methods until the native Windows Graphics Capture backend has passed
+		// the real-machine compatibility matrix.
 
 		if captured == 0 {
 			if foreground != 0 && hwnd == foreground {
@@ -295,8 +281,6 @@ func captureScreenRect(rect screenRect, hwnd uintptr) (screenCaptureFrame, error
 				}
 				captured = 1
 				method = "screen-foreground-fallback"
-			} else if backgroundRevealErr != nil {
-				return screenCaptureFrame{}, fmt.Errorf("capture selected background window: %w", backgroundRevealErr)
 			} else {
 				return screenCaptureFrame{}, errors.New("selected background window could not be captured without reading pixels from another application")
 			}

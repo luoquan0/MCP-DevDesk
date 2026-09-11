@@ -88,7 +88,7 @@ func platformCaptureScreenWindowForVision(window screenWindow) (screenCaptureFra
 	if minimized == 0 {
 		return platformCaptureScreenWindow(window)
 	}
-	return captureMinimizedScreenWindow(window)
+	return screenCaptureFrame{}, errors.New("minimized capture is disabled in v0.13 beta until a non-intrusive Windows Graphics Capture backend passes compatibility validation")
 }
 
 func captureMinimizedScreenWindow(window screenWindow) (frame screenCaptureFrame, err error) {

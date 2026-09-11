@@ -34,7 +34,7 @@ func TestMCPArgumentsScreenCaptureOptIn(t *testing.T) {
 	}
 }
 
-func TestMCPArgumentsManagedInstanceUsesPrimaryScreenVisionConfig(t *testing.T) {
+func TestMCPArgumentsManagedInstanceUsesOwnScreenVisionConfig(t *testing.T) {
 	primaryDataDir := t.TempDir()
 	instanceDataDir := filepath.Join(primaryDataDir, "instances", "abc123")
 	cfg := model.Config{
@@ -50,8 +50,8 @@ func TestMCPArgumentsManagedInstanceUsesPrimaryScreenVisionConfig(t *testing.T) 
 	if got := argumentValue(args, "--logging-config"); got != filepath.Join(instanceDataDir, "config.json") {
 		t.Fatalf("instance logging config = %q", got)
 	}
-	if got := argumentValue(args, "--screen-vision-config"); got != filepath.Join(primaryDataDir, "config.json") {
-		t.Fatalf("managed screen vision config = %q, want primary config", got)
+	if got := argumentValue(args, "--screen-vision-config"); got != filepath.Join(instanceDataDir, "config.json") {
+		t.Fatalf("managed screen vision config = %q, want instance config", got)
 	}
 }
 

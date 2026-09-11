@@ -177,10 +177,9 @@ func mcpArguments(cfg model.Config, dataDir, baseURL, instructionsFile string) [
 			"--server-url", baseURL,
 			"--audit-path", filepath.Join(dataDir, "logs", "mcp-audit.jsonl"),
 			"--logging-config", filepath.Join(dataDir, "config.json"),
-			// Screen Vision is a machine-wide privacy boundary. Additional MCP
-			// instances keep their own operational config, but every Go core must
-			// read the primary DevDesk Screen Vision policy so a locked window
-			// cannot silently remain broader on another connected instance.
+			// v0.13: Screen Vision is scoped to this MCP instance. Each instance
+			// owns an independent config.json and the Go core fails closed if that
+			// instance policy cannot be loaded.
 			"--screen-vision-config", screenVisionConfigPath(dataDir),
 			"--file-scope", cfg.FileScope,
 		)
@@ -209,12 +208,7 @@ func mcpArguments(cfg model.Config, dataDir, baseURL, instructionsFile string) [
 }
 
 func screenVisionConfigPath(dataDir string) string {
-	cleaned := filepath.Clean(dataDir)
-	parent := filepath.Dir(cleaned)
-	if strings.EqualFold(filepath.Base(parent), "instances") {
-		return filepath.Join(filepath.Dir(parent), "config.json")
-	}
-	return filepath.Join(cleaned, "config.json")
+	return filepath.Join(filepath.Clean(dataDir), "config.json")
 }
 
 func mcpEnvironment(cfg model.Config, values secrets.Values, baseURL string) []string {

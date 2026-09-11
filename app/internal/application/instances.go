@@ -144,6 +144,12 @@ func (a *App) CreateInstance(ctx context.Context, request model.MCPInstanceCreat
 	if request.LoggingEnabled != nil {
 		cfg.LoggingEnabled = *request.LoggingEnabled
 	}
+	if request.ScreenCaptureEnabled != nil {
+		cfg.ScreenCaptureEnabled = *request.ScreenCaptureEnabled
+	}
+	if strings.TrimSpace(request.ScreenCaptureMode) != "" {
+		cfg.ScreenCaptureMode = strings.TrimSpace(request.ScreenCaptureMode)
+	}
 	normalizeInstanceConfig(&cfg)
 	if err := config.Validate(cfg); err != nil {
 		return model.MCPInstance{}, err
@@ -262,6 +268,12 @@ func (a *App) UpdateInstance(ctx context.Context, id string, request model.MCPIn
 	}
 	if request.LoggingEnabled != nil {
 		newCfg.LoggingEnabled = *request.LoggingEnabled
+	}
+	if request.ScreenCaptureEnabled != nil {
+		newCfg.ScreenCaptureEnabled = *request.ScreenCaptureEnabled
+	}
+	if request.ScreenCaptureMode != nil {
+		newCfg.ScreenCaptureMode = strings.TrimSpace(*request.ScreenCaptureMode)
 	}
 	normalizeInstanceConfig(&newCfg)
 	if err := config.Validate(newCfg); err != nil {
@@ -757,10 +769,10 @@ func (a *App) managedInstanceViewWithInventory(record instancestore.Record, runt
 		AllowNetwork:   cfg.AllowNetwork,
 		AutoStart:      cfg.AutoStart,
 		Watchdog:       cfg.Watchdog,
-		LoggingEnabled: cfg.LoggingEnabled,
-		DataDirectory:  a.instances.DataDir(record.ID),
-		MCP:            mcpStatus,
-		Tunnel:         tunnelStatus,
+		LoggingEnabled: cfg.LoggingEnabled, ScreenCaptureEnabled: cfg.ScreenCaptureEnabled, ScreenCaptureMode: cfg.ScreenCaptureMode,
+		DataDirectory: a.instances.DataDir(record.ID),
+		MCP:           mcpStatus,
+		Tunnel:        tunnelStatus,
 		MCPPortOwner: model.PortOwner{
 			Occupied: owner.Occupied, PID: owner.PID, ParentPID: owner.ParentPID,
 			ProcessName: owner.ProcessName, ProcessPath: owner.ProcessPath, Managed: managedPort,

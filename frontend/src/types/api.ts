@@ -346,6 +346,8 @@ export interface MCPInstance {
   autoStart: boolean;
   watchdog: boolean;
   loggingEnabled: boolean;
+  screenCaptureEnabled: boolean;
+  screenCaptureMode?: ScreenCaptureMode;
   dataDirectory: string;
   mcp: ProcessStatus;
   tunnel: ProcessStatus;
@@ -371,6 +373,8 @@ export interface MCPInstanceCreateRequest {
   autoStart?: boolean;
   watchdog?: boolean;
   loggingEnabled?: boolean;
+  screenCaptureEnabled?: boolean;
+  screenCaptureMode?: ScreenCaptureMode;
 }
 
 export interface MCPInstanceUpdateRequest {
@@ -388,6 +392,8 @@ export interface MCPInstanceUpdateRequest {
   autoStart?: boolean;
   watchdog?: boolean;
   loggingEnabled?: boolean;
+  screenCaptureEnabled?: boolean;
+  screenCaptureMode?: ScreenCaptureMode;
   confirmCoreSwitch?: boolean;
 }
 

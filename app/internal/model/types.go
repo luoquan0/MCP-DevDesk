@@ -387,6 +387,8 @@ type MCPInstance struct {
 	AutoStart            bool          `json:"autoStart"`
 	Watchdog             bool          `json:"watchdog"`
 	LoggingEnabled       bool          `json:"loggingEnabled"`
+	ScreenCaptureEnabled bool          `json:"screenCaptureEnabled"`
+	ScreenCaptureMode    string        `json:"screenCaptureMode,omitempty"`
 	DataDirectory        string        `json:"dataDirectory"`
 	MCP                  ProcessStatus `json:"mcp"`
 	Tunnel               ProcessStatus `json:"tunnel"`
@@ -398,38 +400,42 @@ type MCPInstance struct {
 }
 
 type MCPInstanceCreateRequest struct {
-	Name           string `json:"name"`
-	ProjectID      string `json:"projectId"`
-	Workspace      string `json:"workspace"`
-	MCPPort        int    `json:"mcpPort"`
-	Domain         string `json:"domain"`
-	TunnelName     string `json:"tunnelName"`
-	CoreMode       string `json:"coreMode"`
-	PermissionMode string `json:"permissionMode"`
-	FileScope      string `json:"fileScope"`
-	ToolProfile    string `json:"toolProfile"`
-	AllowNetwork   *bool  `json:"allowNetwork"`
-	AutoStart      *bool  `json:"autoStart"`
-	Watchdog       *bool  `json:"watchdog"`
-	LoggingEnabled *bool  `json:"loggingEnabled"`
+	Name                 string `json:"name"`
+	ProjectID            string `json:"projectId"`
+	Workspace            string `json:"workspace"`
+	MCPPort              int    `json:"mcpPort"`
+	Domain               string `json:"domain"`
+	TunnelName           string `json:"tunnelName"`
+	CoreMode             string `json:"coreMode"`
+	PermissionMode       string `json:"permissionMode"`
+	FileScope            string `json:"fileScope"`
+	ToolProfile          string `json:"toolProfile"`
+	AllowNetwork         *bool  `json:"allowNetwork"`
+	AutoStart            *bool  `json:"autoStart"`
+	Watchdog             *bool  `json:"watchdog"`
+	LoggingEnabled       *bool  `json:"loggingEnabled"`
+	ScreenCaptureEnabled *bool  `json:"screenCaptureEnabled"`
+	ScreenCaptureMode    string `json:"screenCaptureMode,omitempty"`
 }
 
 type MCPInstanceUpdateRequest struct {
-	Name              *string `json:"name"`
-	ProjectID         *string `json:"projectId"`
-	Workspace         *string `json:"workspace"`
-	MCPPort           *int    `json:"mcpPort"`
-	Domain            *string `json:"domain"`
-	TunnelName        *string `json:"tunnelName"`
-	CoreMode          *string `json:"coreMode"`
-	PermissionMode    *string `json:"permissionMode"`
-	FileScope         *string `json:"fileScope"`
-	ToolProfile       *string `json:"toolProfile"`
-	AllowNetwork      *bool   `json:"allowNetwork"`
-	AutoStart         *bool   `json:"autoStart"`
-	Watchdog          *bool   `json:"watchdog"`
-	LoggingEnabled    *bool   `json:"loggingEnabled"`
-	ConfirmCoreSwitch bool    `json:"confirmCoreSwitch"`
+	Name                 *string `json:"name"`
+	ProjectID            *string `json:"projectId"`
+	Workspace            *string `json:"workspace"`
+	MCPPort              *int    `json:"mcpPort"`
+	Domain               *string `json:"domain"`
+	TunnelName           *string `json:"tunnelName"`
+	CoreMode             *string `json:"coreMode"`
+	PermissionMode       *string `json:"permissionMode"`
+	FileScope            *string `json:"fileScope"`
+	ToolProfile          *string `json:"toolProfile"`
+	AllowNetwork         *bool   `json:"allowNetwork"`
+	AutoStart            *bool   `json:"autoStart"`
+	Watchdog             *bool   `json:"watchdog"`
+	LoggingEnabled       *bool   `json:"loggingEnabled"`
+	ScreenCaptureEnabled *bool   `json:"screenCaptureEnabled"`
+	ScreenCaptureMode    *string `json:"screenCaptureMode"`
+	ConfirmCoreSwitch    bool    `json:"confirmCoreSwitch"`
 }
 
 type MCPInstanceCloneRequest struct {
