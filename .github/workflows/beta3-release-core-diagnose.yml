@@ -48,7 +48,7 @@ jobs:
           ) -PassThru -WindowStyle Hidden
           try {
             $uri = "http://127.0.0.1:$port/mcp"
-            $ready = $false
+            $session = $null
             for ($i = 0; $i -lt 40; $i++) {
               try {
                 $initBody = @{
@@ -62,22 +62,27 @@ jobs:
                   }
                 } | ConvertTo-Json -Depth 8 -Compress
                 $init = Invoke-WebRequest -Uri $uri -Method Post -ContentType 'application/json' -Headers @{ Accept = 'application/json' } -Body $initBody
-                $session = $init.Headers['Mcp-Session-Id']
-                if ($session) { $ready = $true; break }
+                $values = @($init.Headers.GetValues('Mcp-Session-Id'))
+                if ($values.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$values[0])) {
+                  $session = [string]$values[0]
+                  break
+                }
               } catch {
                 Start-Sleep -Milliseconds 250
               }
             }
-            if (-not $ready) { throw 'Published core did not initialize' }
+            if (-not $session) { throw 'Published core did not initialize' }
+            Write-Host "sessionLength=$($session.Length)"
+            $headers = @{ Accept = 'application/json'; 'Mcp-Session-Id' = $session; 'MCP-Protocol-Version' = '2025-06-18' }
 
             $listBody = @{ jsonrpc = '2.0'; id = 2; method = 'tools/list'; params = @{} } | ConvertTo-Json -Compress
-            $list = Invoke-RestMethod -Uri $uri -Method Post -ContentType 'application/json' -Headers @{ Accept = 'application/json'; 'Mcp-Session-Id' = $session; 'MCP-Protocol-Version' = '2025-06-18' } -Body $listBody
+            $list = Invoke-RestMethod -Uri $uri -Method Post -ContentType 'application/json' -Headers $headers -Body $listBody
             $names = @($list.result.tools | ForEach-Object { $_.name } | Sort-Object)
             Write-Host "toolsListCount=$($names.Count)"
             $names | ForEach-Object { Write-Host "tool=$_" }
 
             $callBody = @{ jsonrpc = '2.0'; id = 3; method = 'tools/call'; params = @{ name = 'server_info'; arguments = @{} } } | ConvertTo-Json -Depth 8 -Compress
-            $info = Invoke-RestMethod -Uri $uri -Method Post -ContentType 'application/json' -Headers @{ Accept = 'application/json'; 'Mcp-Session-Id' = $session; 'MCP-Protocol-Version' = '2025-06-18' } -Body $callBody
+            $info = Invoke-RestMethod -Uri $uri -Method Post -ContentType 'application/json' -Headers $headers -Body $callBody
             $serverInfo = $info.result.structuredContent
             Write-Host "serverVersion=$($serverInfo.version)"
             Write-Host "serverToolCount=$($serverInfo.toolCount)"
