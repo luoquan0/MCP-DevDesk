@@ -19,7 +19,6 @@
 - OpenAI Secure Tunnel Preview 使用用户提供的官方 `tunnel-client.exe`，当前不捆绑第三方二进制。
 - macOS / Linux 不属于 0.13 范围。
 
-
 ## Beta 2：工具目录自动刷新
 
 - 修复从 0.12.x 原地升级到 0.13 后 ChatGPT Connector 继续缓存旧 38 个工具的问题。
@@ -27,3 +26,4 @@
 - Streamable HTTP GET/SSE 现在会实时投递会话期间新增的服务端事件，而不只是连接建立瞬间的历史事件。
 - 回归测试明确验证 0.13 新工具组存在：代码导航、Agent Task、持久 Job、`checks_run` / `validate_project` 与 `screen_capture_probe`。
 - 修正 Screen Vision 工具描述，使 Schema 与 Beta 的非侵入式 / fail-closed 捕获策略一致。
+- 升级验证建议：安装 Beta 2 后重启对应 MCP 实例并重新连接 Connector；客户端应自动重新执行 `tools/list`，无需删除并重新创建连接。
