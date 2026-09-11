@@ -6,6 +6,7 @@ on:
       - "preview/v0.13.0"
     paths:
       - "tools/v013_supplement.py"
+      - "tools/v013_fix2.py"
       - "app/internal/mcpcore/code_navigation.go"
       - "installer/**"
       - ".github/workflows/v013-preview.yml"
@@ -26,7 +27,9 @@ jobs:
 
       - name: Apply v0.13 supplemental integration
         shell: pwsh
-        run: python .\tools\v013_supplement.py
+        run: |
+          python .\tools\v013_supplement.py
+          python .\tools\v013_fix2.py
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -44,7 +47,7 @@ jobs:
       - name: Format Go sources
         shell: pwsh
         run: |
-          gofmt -w app\internal\mcpcore\code_navigation.go app\internal\mcpcore\server.go app\internal\mcpcore\file_tools.go app\internal\mcpcore\screen_tools.go app\internal\mcpcore\screen_policy.go app\internal\process\manager.go app\internal\model\types.go app\internal\application\instances.go
+          gofmt -w app\internal\mcpcore\code_navigation.go app\internal\mcpcore\server.go app\internal\mcpcore\file_tools.go app\internal\mcpcore\screen_tools.go app\internal\mcpcore\screen_policy.go app\internal\mcpcore\server_test.go app\internal\mcpcore\ui_automation_windows_test.go app\internal\process\manager.go app\internal\process\screen_vision_args_test.go app\internal\model\types.go app\internal\application\instances.go app\internal\agentstate\tasks_test.go
 
       - name: Install frontend dependencies
         shell: pwsh
@@ -85,7 +88,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- app/internal/mcpcore app/internal/process/manager.go app/internal/model/types.go app/internal/application/instances.go docs/ROADMAP.md docs/V013_PREVIEW.md
+          git add -- app/internal/mcpcore app/internal/process/manager.go app/internal/process/screen_vision_args_test.go app/internal/model/types.go app/internal/application/instances.go app/internal/agentstate/tasks_test.go docs/ROADMAP.md docs/V013_PREVIEW.md
           if (-not (git diff --cached --quiet)) {
             git commit -m "feat: complete v0.13 beta preview integration"
             git push origin HEAD:preview/v0.13.0
