@@ -62,7 +62,7 @@ func TestTaskToolsRedirectWritesIntoIsolatedWorktreeAndRequireHumanAccept(t *tes
 	if _, err := store.Accept(taskID); err != nil {
 		t.Fatal(err)
 	}
-	if raw, err := os.ReadFile(filepath.Join(repo, "task.txt")); err != nil || string(raw) != "inside task\n" {
+	if raw, err := os.ReadFile(filepath.Join(repo, "task.txt")); err != nil || strings.ReplaceAll(string(raw), "\r\n", "\n") != "inside task\n" {
 		t.Fatalf("accepted task content = %q err=%v", raw, err)
 	}
 }
