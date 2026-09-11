@@ -128,6 +128,15 @@ screen_tools = screen_tools.replace(
 )
 write("app/internal/mcpcore/screen_tools.go", screen_tools)
 
+# Windows Git may materialize accepted worktree text as CRLF. This assertion checks
+# task isolation/accept semantics, not line-ending policy.
+task_test = read("app/internal/mcpcore/task_tools_test.go")
+task_test = task_test.replace(
+    '''\tif raw, err := os.ReadFile(filepath.Join(repo, "task.txt")); err != nil || string(raw) != "inside task\\n" {\n\t\tt.Fatalf("accepted task content = %q err=%v", raw, err)\n\t}\n''',
+    '''\tif raw, err := os.ReadFile(filepath.Join(repo, "task.txt")); err != nil || strings.ReplaceAll(string(raw), "\\r\\n", "\\n") != "inside task\\n" {\n\t\tt.Fatalf("accepted task content = %q err=%v", raw, err)\n\t}\n''',
+)
+write("app/internal/mcpcore/task_tools_test.go", task_test)
+
 preview = read("docs/V013_PREVIEW.md")
 preview = preview.replace(
     "现有 0.12.34 捕获行为保留作为兼容基线；Windows Graphics Capture 原生后端暂不在未完成实机矩阵前启用。",
