@@ -1,0 +1,30 @@
+name: MCP DevDesk v0.13 Beta 5 Audit
+
+on:
+  push:
+    branches:
+      - fix/v0.13.0-beta5-console-utf8-probe
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v0.13.0-beta5-console-utf8-probe
+          fetch-depth: 0
+      - name: Audit process launch sites
+        shell: pwsh
+        run: |
+          Write-Host '=== exec.Command / CommandContext ==='
+          git grep -n -E 'exec\.Command(Context)?\(' -- 'app/**/*.go' ':!app/vendor/**' || $true
+          Write-Host '=== SysProcAttr ==='
+          git grep -n 'SysProcAttr' -- 'app/**/*.go' ':!app/vendor/**' || $true
+          Write-Host '=== PowerShell / cmd launch literals ==='
+          git grep -n -E 'powershell\.exe|cmd\.exe|taskkill\.exe|wscript\.exe|cscript\.exe' -- 'app/**/*.go' ':!app/vendor/**' || $true
+          Write-Host '=== HideChildProcessWindows ==='
+          git grep -n 'HideChildProcessWindows' -- 'app/**/*.go' 'frontend/**' || $true
