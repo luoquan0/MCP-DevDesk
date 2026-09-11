@@ -6,6 +6,7 @@ on:
       - "preview/v0.13.0"
     paths:
       - "tools/v013_beta3_fix.py"
+      - "tools/v013_beta3_fix2.py"
       - ".github/workflows/v013-beta3-fix.yml"
   workflow_dispatch:
 
@@ -24,7 +25,9 @@ jobs:
 
       - name: Apply Beta 3 source migration
         shell: pwsh
-        run: python tools/v013_beta3_fix.py
+        run: |
+          python tools/v013_beta3_fix.py
+          python tools/v013_beta3_fix2.py
 
       - name: Setup Go
         uses: actions/setup-go@v5
