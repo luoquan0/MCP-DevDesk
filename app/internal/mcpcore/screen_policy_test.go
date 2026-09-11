@@ -12,30 +12,35 @@ func TestConfigureScreenVisionFiltersToolsByMode(t *testing.T) {
 		windowID  string
 		want      []string
 		notWanted []string
+		wantCount int
 	}{
 		{
 			name:      "active",
 			mode:      "active",
-			want:      []string{"screen_get_active_window", "screen_capture_active_window"},
+			want:      []string{"screen_capture_probe", "screen_get_active_window", "screen_capture_active_window"},
 			notWanted: []string{"screen_list_windows", "screen_capture_window", "screen_capture_desktop"},
+			wantCount: 52,
 		},
 		{
 			name:      "window",
 			mode:      "window",
 			windowID:  "0x10",
-			want:      []string{"screen_list_windows", "screen_capture_window"},
+			want:      []string{"screen_capture_probe", "screen_list_windows", "screen_capture_window"},
 			notWanted: []string{"screen_get_active_window", "screen_capture_active_window", "screen_capture_desktop"},
+			wantCount: 52,
 		},
 		{
 			name: "desktop",
 			mode: "desktop",
 			want: []string{
+				"screen_capture_probe",
 				"screen_list_windows",
 				"screen_get_active_window",
 				"screen_capture_window",
 				"screen_capture_active_window",
 				"screen_capture_desktop",
 			},
+			wantCount: 55,
 		},
 	}
 
@@ -56,6 +61,9 @@ func TestConfigureScreenVisionFiltersToolsByMode(t *testing.T) {
 				if containsTool(server.tools, name) {
 					t.Fatalf("mode %s unexpectedly advertised %s", test.mode, name)
 				}
+			}
+			if len(server.tools) != test.wantCount {
+				t.Fatalf("mode %s tool count = %d, want %d", test.mode, len(server.tools), test.wantCount)
 			}
 		})
 	}
@@ -90,11 +98,17 @@ func TestSpecifiedWindowModeWithoutTargetDoesNotAdvertiseCapture(t *testing.T) {
 	}
 	defer server.Close()
 	server.ConfigureScreenVision("window", "", 0)
+	if !containsTool(server.tools, "screen_capture_probe") {
+		t.Fatal("specified-window mode should keep the metadata-only compatibility probe before a target is selected")
+	}
 	if !containsTool(server.tools, "screen_list_windows") {
 		t.Fatal("specified-window mode should still allow metadata listing before a target is selected")
 	}
 	if containsTool(server.tools, "screen_capture_window") {
 		t.Fatal("capture must not be advertised before a specified target is selected")
+	}
+	if len(server.tools) != 51 {
+		t.Fatalf("specified-window mode without target tool count = %d, want 51", len(server.tools))
 	}
 }
 
@@ -107,6 +121,7 @@ func TestDesktopModeAllowsWindowInspection(t *testing.T) {
 	server.ConfigureScreenVision("desktop", "", 0)
 
 	for _, name := range []string{
+		"screen_capture_probe",
 		"screen_list_windows",
 		"screen_get_active_window",
 		"screen_capture_window",

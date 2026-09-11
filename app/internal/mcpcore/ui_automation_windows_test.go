@@ -114,4 +114,40 @@ func TestUIAutomationPowerShellHelpersHandleScalarValues(t *testing.T) {
 	}
 }
 
+func TestUIAutomationPowerShellCollectionPayloadIsJSONSafe(t *testing.T) {
+	if !strings.Contains(uiAutomationPowerShell, "$items.ToArray()") {
+		t.Fatal("UI Automation script must materialize the Generic.List before JSON conversion")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	script := uiAutomationPowerShellHelpers + `
+$items = New-Object System.Collections.Generic.List[object]
+$items.Add([pscustomobject]@{ name='alpha'; frameworkId=(SafeText ([int]42)) }) | Out-Null
+$items.Add([pscustomobject]@{ name='beta'; frameworkId='WebView2' }) | Out-Null
+$nodeArray = $items.ToArray()
+[pscustomobject]@{ nodes=$nodeArray; truncated=$false } | ConvertTo-Json -Depth 8 -Compress`
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShellCommand(script))
+	configureCommand(cmd)
+	output, err := cmd.Output()
+	if ctx.Err() != nil {
+		t.Fatal("PowerShell collection payload regression test timed out")
+	}
+	if err != nil {
+		t.Fatalf("PowerShell collection payload regression test failed: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	var payload struct {
+		Nodes []struct {
+			Name        string `json:"name"`
+			FrameworkID string `json:"frameworkId"`
+		} `json:"nodes"`
+		Truncated bool `json:"truncated"`
+	}
+	if err := json.Unmarshal(output, &payload); err != nil {
+		t.Fatalf("decode PowerShell collection payload: %v: %s", err, string(output))
+	}
+	if payload.Truncated || len(payload.Nodes) != 2 || payload.Nodes[0].FrameworkID != "42" || payload.Nodes[1].FrameworkID != "WebView2" {
+		t.Fatalf("unexpected PowerShell collection payload: %#v", payload)
+	}
+}
+
 func unsafePointer[T any](value *T) unsafe.Pointer { return unsafe.Pointer(value) }

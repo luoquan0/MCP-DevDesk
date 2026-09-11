@@ -124,7 +124,8 @@ function AddNode([System.Windows.Automation.AutomationElement]$element, [int]$de
   }
 }
 AddNode $root 0
-[pscustomobject]@{ nodes=@($items); truncated=[bool]$script:truncated } | ConvertTo-Json -Depth 8 -Compress`
+$nodeArray = $items.ToArray()
+[pscustomobject]@{ nodes=$nodeArray; truncated=[bool]$script:truncated } | ConvertTo-Json -Depth 8 -Compress`
 
 type uiAutomationPayload struct {
 	Nodes     []uiAutomationNode `json:"nodes"`

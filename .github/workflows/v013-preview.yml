@@ -117,6 +117,10 @@ jobs:
           MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
         run: .\build.ps1 -Arch amd64 -RunTests
 
+      - name: Built core Screen Vision catalog contract
+        shell: pwsh
+        run: .\tools\smoke-mcp-core-catalog.ps1 -CorePath .\dist\mcp-core-amd64.exe
+
       - name: Build NSIS setup
         shell: pwsh
         run: |
