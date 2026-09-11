@@ -46,6 +46,7 @@ jobs:
             '--enable-screen-capture',
             '--screen-vision-config', $config
           ) -PassThru -WindowStyle Hidden
+          $client = [System.Net.Http.HttpClient]::new()
           try {
             $uri = "http://127.0.0.1:$port/mcp"
             $session = $null
@@ -61,15 +62,24 @@ jobs:
                     clientInfo = @{ name = 'beta3-release-diagnose'; version = '1' }
                   }
                 } | ConvertTo-Json -Depth 8 -Compress
-                $init = Invoke-WebRequest -Uri $uri -Method Post -ContentType 'application/json' -Headers @{ Accept = 'application/json' } -Body $initBody
-                $values = @($init.Headers.GetValues('Mcp-Session-Id'))
-                if ($values.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$values[0])) {
-                  $session = [string]$values[0]
-                  break
+                $content = [System.Net.Http.StringContent]::new($initBody, [System.Text.Encoding]::UTF8, 'application/json')
+                $content.Headers.Remove('Content-Type') | Out-Null
+                $content.Headers.TryAddWithoutValidation('Content-Type', 'application/json') | Out-Null
+                $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $uri)
+                $request.Content = $content
+                $request.Headers.TryAddWithoutValidation('Accept', 'application/json') | Out-Null
+                $response = $client.SendAsync($request).GetAwaiter().GetResult()
+                if ($response.IsSuccessStatusCode) {
+                  $headerValues = [System.Collections.Generic.IEnumerable[string]]$null
+                  if ($response.Headers.TryGetValues('Mcp-Session-Id', [ref]$headerValues)) {
+                    $session = [string]($headerValues | Select-Object -First 1)
+                    if ($session) { break }
+                  }
                 }
               } catch {
-                Start-Sleep -Milliseconds 250
+                # Core may still be starting.
               }
+              Start-Sleep -Milliseconds 250
             }
             if (-not $session) { throw 'Published core did not initialize' }
             Write-Host "sessionLength=$($session.Length)"
@@ -94,5 +104,6 @@ jobs:
             if ($names -notcontains 'screen_capture_probe' -or $names -notcontains 'ui_automation_tree') { throw 'Published core lost required Screen tools' }
             if ($names -contains 'list_symbols') { throw 'Published core still advertises list_symbols' }
           } finally {
+            $client.Dispose()
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
           }
