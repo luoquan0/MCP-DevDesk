@@ -20,7 +20,9 @@ jobs:
 
       - name: Apply Beta 6 source migration
         shell: pwsh
-        run: python tools/v013_beta6_fix.py
+        run: |
+          python tools/v013_beta6_fix.py
+          python tools/v013_beta6_fix2.py
 
       - uses: actions/setup-go@v5
         with:
