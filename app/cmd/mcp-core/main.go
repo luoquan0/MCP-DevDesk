@@ -148,7 +148,7 @@ func main() {
 	}
 
 	core, err := mcpcore.New(mcpcore.Options{
-		Name:                    "mcp-devdesk-go-core-v013-catalog2",
+		Name:                    "mcp-devdesk-go-core-v013-catalog3",
 		Version:                 buildinfo.Version,
 		Workspace:               resolvedWorkspace,
 		ManagedInstructions:     managedInstructions,

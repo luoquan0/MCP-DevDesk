@@ -443,15 +443,29 @@ func (m *commandManager) kill(args killSessionArgs) (map[string]any, error) {
 	cancel := session.cancel
 	session.mu.RUnlock()
 	if !running {
-		return map[string]any{"sessionId": args.SessionID, "terminated": false, "message": "session already completed"}, nil
+		return map[string]any{"sessionId": args.SessionID, "terminated": false, "completed": true, "message": "session already completed"}, nil
 	}
+	// CommandContext invokes cmd.Cancel, which is already wired to terminateCommand.
+	// Do not call terminateCommand a second time after cancel: on Windows the
+	// second taskkill races with Wait and used to surface localized "not found"
+	// output as an MCP error even though the session had already stopped.
 	if cancel != nil {
 		cancel()
-	}
-	if err := terminateCommand(cmd); err != nil {
+	} else if err := terminateCommand(cmd); err != nil {
 		return nil, err
 	}
-	return map[string]any{"sessionId": args.SessionID, "terminated": true}, nil
+	waitMS := args.WaitMS
+	if waitMS <= 0 {
+		waitMS = 2000
+	}
+	timer := time.NewTimer(time.Duration(waitMS) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-session.done:
+		return map[string]any{"sessionId": args.SessionID, "terminated": true, "completed": true}, nil
+	case <-timer.C:
+		return map[string]any{"sessionId": args.SessionID, "terminated": true, "completed": false}, nil
+	}
 }
 
 func (m *commandManager) get(id string) (*commandSession, error) {

@@ -91,7 +91,7 @@ func compatibilityTools() []Tool {
 		{
 			Name:        "check_exec_environment",
 			Title:       "Check Execution Environment",
-			Description: "Return runtime, workspace, file-scope, permission, networking, and command-session limits.",
+			Description: "Return runtime, workspace, file-scope, permission, networking, command-session limits, and a cache-safe Screen Vision probe fallback.",
 			InputSchema: empty,
 		},
 		{
@@ -245,9 +245,10 @@ func (s *Server) executeCompatibilityTool(name string, arguments map[string]any)
 			"oauthEnabled":                 s.oauth != nil,
 			"streamableHTTP":               true,
 			"sseReplaySupported":           true,
-			"toolCatalogGeneration":        "v013-catalog2",
+			"toolCatalogGeneration":        "v013-catalog3",
 			"advertisedToolCount":          len(s.tools),
 			"screenCaptureProbeAdvertised": s.isToolAdvertised("screen_capture_probe"),
+			"screenCaptureProbe":           s.screenCaptureProbeCompatibility(),
 			"legacyListSymbolsAdvertised":  s.isToolAdvertised("list_symbols"),
 		}, nil
 	case "get_default_cwd":
