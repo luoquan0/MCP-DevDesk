@@ -64,14 +64,15 @@ jobs:
           $preview = Get-Content docs\V013_PREVIEW.md -Raw
           if (-not $roadmap.Contains('0.13.0-beta.6')) { throw 'ROADMAP missing beta.6' }
           if (-not $preview.Contains('0.13.0-beta.6')) { throw 'preview notes missing beta.6' }
-          if (-not $preview.Contains('check_exec_environment.screenCaptureProbe')) { throw 'probe compatibility docs missing' }
+          if (-not $preview.Contains('check_exec_environment')) { throw 'probe compatibility tool docs missing' }
+          if (-not $preview.Contains('screenCaptureProbe')) { throw 'probe compatibility payload docs missing' }
 
       - name: Persist validated product changes
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app docs tools/smoke-mcp-core-catalog.ps1
+          git add app/cmd/mcp-core/main.go app/internal/buildinfo/version.go app/internal/mcpcore/command_platform_windows.go app/internal/mcpcore/command_platform_windows_test.go app/internal/mcpcore/command_tools.go app/internal/mcpcore/screen_tools.go app/internal/mcpcore/compatibility_tools.go app/internal/mcpcore/beta6_compatibility_test.go docs/ROADMAP.md docs/V013_PREVIEW.md tools/smoke-mcp-core-catalog.ps1
           git diff --cached --check
           if (git diff --cached --quiet) {
             Write-Host 'No product changes to persist.'
