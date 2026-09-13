@@ -93,7 +93,7 @@ function Test-Mode {
         }
         if (-not $session) { throw "[$Mode] core did not initialize" }
         $serverName = [string]$init.Body.result.serverInfo.name
-        if ($serverName -ne "mcp-devdesk-go-core-v013-catalog2") {
+        if ($serverName -ne "mcp-devdesk-go-core-v013-catalog3") {
             throw "[$Mode] unexpected server identity: $serverName"
         }
 
@@ -103,8 +103,11 @@ function Test-Mode {
         $toolCount = [int]$info.Body.result.structuredContent.toolCount
         $environment = Send-McpRequest -Client $client -Uri $uri -Session $session -Payload @{ jsonrpc = "2.0"; id = 4; method = "tools/call"; params = @{ name = "check_exec_environment"; arguments = @{} } }
         $environmentData = $environment.Body.result.structuredContent
-        if ([string]$environmentData.toolCatalogGeneration -ne "v013-catalog2") { throw "[$Mode] catalog generation fallback missing" }
+        if ([string]$environmentData.toolCatalogGeneration -ne "v013-catalog3") { throw "[$Mode] catalog generation fallback missing" }
         if (-not [bool]$environmentData.screenCaptureProbeAdvertised) { throw "[$Mode] fallback says probe is not advertised" }
+        if (-not $environmentData.screenCaptureProbe) { throw "[$Mode] cache-safe probe payload missing" }
+        if ([string]$environmentData.screenCaptureProbe.connectorFallback -ne "check_exec_environment.screenCaptureProbe") { throw "[$Mode] cache-safe probe fallback identity missing" }
+        if ([bool]$environmentData.screenCaptureProbe.stateChangingFallbacks) { throw "[$Mode] cache-safe probe unexpectedly allows state-changing fallback" }
         if ([bool]$environmentData.legacyListSymbolsAdvertised) { throw "[$Mode] fallback says list_symbols is still advertised" }
         Write-Host "mode=$Mode toolsListCount=$($names.Count) serverToolCount=$toolCount catalog=$serverName"
         if ($names.Count -ne $ExpectedCount -or $toolCount -ne $ExpectedCount) {
@@ -116,6 +119,19 @@ function Test-Mode {
         }
         foreach ($name in $Forbidden) {
             if ($names -contains $name) { throw "[$Mode] forbidden tool advertised: $name" }
+        }
+        if ($Mode -eq "desktop") {
+            $execCall = Send-McpRequest -Client $client -Uri $uri -Session $session -Payload @{ jsonrpc = "2.0"; id = 5; method = "tools/call"; params = @{ name = "exec_command"; arguments = @{ command = "powershell.exe"; args = @("-NoLogo", "-NoProfile", "-Command", "Start-Sleep -Seconds 30"); waitMillis = 100 } } }
+            if ([bool]$execCall.Body.result.isError) { throw "[desktop] exec_command failed: $($execCall.Body.result.content[0].text)" }
+            $commandSession = [string]$execCall.Body.result.structuredContent.sessionId
+            if (-not $commandSession) { throw "[desktop] exec_command did not return a session id" }
+            $killCall = Send-McpRequest -Client $client -Uri $uri -Session $session -Payload @{ jsonrpc = "2.0"; id = 6; method = "tools/call"; params = @{ name = "kill_session"; arguments = @{ sessionId = $commandSession; wait_ms = 5000 } } }
+            if ([bool]$killCall.Body.result.isError) { throw "[desktop] kill_session failed: $($killCall.Body.result.content[0].text)" }
+            $killData = $killCall.Body.result.structuredContent
+            if (-not [bool]$killData.terminated -or -not [bool]$killData.completed) { throw "[desktop] kill_session did not complete cleanly" }
+            $readCall = Send-McpRequest -Client $client -Uri $uri -Session $session -Payload @{ jsonrpc = "2.0"; id = 7; method = "tools/call"; params = @{ name = "read_output"; arguments = @{ sessionId = $commandSession } } }
+            if ([bool]$readCall.Body.result.isError) { throw "[desktop] read_output after kill failed" }
+            if ([bool]$readCall.Body.result.structuredContent.running) { throw "[desktop] command still running after kill_session" }
         }
     } finally {
         $client.Dispose()

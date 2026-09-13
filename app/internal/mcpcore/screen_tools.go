@@ -60,6 +60,25 @@ type screenCaptureArgs struct {
 	MaxWidth int `json:"maxWidth,omitempty"`
 }
 
+func screenCaptureProbePolicy() map[string]any {
+	return map[string]any{
+		"captureActive":          false,
+		"policy":                 "explicit-opt-in-fail-closed",
+		"instanceScoped":         true,
+		"methods":                []string{"PrintWindow(PW_RENDERFULLCONTENT)", "PrintWindow", "WindowDC"},
+		"stateChangingFallbacks": false,
+		"windowsGraphicsCapture": "not-enabled-in-preview-until-real-machine-compatibility-validation",
+	}
+}
+
+func (s *Server) screenCaptureProbeCompatibility() map[string]any {
+	result := screenCaptureProbePolicy()
+	result["enabled"] = s.screenCaptureEnabled
+	result["advertised"] = s.isToolAdvertised("screen_capture_probe")
+	result["connectorFallback"] = "check_exec_environment.screenCaptureProbe"
+	return result
+}
+
 func screenTools() []Tool {
 	captureProperties := map[string]any{
 		"maxWidth": map[string]any{
@@ -134,14 +153,7 @@ func (s *Server) executeScreenTool(name string, arguments map[string]any) (map[s
 	switch name {
 	case "screen_capture_probe":
 		windowArg, _ := arguments["window"].(string)
-		result := map[string]any{
-			"captureActive":          false,
-			"policy":                 "explicit-opt-in-fail-closed",
-			"instanceScoped":         true,
-			"methods":                []string{"PrintWindow(PW_RENDERFULLCONTENT)", "PrintWindow", "WindowDC"},
-			"stateChangingFallbacks": false,
-			"windowsGraphicsCapture": "not-enabled-in-preview-until-real-machine-compatibility-validation",
-		}
+		result := screenCaptureProbePolicy()
 		if strings.TrimSpace(windowArg) != "" {
 			windows, err := platformListScreenWindowsForVision()
 			if err != nil {
