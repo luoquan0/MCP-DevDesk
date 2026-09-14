@@ -91,7 +91,7 @@ type textMatch struct {
 }
 
 func previewFileTools() []Tool {
-	return []Tool{
+	tools := []Tool{
 		{
 			Name:        "read_file",
 			Title:       "Read Workspace File",
@@ -188,6 +188,9 @@ func previewFileTools() []Tool {
 			},
 		},
 	}
+	tools = append(tools, codeNavigationTools()...)
+	tools = append(tools, checkTools()...)
+	return tools
 }
 
 func (s *Server) executeTool(name string, arguments map[string]any) (map[string]any, error) {
@@ -263,8 +266,12 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 		return s.executeWriteTool(name, arguments)
 	case "exec_command", "read_output", "write_stdin", "kill_session":
 		return s.executeCommandTool(name, arguments)
+	case "checks_run", "validate_project":
+		return s.executeCheckTool(name, arguments)
 	case "git_status", "git_diff", "git_log", "git_show", "git_worktrees":
 		return s.executeGitTool(name, arguments)
+	case "document_symbols", "workspace_symbols", "find_definition", "find_references":
+		return s.executeCodeNavigationTool(name, arguments)
 	case "permission_status", "request_permissions":
 		return s.executePermissionTool(name, arguments)
 	case "screen_list_windows", "screen_get_active_window", "screen_capture_window", "screen_capture_active_window", "screen_capture_desktop":
@@ -279,7 +286,8 @@ func (s *Server) executeTool(name string, arguments map[string]any) (map[string]
 func isMutatingOrCommandTool(name string) bool {
 	switch name {
 	case "write_file", "replace_text", "apply_patch", "make_directory", "move_path", "delete_path",
-		"exec_command", "read_output", "write_stdin", "kill_session", "write_image", "save_chatgpt_image":
+		"exec_command", "read_output", "write_stdin", "kill_session", "write_image", "save_chatgpt_image",
+		"checks_run", "validate_project":
 		return true
 	default:
 		return false
