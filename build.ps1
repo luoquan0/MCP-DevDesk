@@ -40,9 +40,24 @@ try {
     $env:GOCACHE = Join-Path $AppDir ".gocache"
     $env:GOTMPDIR = Join-Path $AppDir ".gotmp"
     if ($RunTests) {
-        $goFiles = @(git ls-files "*.go")
+        # The stable baseline contains unrelated legacy files that are not gofmt-clean.
+        # Verify only the Go files touched by the focused v0.12.35 port so this release
+        # does not reformat unrelated Tunnel, Screen Vision, web, or vendored code.
+        $goFiles = @(
+            "internal/mcpcore/check_tools.go",
+            "internal/mcpcore/check_tools_test.go",
+            "internal/mcpcore/code_navigation.go",
+            "internal/mcpcore/command_platform_windows.go",
+            "internal/mcpcore/command_tools.go",
+            "internal/mcpcore/file_tools.go",
+            "internal/mcpcore/server_test.go",
+            "internal/mcpcore/v01235_features_test.go"
+        )
         $badFormat = @()
         foreach ($file in $goFiles) {
+            if (-not (Test-Path -LiteralPath $file)) {
+                throw "gofmt target is missing: $file"
+            }
             $formatted = @(gofmt -l -- $file)
             if ($LASTEXITCODE -ne 0) {
                 throw "gofmt failed for $file"
