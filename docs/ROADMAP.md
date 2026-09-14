@@ -1,6 +1,6 @@
 # 开发路线图
 
-当前稳定开发版本：`0.12.8`。新增 GitHub Releases 在线更新链路：可配置公开 `owner/repo`、稳定/预发布通道和启动检查，客户端强制校验 Release ZIP 的 SHA256，并通过独立 `devdesk-updater.exe` 等待主程序优雅退出后替换程序文件；`data/devdesk`、项目目录与 `AGENTS.md` 不进入更新替换范围，失败会自动回滚。新增 `v*` Tag 触发的 GitHub Actions Windows 发布工作流，自动测试、构建 EXE/Portable/updater、生成 SHA256 并创建 Release。品牌 `new-logo.png`、浅色冰白玻璃/深色烟熏黑曜石玻璃、自定义外观、项目与运行统一工作区、项目分类栏收起、四栏目设置、活动项目安全移除、Shift 批量归类、虚拟文件夹右键删除、项目独立 Cloudflare Tunnel、局域网网页端实时同步、密码认证、标准 `AGENTS.md` 和 Go MCP 核心继续保留。
+当前稳定开发版本：`0.12.35`。本版本在 `0.12.34` 正式稳定线基础上增加项目验证、长时间 Terminal Session 稳定终止和基础词法代码导航；明确不引入 `0.13` 实验线的 AI Task、Agent Tasks、Task 持久化/Heartbeat、Task 与 Job 绑定、自动 Git Worktree 隔离、Accept/Reject 审核、Persistent LSP 或 Screen Vision 实验改造。现有 GitHub Releases 在线更新、Tunnel、认证、项目管理和正式版 Screen Vision 行为继续保持。
 
 ## M0：仓库和文档
 
@@ -39,7 +39,7 @@
 - [x] 桌面状态与控制 API
 - [x] 自定义 EXE、窗口和托盘图标
 - [x] WebView2 内嵌壳
-- [ ] NSIS 安装包
+- [x] NSIS 安装包
 
 ## M2.1：端口与 Tunnel 运行管理
 
@@ -95,6 +95,9 @@
 - [x] 文件读取、递归列表、搜索、原子写入、补丁、移动与删除工具
 - [x] 旧版多文件 `*** Begin Patch` 信封与失败回滚
 - [x] 长时间命令会话、输出续读、标准输入与进程树终止
+- [x] Windows `kill_session` 单次进程树终止、已结束 Session 幂等重复 kill
+- [x] `validate_project` / `checks_run` 自动识别 Go、Node、Rust、.NET、Python 和项目 `build.ps1`
+- [x] `document_symbols` / `workspace_symbols` / `find_definition` / `find_references` 词法 fallback 导航
 - [x] Git 状态、Diff、日志、Show、Blame 与 Worktree 工具
 - [x] 权限模式、工具配置档位与禁止静默提权
 - [x] JSONL 审计日志与敏感参数脱敏
@@ -144,7 +147,7 @@
 ## M5：发布
 
 - [x] ZIP 便携版
-- [ ] 安装版
+- [x] 安装版
 - [ ] 自动更新
 - [ ] 签名
 - [ ] 中文与英文界面
