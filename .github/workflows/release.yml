@@ -124,6 +124,7 @@ jobs:
             }
           }
           "RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_VERSION=$releaseVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "RELEASE_SHA=$releaseSha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup Go
@@ -186,12 +187,30 @@ jobs:
           MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
         run: .\build.ps1 -Arch amd64 -RunTests
 
+      - name: Build NSIS setup
+        shell: pwsh
+        run: |
+          $stage = (Resolve-Path ".\dist\MCP-DevDesk-Portable-amd64").Path
+          $output = (Join-Path (Resolve-Path ".\dist").Path "MCP-DevDesk-Setup-x64.exe")
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path -LiteralPath $makensis)) {
+            choco install nsis -y --no-progress
+          }
+          if (-not (Test-Path -LiteralPath $makensis)) {
+            throw "NSIS makensis.exe is unavailable"
+          }
+          & $makensis "/DVERSION=$env:RELEASE_VERSION" "/DSTAGEDIR=$stage" "/DOUTFILE=$output" ".\installer\MCP-DevDesk.nsi"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output)) {
+            throw "NSIS setup build failed"
+          }
+
       - name: Create SHA256 files
         shell: pwsh
         run: |
           $assets = @(
             "dist\MCP-DevDesk-amd64.exe",
             "dist\MCP-DevDesk-Portable-amd64.zip",
+            "dist\MCP-DevDesk-Setup-x64.exe",
             "dist\devdesk-updater-amd64.exe",
             "dist\devdeskctl-amd64.exe",
             "dist\mcp-core-amd64.exe"
@@ -219,6 +238,8 @@ jobs:
             "dist\MCP-DevDesk-amd64.exe.sha256",
             "dist\MCP-DevDesk-Portable-amd64.zip",
             "dist\MCP-DevDesk-Portable-amd64.zip.sha256",
+            "dist\MCP-DevDesk-Setup-x64.exe",
+            "dist\MCP-DevDesk-Setup-x64.exe.sha256",
             "dist\devdesk-updater-amd64.exe",
             "dist\devdesk-updater-amd64.exe.sha256",
             "dist\devdeskctl-amd64.exe",
@@ -226,13 +247,27 @@ jobs:
             "dist\mcp-core-amd64.exe",
             "dist\mcp-core-amd64.exe.sha256"
           )
+          $notesFile = "docs\releases\$env:RELEASE_TAG.md"
           gh release view "$env:RELEASE_TAG" *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload "$env:RELEASE_TAG" $assets --clobber
-            gh release edit "$env:RELEASE_TAG" --title "MCP DevDesk $env:RELEASE_TAG" --latest
+            if (Test-Path -LiteralPath $notesFile) {
+              gh release edit "$env:RELEASE_TAG" --title "MCP DevDesk $env:RELEASE_TAG" --latest --notes-file $notesFile
+            } else {
+              gh release edit "$env:RELEASE_TAG" --title "MCP DevDesk $env:RELEASE_TAG" --latest
+            }
           } else {
-            gh release create "$env:RELEASE_TAG" $assets `
-              --title "MCP DevDesk $env:RELEASE_TAG" `
-              --generate-notes `
-              --verify-tag
+            if (Test-Path -LiteralPath $notesFile) {
+              gh release create "$env:RELEASE_TAG" $assets `
+                --title "MCP DevDesk $env:RELEASE_TAG" `
+                --notes-file $notesFile `
+                --latest `
+                --verify-tag
+            } else {
+              gh release create "$env:RELEASE_TAG" $assets `
+                --title "MCP DevDesk $env:RELEASE_TAG" `
+                --generate-notes `
+                --latest `
+                --verify-tag
+            }
           }
