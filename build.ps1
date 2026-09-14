@@ -15,6 +15,12 @@ $SmokeScript = Join-Path $Root "tools\smoke-go-core.ps1"
 $V01235SmokeScript = Join-Path $Root "tools\smoke-v01235.ps1"
 $PackageScript = Join-Path $Root "package-portable.ps1"
 
+function Assert-NativeSuccess([string]$Label) {
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label failed with exit code $LASTEXITCODE"
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $AppDir ".gocache") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $AppDir ".gotmp") | Out-Null
@@ -28,8 +34,10 @@ if (Test-Path (Join-Path $FrontendDir "package.json")) {
     try {
         if (-not (Test-Path (Join-Path $FrontendDir "node_modules"))) {
             npm ci
+            Assert-NativeSuccess "npm ci"
         }
         npm run build
+        Assert-NativeSuccess "frontend build"
     } finally {
         Pop-Location
     }
@@ -50,6 +58,7 @@ try {
             "internal/mcpcore/command_platform_windows.go",
             "internal/mcpcore/command_tools.go",
             "internal/mcpcore/file_tools.go",
+            "internal/mcpcore/server.go",
             "internal/mcpcore/server_test.go",
             "internal/mcpcore/v01235_features_test.go"
         )
@@ -59,9 +68,7 @@ try {
                 throw "gofmt target is missing: $file"
             }
             $formatted = @(gofmt -l -- $file)
-            if ($LASTEXITCODE -ne 0) {
-                throw "gofmt failed for $file"
-            }
+            Assert-NativeSuccess "gofmt $file"
             if ($formatted.Count -gt 0) {
                 $badFormat += $formatted
             }
@@ -70,6 +77,7 @@ try {
             throw "gofmt verification failed: $($badFormat -join ', ')"
         }
         go test -mod=vendor ./...
+        Assert-NativeSuccess "go test -mod=vendor ./..."
     }
 
     $env:GOOS = "windows"
@@ -80,19 +88,23 @@ try {
         $ManagerLdFlags += " -X mcp-devdesk/internal/buildinfo.Repository=$($env:MCP_DEVDESK_GITHUB_REPOSITORY)"
     }
     go build -mod=vendor -trimpath -ldflags $ManagerLdFlags -o $Output ./cmd/mcp-devdesk
+    Assert-NativeSuccess "MCP DevDesk build"
     if (Test-Path -LiteralPath $ExeIconScript) {
         & $ExeIconScript -ExePath $Output -IconPath (Join-Path $AppDir "internal\desktop\assets\mcp-devdesk.ico")
     }
 
     $CliOutput = Join-Path $DistDir "devdeskctl-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w" -o $CliOutput ./cmd/devdeskctl
+    Assert-NativeSuccess "devdeskctl build"
 
     $CoreOutput = Join-Path $DistDir "mcp-core-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w" -o $CoreOutput ./cmd/mcp-core
+    Assert-NativeSuccess "mcp-core build"
     Copy-Item -LiteralPath $CoreOutput -Destination (Join-Path $DistDir "mcp-core.exe") -Force
 
     $UpdaterOutput = Join-Path $DistDir "devdesk-updater-$Arch.exe"
     go build -mod=vendor -trimpath -ldflags "-s -w -H=windowsgui" -o $UpdaterOutput ./cmd/devdesk-updater
+    Assert-NativeSuccess "devdesk-updater build"
 
     Write-Host "Build complete: $Output" -ForegroundColor Green
     Write-Host "CLI complete:   $CliOutput" -ForegroundColor Green
@@ -113,6 +125,7 @@ if ($RunTests -and (Test-Path -LiteralPath $SmokeScript)) {
         $PreviousE2ECore = $env:MCP_DEV_DESK_E2E_CORE
         $env:MCP_DEV_DESK_E2E_CORE = Join-Path $DistDir "mcp-core-$Arch.exe"
         go test -mod=vendor ./internal/application -run TestRealMultiInstanceStart -count=1
+        Assert-NativeSuccess "real multi-instance Go core test"
     } finally {
         $env:MCP_DEV_DESK_E2E_CORE = $PreviousE2ECore
         Pop-Location
@@ -130,4 +143,3 @@ if ($RunTests -and (Test-Path -LiteralPath $PackageScript)) {
         throw "Portable package is missing devdesk-updater.exe"
     }
 }
-
