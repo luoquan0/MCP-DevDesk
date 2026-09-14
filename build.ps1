@@ -12,6 +12,7 @@ $DistDir = Join-Path $Root "dist"
 $BrandAssetScript = Join-Path $Root "tools\generate-brand-assets.ps1"
 $ExeIconScript = Join-Path $Root "tools\set-exe-icon.ps1"
 $SmokeScript = Join-Path $Root "tools\smoke-go-core.ps1"
+$V01235SmokeScript = Join-Path $Root "tools\smoke-v01235.ps1"
 $PackageScript = Join-Path $Root "package-portable.ps1"
 
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
@@ -39,6 +40,20 @@ try {
     $env:GOCACHE = Join-Path $AppDir ".gocache"
     $env:GOTMPDIR = Join-Path $AppDir ".gotmp"
     if ($RunTests) {
+        $goFiles = @(git ls-files "*.go")
+        $badFormat = @()
+        foreach ($file in $goFiles) {
+            $formatted = @(gofmt -l -- $file)
+            if ($LASTEXITCODE -ne 0) {
+                throw "gofmt failed for $file"
+            }
+            if ($formatted.Count -gt 0) {
+                $badFormat += $formatted
+            }
+        }
+        if ($badFormat.Count -gt 0) {
+            throw "gofmt verification failed: $($badFormat -join ', ')"
+        }
         go test -mod=vendor ./...
     }
 
@@ -74,6 +89,9 @@ try {
 
 if ($RunTests -and (Test-Path -LiteralPath $SmokeScript)) {
     & $SmokeScript -ExePath (Join-Path $DistDir "mcp-core-$Arch.exe") -Workspace $Root
+    if (Test-Path -LiteralPath $V01235SmokeScript) {
+        & $V01235SmokeScript -ExePath (Join-Path $DistDir "mcp-core-$Arch.exe") -Port 18768
+    }
 
     Push-Location $AppDir
     try {
@@ -97,5 +115,4 @@ if ($RunTests -and (Test-Path -LiteralPath $PackageScript)) {
         throw "Portable package is missing devdesk-updater.exe"
     }
 }
-
 
