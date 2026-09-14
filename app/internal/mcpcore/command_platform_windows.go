@@ -3,7 +3,9 @@
 package mcpcore
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
@@ -21,11 +23,20 @@ func terminateCommand(cmd *exec.Cmd) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
+	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		return nil
+	}
 	taskkill := exec.Command("taskkill", "/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F")
 	taskkill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
-	if output, err := taskkill.CombinedOutput(); err != nil {
+	if err := taskkill.Run(); err != nil {
+		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+			return nil
+		}
 		if killErr := cmd.Process.Kill(); killErr != nil {
-			return fmt.Errorf("terminate process tree: %v (%s); fallback kill: %w", err, string(output), killErr)
+			if errors.Is(killErr, os.ErrProcessDone) || errors.Is(killErr, syscall.EINVAL) {
+				return nil
+			}
+			return fmt.Errorf("terminate process tree: taskkill failed: %v; fallback kill: %w", err, killErr)
 		}
 	}
 	return nil
