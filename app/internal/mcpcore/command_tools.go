@@ -540,7 +540,7 @@ func (s *commandSession) snapshot(relativeCWD string, offset int64, maxBytes int
 		"args":        append([]string(nil), s.args...),
 		"cwd":         relativeCWD,
 		"running":     s.running,
-		"output":      string(data),
+		"output":      normalizeCommandOutput(data),
 		"nextOffset":  nextOffset,
 		"next_offset": nextOffset,
 		"truncated":   truncated,
