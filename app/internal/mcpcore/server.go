@@ -214,7 +214,13 @@ func New(options Options) (*Server, error) {
 			InputSchema: emptyObjectSchema,
 		},
 	}
-	tools = append(tools, previewFileTools()...)
+	previewTools := previewFileTools()
+	if options.ToolProfile == "read-only" {
+		previewTools = filterTools(previewTools, func(tool Tool) bool {
+			return tool.Name != "checks_run" && tool.Name != "validate_project"
+		})
+	}
+	tools = append(tools, previewTools...)
 	tools = append(tools, gitTools()...)
 	tools = append(tools, permissionTools()...)
 	if options.ScreenCaptureEnabled && (options.PermissionMode == "trusted" || options.PermissionMode == "dangerous") {
