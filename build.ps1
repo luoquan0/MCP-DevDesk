@@ -60,7 +60,8 @@ try {
             "internal/mcpcore/file_tools.go",
             "internal/mcpcore/server.go",
             "internal/mcpcore/server_test.go",
-            "internal/mcpcore/v01235_features_test.go"
+            "internal/mcpcore/v01235_features_test.go",
+            "internal/mcpcore/v01235_release_validation_test.go"
         )
         $badFormat = @()
         foreach ($file in $goFiles) {
