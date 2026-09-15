@@ -178,6 +178,11 @@ jobs:
 
           gofmt -w app/internal/mcpcore/command_tools.go app/internal/mcpcore/command_output_windows.go app/internal/mcpcore/command_output_other.go app/internal/mcpcore/command_output_windows_test.go
 
+          New-Item -ItemType Directory -Force -Path 'app/.gocache' | Out-Null
+          New-Item -ItemType Directory -Force -Path 'app/.gotmp' | Out-Null
+          $env:GOCACHE = (Resolve-Path 'app/.gocache').Path
+          $env:GOTMPDIR = (Resolve-Path 'app/.gotmp').Path
+
           Push-Location app
           go test -mod=vendor ./...
           if ($LASTEXITCODE -ne 0) { throw "go test failed with exit code $LASTEXITCODE" }
