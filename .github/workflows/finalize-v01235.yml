@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   finalize:
@@ -20,8 +19,10 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Verify final main and repoint stable tag
+      - name: Verify tested commit tag and release assets
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $expected = "c2d8752ac056614dc310092ee23ee0a99aa21ffc"
           $actual = (git rev-parse HEAD).Trim()
@@ -29,29 +30,55 @@ jobs:
             throw "main moved: expected $expected, got $actual"
           }
 
-          $versionText = Get-Content -LiteralPath "app\internal\buildinfo\version.go" -Raw -Encoding utf8
-          if ($versionText -notmatch 'const Version = "0\.12\.35"') {
-            throw "final main is not version 0.12.35"
+          $tagSha = (git rev-parse refs/tags/v0.12.35).Trim()
+          if ($tagSha -ne $expected) {
+            throw "v0.12.35 points to $tagSha instead of $expected"
           }
 
-          git fetch origin --tags --force
-          if ($LASTEXITCODE -ne 0) { throw "git fetch failed" }
-          git tag -f v0.12.35 $expected
-          if ($LASTEXITCODE -ne 0) { throw "git tag failed" }
-          git push origin refs/tags/v0.12.35 --force
-          if ($LASTEXITCODE -ne 0) { throw "tag push failed" }
-
-          $remote = (git ls-remote origin refs/tags/v0.12.35).Split("`t")[0].Trim()
-          if ($remote -ne $expected) {
-            throw "remote v0.12.35 points to $remote instead of $expected"
+          $release = (gh api "repos/$env:GITHUB_REPOSITORY/releases/388553898" | ConvertFrom-Json)
+          if ($release.tag_name -ne "v0.12.35") {
+            throw "unexpected release tag: $($release.tag_name)"
           }
-          Write-Host "v0.12.35 now points to verified main $expected"
+          if (-not $release.draft -or $release.prerelease) {
+            throw "expected a non-prerelease draft before publication"
+          }
 
-      - name: Dispatch existing stable release workflow
+          $required = @(
+            "MCP-DevDesk-amd64.exe",
+            "MCP-DevDesk-amd64.exe.sha256",
+            "MCP-DevDesk-Portable-amd64.zip",
+            "MCP-DevDesk-Portable-amd64.zip.sha256",
+            "MCP-DevDesk-Setup-x64.exe",
+            "MCP-DevDesk-Setup-x64.exe.sha256",
+            "devdesk-updater-amd64.exe",
+            "devdesk-updater-amd64.exe.sha256",
+            "devdeskctl-amd64.exe",
+            "devdeskctl-amd64.exe.sha256",
+            "mcp-core-amd64.exe",
+            "mcp-core-amd64.exe.sha256"
+          )
+          $assetNames = @($release.assets | ForEach-Object { $_.name })
+          foreach ($name in $required) {
+            if ($assetNames -notcontains $name) {
+              throw "draft release is missing asset: $name"
+            }
+          }
+          Write-Host "Verified final v0.12.35 tag and all 12 release assets."
+
+      - name: Publish stable release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run release.yml --ref v0.12.35 -f bump=patch
-          if ($LASTEXITCODE -ne 0) { throw "release workflow dispatch failed" }
-          Write-Host "Release MCP DevDesk workflow dispatched for v0.12.35"
+          $notes = "docs\releases\v0.12.35.md"
+          gh release edit v0.12.35 --draft=false --prerelease=false --title "MCP DevDesk v0.12.35" --notes-file $notes
+          if ($LASTEXITCODE -ne 0) { throw "failed to publish v0.12.35 draft" }
+
+          gh release edit v0.12.35 --latest
+          if ($LASTEXITCODE -ne 0) { throw "failed to mark v0.12.35 as latest" }
+
+          $published = (gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.12.35" | ConvertFrom-Json)
+          if ($published.draft -or $published.prerelease) {
+            throw "v0.12.35 is not a stable published release"
+          }
+          Write-Host "Published stable release: $($published.html_url)"
