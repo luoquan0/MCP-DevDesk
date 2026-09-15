@@ -1,0 +1,190 @@
+name: Patch v0.12.36 Windows output encoding
+
+on:
+  push:
+    branches:
+      - "fix/v0.12.36-windows-output-encoding"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: fix/v0.12.36-windows-output-encoding
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Apply encoding fix and tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $commandTools = 'app/internal/mcpcore/command_tools.go'
+          $text = Get-Content -LiteralPath $commandTools -Raw -Encoding utf8
+          $old = '"output":      string(data),'
+          $new = '"output":      normalizeCommandOutput(data),'
+          if (-not $text.Contains($old)) {
+            throw "Expected command output snapshot expression was not found"
+          }
+          $text = $text.Replace($old, $new)
+          Set-Content -LiteralPath $commandTools -Value $text -Encoding utf8 -NoNewline
+
+          @'
+          //go:build windows
+
+          package mcpcore
+
+          import (
+          	"fmt"
+          	"strings"
+          	"syscall"
+          	"unicode/utf16"
+          	"unicode/utf8"
+          	"unsafe"
+          )
+
+          const windowsUTF8CodePage = 65001
+
+          var (
+          	commandOutputKernel32             = syscall.NewLazyDLL("kernel32.dll")
+          	commandOutputGetOEMCP             = commandOutputKernel32.NewProc("GetOEMCP")
+          	commandOutputMultiByteToWideChar = commandOutputKernel32.NewProc("MultiByteToWideChar")
+          )
+
+          func normalizeCommandOutput(data []byte) string {
+          	return normalizeCommandOutputWithCodePage(data, currentWindowsOEMCodePage())
+          }
+
+          func currentWindowsOEMCodePage() uint32 {
+          	codePage, _, _ := commandOutputGetOEMCP.Call()
+          	return uint32(codePage)
+          }
+
+          func normalizeCommandOutputWithCodePage(data []byte, codePage uint32) string {
+          	if len(data) == 0 {
+          		return ""
+          	}
+          	// Go, Node, PowerShell, and many modern tools already emit UTF-8.
+          	// Preserve valid UTF-8 byte-for-byte instead of applying an OEM decode.
+          	if utf8.Valid(data) {
+          		return string(data)
+          	}
+          	if codePage == 0 || codePage == windowsUTF8CodePage {
+          		return strings.ToValidUTF8(string(data), "\uFFFD")
+          	}
+          	decoded, err := decodeWindowsCodePage(data, codePage)
+          	if err != nil {
+          		return strings.ToValidUTF8(string(data), "\uFFFD")
+          	}
+          	return decoded
+          }
+
+          func decodeWindowsCodePage(data []byte, codePage uint32) (string, error) {
+          	if len(data) == 0 {
+          		return "", nil
+          	}
+          	required, _, callErr := commandOutputMultiByteToWideChar.Call(
+          		uintptr(codePage),
+          		0,
+          		uintptr(unsafe.Pointer(&data[0])),
+          		uintptr(len(data)),
+          		0,
+          		0,
+          	)
+          	if required == 0 {
+          		return "", fmt.Errorf("MultiByteToWideChar sizing failed for code page %d: %v", codePage, callErr)
+          	}
+          	wide := make([]uint16, int(required))
+          	written, _, callErr := commandOutputMultiByteToWideChar.Call(
+          		uintptr(codePage),
+          		0,
+          		uintptr(unsafe.Pointer(&data[0])),
+          		uintptr(len(data)),
+          		uintptr(unsafe.Pointer(&wide[0])),
+          		required,
+          	)
+          	if written == 0 {
+          		return "", fmt.Errorf("MultiByteToWideChar decode failed for code page %d: %v", codePage, callErr)
+          	}
+          	return string(utf16.Decode(wide[:int(written)])), nil
+          }
+          '@ | Set-Content -LiteralPath 'app/internal/mcpcore/command_output_windows.go' -Encoding utf8 -NoNewline
+
+          @'
+          //go:build !windows
+
+          package mcpcore
+
+          func normalizeCommandOutput(data []byte) string {
+          	return string(data)
+          }
+          '@ | Set-Content -LiteralPath 'app/internal/mcpcore/command_output_other.go' -Encoding utf8 -NoNewline
+
+          @'
+          //go:build windows
+
+          package mcpcore
+
+          import "testing"
+
+          func TestNormalizeCommandOutputPreservesUTF8(t *testing.T) {
+          	input := []byte("中文 UTF-8 output ✓")
+          	if got := normalizeCommandOutputWithCodePage(input, 936); got != string(input) {
+          		t.Fatalf("valid UTF-8 changed: got %q want %q", got, string(input))
+          	}
+          }
+
+          func TestNormalizeCommandOutputDecodesCP936(t *testing.T) {
+          	// "中文输出" encoded as Windows code page 936 / GBK.
+          	input := []byte{0xD6, 0xD0, 0xCE, 0xC4, 0xCA, 0xE4, 0xB3, 0xF6}
+          	if got := normalizeCommandOutputWithCodePage(input, 936); got != "中文输出" {
+          		t.Fatalf("CP936 decode mismatch: got %q", got)
+          	}
+          }
+
+          func TestNormalizeCommandOutputPreservesASCII(t *testing.T) {
+          	input := []byte("plain ASCII output\r\n")
+          	if got := normalizeCommandOutputWithCodePage(input, 437); got != string(input) {
+          		t.Fatalf("ASCII changed: got %q want %q", got, string(input))
+          	}
+          }
+          '@ | Set-Content -LiteralPath 'app/internal/mcpcore/command_output_windows_test.go' -Encoding utf8 -NoNewline
+
+          @'
+          # MCP DevDesk v0.12.36
+
+          ## Fixed
+
+          - Fixed mojibake in Windows command-session output when legacy console tools emit the system OEM code page (including CP936/GBK on Simplified Chinese Windows).
+          - Valid UTF-8 output from modern tools remains byte-for-byte unchanged before being returned through `exec_command` / `read_output`.
+          - Added Windows regression coverage for CP936 Chinese text, UTF-8 Chinese text, and ASCII output.
+
+          ## Scope
+
+          This patch release changes terminal-output decoding only. Project validation, code navigation, Screen Vision, updater behavior, and the v0.12.35 terminal session lifecycle remain unchanged.
+          '@ | Set-Content -LiteralPath 'docs/releases/v0.12.36.md' -Encoding utf8 -NoNewline
+
+          Remove-Item -LiteralPath '.github/workflows/patch-v01236-output.yml' -Force
+
+          gofmt -w app/internal/mcpcore/command_tools.go app/internal/mcpcore/command_output_windows.go app/internal/mcpcore/command_output_other.go app/internal/mcpcore/command_output_windows_test.go
+
+          Push-Location app
+          go test -mod=vendor ./...
+          if ($LASTEXITCODE -ne 0) { throw "go test failed with exit code $LASTEXITCODE" }
+          Pop-Location
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- app/internal/mcpcore/command_tools.go app/internal/mcpcore/command_output_windows.go app/internal/mcpcore/command_output_other.go app/internal/mcpcore/command_output_windows_test.go docs/releases/v0.12.36.md .github/workflows/patch-v01236-output.yml
+          git commit -m "fix: decode Windows terminal output as UTF-8"
+          git push origin HEAD:fix/v0.12.36-windows-output-encoding
