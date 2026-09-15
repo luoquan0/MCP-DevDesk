@@ -1,0 +1,57 @@
+name: Finalize v0.12.35 release
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  finalize:
+    if: github.head_ref == 'ops/finalize-v0.12.35' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    steps:
+      - name: Checkout verified main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify final main and repoint stable tag
+        shell: pwsh
+        run: |
+          $expected = "c2d8752ac056614dc310092ee23ee0a99aa21ffc"
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $expected) {
+            throw "main moved: expected $expected, got $actual"
+          }
+
+          $versionText = Get-Content -LiteralPath "app\internal\buildinfo\version.go" -Raw -Encoding utf8
+          if ($versionText -notmatch 'const Version = "0\.12\.35"') {
+            throw "final main is not version 0.12.35"
+          }
+
+          git fetch origin --tags --force
+          if ($LASTEXITCODE -ne 0) { throw "git fetch failed" }
+          git tag -f v0.12.35 $expected
+          if ($LASTEXITCODE -ne 0) { throw "git tag failed" }
+          git push origin refs/tags/v0.12.35 --force
+          if ($LASTEXITCODE -ne 0) { throw "tag push failed" }
+
+          $remote = (git ls-remote origin refs/tags/v0.12.35).Split("`t")[0].Trim()
+          if ($remote -ne $expected) {
+            throw "remote v0.12.35 points to $remote instead of $expected"
+          }
+          Write-Host "v0.12.35 now points to verified main $expected"
+
+      - name: Dispatch existing stable release workflow
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run release.yml --ref v0.12.35 -f bump=patch
+          if ($LASTEXITCODE -ne 0) { throw "release workflow dispatch failed" }
+          Write-Host "Release MCP DevDesk workflow dispatched for v0.12.35"
