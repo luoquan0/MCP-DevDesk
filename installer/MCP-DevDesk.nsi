@@ -31,7 +31,12 @@ UninstPage instfiles
 Section "MCP DevDesk" SEC_MAIN
   SetShellVarContext all
   SetOutPath "$INSTDIR"
-  File /r "${STAGEDIR}\*.*"
+  ; cloudflared has its own updater and version lifecycle. Preserve an
+  ; existing runtime during MCP DevDesk upgrades so setup cannot downgrade it.
+  File /r /x "cloudflared.exe" "${STAGEDIR}\*.*"
+  IfFileExists "$INSTDIR\cloudflared.exe" cloudflared_done
+  File /oname=cloudflared.exe "${STAGEDIR}\cloudflared.exe"
+cloudflared_done:
   WriteRegStr HKLM "Software\MCP DevDesk" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MCP DevDesk" "DisplayName" "MCP DevDesk"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MCP DevDesk" "DisplayVersion" "${VERSION}"
