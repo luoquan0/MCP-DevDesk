@@ -204,6 +204,13 @@ jobs:
             throw "NSIS setup build failed"
           }
 
+      - name: Test setup cloudflared preservation
+        shell: pwsh
+        run: |
+          .\tools\test-setup-cloudflared-preservation.ps1 `
+            -SetupPath ".\dist\MCP-DevDesk-Setup-x64.exe" `
+            -BundledCloudflaredPath ".\dist\MCP-DevDesk-Portable-amd64\cloudflared.exe"
+
       - name: Create SHA256 files
         shell: pwsh
         run: |
