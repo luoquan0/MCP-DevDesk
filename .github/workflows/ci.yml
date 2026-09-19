@@ -49,3 +49,34 @@ jobs:
         env:
           MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
         run: .\build.ps1 -Arch amd64 -RunTests
+
+      - name: Build NSIS setup smoke
+        shell: pwsh
+        run: |
+          $versionText = Get-Content -LiteralPath "app\internal\buildinfo\version.go" -Raw -Encoding utf8
+          $match = [regex]::Match($versionText, 'const Version = "([^"]+)"')
+          if (-not $match.Success) {
+            throw "Could not resolve source version for CI installer build"
+          }
+          $version = $match.Groups[1].Value
+          $stage = (Resolve-Path ".\dist\MCP-DevDesk-Portable-amd64").Path
+          $output = (Join-Path (Resolve-Path ".\dist").Path "MCP-DevDesk-Setup-CI-x64.exe")
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path -LiteralPath $makensis)) {
+            choco install nsis -y --no-progress
+          }
+          if (-not (Test-Path -LiteralPath $makensis)) {
+            throw "NSIS makensis.exe is unavailable"
+          }
+          & $makensis "/DVERSION=$version" "/DSTAGEDIR=$stage" "/DOUTFILE=$output" ".\installer\MCP-DevDesk.nsi"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output)) {
+            throw "NSIS CI setup build failed"
+          }
+
+      - name: Test setup cloudflared preservation
+        shell: pwsh
+        run: |
+          .\tools\test-setup-cloudflared-preservation.ps1 `
+            -SetupPath ".\dist\MCP-DevDesk-Setup-CI-x64.exe" `
+            -BundledCloudflaredPath ".\dist\MCP-DevDesk-Portable-amd64\cloudflared.exe"
+
