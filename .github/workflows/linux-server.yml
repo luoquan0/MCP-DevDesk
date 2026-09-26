@@ -1,0 +1,37 @@
+name: Linux Server
+on:
+  push:
+    branches: [feature/linux-server]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-server-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend
+        run: cd frontend && npm ci && npm run build
+      - name: Native Linux tests
+        working-directory: app
+        run: go test -mod=vendor -count=1 ./...
+      - name: Build Linux binaries
+        working-directory: app
+        run: |
+          mkdir -p ../dist/linux
+          go build -mod=vendor -o ../dist/linux/mcp-devdesk ./cmd/mcp-devdesk
+          go build -mod=vendor -o ../dist/linux/mcp-core ./cmd/mcp-core
+          go build -mod=vendor -o ../dist/linux/devdeskctl ./cmd/devdeskctl
