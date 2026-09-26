@@ -495,6 +495,7 @@ func (a *App) InstallCloudflaredUpdate(ctx context.Context) (CloudflaredUpdateRe
         return CloudflaredUpdateResult{}, err
     }
     tempPath := temp.Name()
+    if runtime.GOOS == "linux" { if err := temp.Chmod(0700); err != nil { temp.Close(); os.Remove(temp.Name()); return CloudflaredUpdateResult{}, err } }
     keepTemp := false
     defer func() {
         _ = temp.Close()
@@ -715,6 +716,7 @@ func (a *App) currentCloudflaredVersion(ctx context.Context, cfg model.Config) (
 }
 
 func cloudflaredAssetName() (string, error) {
+    if runtime.GOOS == "linux" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") { return "cloudflared-linux-" + runtime.GOARCH, nil }
     if runtime.GOOS != "windows" {
         return "", fmt.Errorf("当前自动更新仅支持 Windows，检测到 %s/%s", runtime.GOOS, runtime.GOARCH)
     }
