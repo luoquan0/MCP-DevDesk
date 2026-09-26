@@ -32,6 +32,13 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Verify Linux Go formatting and script syntax
+        run: |
+          set -euo pipefail
+          bad=$(find app/cmd app/internal -type f \( -name '*_linux.go' -o -name '*_linux_test.go' \) -print0 | xargs -0 gofmt -l)
+          if [[ -n "$bad" ]]; then printf 'gofmt required:\n%s\n' "$bad"; exit 1; fi
+          bash -n build-linux.sh tools/linux/install-service.sh tools/linux/install-linux.sh
+          python3 -c "import ast,pathlib; ast.parse(pathlib.Path('tools/smoke-linux.py').read_text())"
       - name: Frontend production build
         run: cd frontend && npm ci && npm run build
       - name: Native tests, binaries, verified runtime and acceptance tests
