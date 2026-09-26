@@ -10,7 +10,16 @@ concurrency:
   cancel-in-progress: true
 jobs:
   linux:
-    runs-on: ubuntu-24.04
+    name: linux-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -23,15 +32,86 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Frontend
+      - name: Frontend production build
         run: cd frontend && npm ci && npm run build
-      - name: Native Linux tests
-        working-directory: app
-        run: go test -mod=vendor -count=1 ./...
-      - name: Build Linux binaries
-        working-directory: app
+      - name: Native tests, binaries, verified runtime and acceptance tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash build-linux.sh
+      - name: Publish build evidence
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
-          mkdir -p ../dist/linux
-          go build -mod=vendor -o ../dist/linux/mcp-devdesk ./cmd/mcp-devdesk
-          go build -mod=vendor -o ../dist/linux/mcp-core ./cmd/mcp-core
-          go build -mod=vendor -o ../dist/linux/devdeskctl ./cmd/devdeskctl
+          python3 - <<'PY'
+          import json, os, pathlib
+          arch = os.environ['ARCH']
+          stage = pathlib.Path('dist/MCP-DevDesk-Linux-'+arch)
+          value = {'commit':os.environ['GITHUB_SHA'],'architecture':arch,'runner':os.environ['RUNNER_OS'],'workflow_run':os.environ['GITHUB_RUN_ID'],'cloudflared':json.loads((stage/'cloudflared-source.json').read_text()),'checks':['full go test -mod=vendor -count=1 -timeout=120s ./...','frontend production build','compiled core JSON-RPC smoke','compiled headless manager HTTP/authentication smoke','real stdin/output/process-tree kill/timeout/idempotence','Go and Node validation','lexical navigation','manual upgrade cloudflared/config/key preservation']}
+          pathlib.Path('dist/linux-'+arch+'-build-manifest.json').write_text(json.dumps(value,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/MCP-DevDesk-Linux-${{ matrix.arch }}.tar.gz
+            dist/MCP-DevDesk-Linux-${{ matrix.arch }}.tar.gz.sha256
+            dist/linux-${{ matrix.arch }}-build-manifest.json
+  windows:
+    name: windows-regression
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Guard public repository secrets
+        shell: pwsh
+        run: ./tools/check-public-release.ps1
+      - name: Full Windows build and tests
+        shell: pwsh
+        env:
+          MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./build.ps1 -Arch amd64 -RunTests
+  publish:
+    name: publish-linux-preview
+    needs: [linux, windows]
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[linux release]')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          merge-multiple: true
+          path: release
+      - name: Verify all release artifacts
+        run: |
+          set -euo pipefail
+          cd release
+          test -s MCP-DevDesk-Linux-amd64.tar.gz
+          test -s MCP-DevDesk-Linux-arm64.tar.gz
+          sha256sum -c MCP-DevDesk-Linux-amd64.tar.gz.sha256
+          sha256sum -c MCP-DevDesk-Linux-arm64.tar.gz.sha256
+      - name: Publish separate Linux prerelease (never Windows latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^const Version = "\([^"]*\)"/\1/p' app/internal/buildinfo/version_linux.go)
+          [[ "$version" =~ ^0\.12\.[0-9]+-linux\.[0-9]+$ ]]
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists; refusing to overwrite a published release" >&2
+            exit 1
+          fi
+          gh release create "$tag" release/* --target "$GITHUB_SHA" --title "MCP DevDesk Linux Server $tag" --notes-file docs/releases/v0.12.38-linux.1.md --prerelease --latest=false
