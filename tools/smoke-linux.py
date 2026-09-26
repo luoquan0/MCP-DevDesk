@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Native Linux acceptance tests. Only temporary copies receive runtime data."""
-import http.cookiejar
+from http.cookiejar import CookieJar
 import json
 import os
 from pathlib import Path
@@ -215,7 +215,7 @@ def manager_smoke(stage, root):
             ready(base+'/api/control/auth/status',process)
             http(base+'/api/status',expected=401)
             http(base+'/api/control/auth/login','POST',{'password':'incorrect'},expected=401)
-            jar = http.cookiejar.CookieJar(); opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+            jar = CookieJar(); opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
             http(base+'/api/control/auth/login','POST',{'password':password},opener=opener)
             status = http(base+'/api/status',opener=opener)[0]
             require('linux' in status['version'],'manager version does not identify Linux preview')
