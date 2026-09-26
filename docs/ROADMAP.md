@@ -152,3 +152,6 @@
 - [ ] 签名
 - [ ] 中文与英文界面
 
+## Linux Server preview
+
+First independent Linux branch: headless Web Control, native amd64/arm64 builds, encrypted local secret storage, process lifecycle and compiled-binary smoke tests. Linux desktop/Screen Vision and automatic in-app binary installation remain out of scope for this preview. No 0.13 AI Task/worktree/review architecture is introduced. See [LINUX.md](LINUX.md).

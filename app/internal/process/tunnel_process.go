@@ -39,7 +39,7 @@ func parseCloudflaredArguments(args []string) model.TunnelProcess {
 	}
 
 	if result.CredentialsPath != "" {
-		base := filepath.Base(strings.Trim(result.CredentialsPath, `"`))
+		base := filepath.Base(strings.ReplaceAll(strings.Trim(result.CredentialsPath, `"`), `\`, "/"))
 		result.TunnelID = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 	if runIndex >= 0 {

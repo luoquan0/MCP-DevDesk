@@ -46,6 +46,7 @@ func run() error {
 	}
 	rootFlag := flag.String("root", defaultRoot, "installation root (contains binaries and data/devdesk)")
 	initFlag := flag.Bool("init", false, "initialize Linux configuration and a web password; then exit")
+	showFlag := flag.Bool("show-mcp-credentials", false, "print MCP OAuth credentials to a private local terminal")
 	resetFlag := flag.Bool("reset-web-password", false, "reset web password while the server is stopped; then exit")
 	lan := flag.Bool("lan", false, "enable private IPv4 LAN access during --init")
 	port := flag.Int("web-port", 17861, "web port during --init")
@@ -76,6 +77,19 @@ func run() error {
 		if err := os.Setenv("MCP_DEVDESK_KEY_FILE", filepath.Join(data, "master.key")); err != nil {
 			return err
 		}
+	}
+	if *showFlag {
+		if _, err := os.Stat(filepath.Join(data, "secrets.json")); err != nil {
+			return errors.New("initialize this installation first")
+		}
+		values, err := secrets.NewStore(data).GetOrCreate()
+		if err != nil {
+			return err
+		}
+		fmt.Println("MCP owner password:", values.OwnerPassword)
+		fmt.Println("MCP client ID:", values.ClientID)
+		fmt.Println("MCP client secret:", values.ClientSecret)
+		return nil
 	}
 	lock, err := os.OpenFile(filepath.Join(data, "server.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {

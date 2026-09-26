@@ -128,3 +128,7 @@ Go 核心还会过滤命令子进程继承的常见敏感环境变量，包括�
 - 其他 Cloudflare Tunnel 不会被批量终止。
 - 进程命令行中的 `--token` 值在返回管理 API 前会被替换为 `***`。
 - 修改端口采用新 MCP 先就绪、旧 Tunnel 后关闭的顺序，降低公网连接中断时间。
+
+## Linux preview security
+
+The Linux entrypoint initializes password-protected Web Control and owner-only data. Linux secret envelopes use AES-256-GCM and a private 0600 master key; Windows DPAPI envelopes are not portable. Missing decryption keys, symlink keys and unsafe key permissions are rejected. The local API remains loopback-only and is a trusted-host interface, not a multi-user authorization boundary. Public servers should use SSH forwarding rather than exposing either manager port. Key plus ciphertext theft, root and same-user code execution are outside this protection. See [LINUX.md](LINUX.md).
