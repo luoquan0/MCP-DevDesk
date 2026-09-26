@@ -7,7 +7,6 @@ from pathlib import Path
 import re
 import secrets
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -65,6 +64,14 @@ def stopped(pid):
         return text[text.rfind(')')+2:].split()[0] == 'Z'
     except FileNotFoundError:
         return True
+
+
+def require_stopped(pid):
+    for _ in range(50):
+        if stopped(pid):
+            return
+        time.sleep(.05)
+    raise AssertionError(f'child process {pid} survived termination')
 
 
 def stop_process(process):
@@ -149,8 +156,11 @@ def core_smoke(stage, root):
             validation = rpc.tool('validate_project',{'waitMillis':30000})
             require(validation.get('validationPhases')==3,'Go validation phases failed')
             require(rpc.finish(validation).get('exitCode')==0,'Go validate_project failed')
-            validation = rpc.tool('validate_project',{'cwd':'node','waitMillis':30000})
+            validation = rpc.tool('validate_project',{'path':'node','waitMillis':30000})
+            require(validation.get('validationPhases')==3 and all(step['runtime']=='node' for step in validation['validationPlan']),'Node validation detection failed')
             require(rpc.finish(validation).get('exitCode')==0,'Node validate_project failed')
+            checks = rpc.tool('checks_run',{'path':'node','type':'test','waitMillis':30000})
+            require(checks.get('detectedRuntime')=='node' and rpc.finish(checks).get('exitCode')==0,'Node checks_run failed')
             script = 'printf "READY\\n"; IFS= read -r line; printf "ECHO:%s\\n" "$line"; sleep 300 & printf "CHILD:%s\\n" "$!"; wait'
             terminal = rpc.tool('exec_command',{'command':'/bin/sh','args':['-c',script],'waitMillis':100})
             sid = terminal['sessionId']; require(terminal['running'],'terminal is not running')
@@ -167,14 +177,15 @@ def core_smoke(stage, root):
             killed = rpc.tool('kill_session',{'sessionId':sid,'wait_ms':5000})
             require(killed.get('terminated') and killed.get('completed'),'kill_session failed')
             require(not rpc.tool('read_output',{'sessionId':sid}).get('running'),'read_output.running remains true')
-            require(stopped(child),'child process survived process-group kill')
+            require_stopped(child)
             killed = rpc.tool('kill_session',{'sessionId':sid})
             require(not killed.get('terminated') and killed.get('completed'),'repeated kill is not idempotent')
             timeout = rpc.tool('exec_command',{'command':'/bin/sh','args':['-c','sleep 300 & echo TIME_CHILD:$!; wait'],'timeoutSeconds':1,'waitMillis':100})
             timeout = rpc.finish(timeout,10)
             match = re.search(r'TIME_CHILD:(\d+)',timeout['output'])
-            require(match and stopped(int(match.group(1))),'timeout left a child process running')
-            print('PASS compiled Linux Core: JSON-RPC, Go/Node validation, lexical navigation, UTF-8 stdin/output, process-tree kill, timeout and idempotence')
+            require(match,'timeout test did not create a child')
+            require_stopped(int(match.group(1)))
+            print('PASS compiled Linux Core: JSON-RPC, Go/Node validation, lexical navigation, UTF-8 stdin/output, process-tree kill, timeout and idempotence',flush=True)
         finally:
             stop_process(process)
 
@@ -194,6 +205,8 @@ def manager_smoke(stage, root):
     require('linux-aes256-gcm-v1' in envelope and password not in envelope,'server password is not encrypted')
     require((install/'data/devdesk/master.key').stat().st_mode & 0o777 == 0o600,'master key permissions failed')
     env.pop('MCP_DEVDESK_WEB_PASSWORD')
+    credentials = subprocess.check_output([str(install/'mcp-devdesk'),'--root',str(install),'--show-mcp-credentials'],env=env,text=True)
+    require('MCP owner password:' in credentials and 'MCP client ID:' in credentials,'local credential retrieval failed')
     base = f'http://127.0.0.1:{web_port}'
     process = None
     with (root/'manager.log').open('wb') as log:
@@ -227,13 +240,11 @@ def manager_smoke(stage, root):
                     break
                 time.sleep(.1)
             require(not status['mcp']['running'],'manager failed to stop MCP child')
-            # The installation lock must also prevent an in-place upgrade.
             locked = subprocess.run(['bash',str(stage/'install-linux.sh'),str(install)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-            require(locked.returncode != 0,'installer upgraded a running service')
-            print('PASS compiled Linux Manager: init, encryption, authenticated Web UI, APIs, Origin guard, real MCP start/stop and installation lock')
+            require(locked.returncode != 0 and b'Stop the existing' in locked.stderr,'installer did not enforce running-service lock')
+            print('PASS compiled Linux Manager: init, encryption, authenticated Web UI, APIs, Origin guard, real MCP start/stop and installation lock',flush=True)
         finally:
             stop_process(process)
-    # Preserve an independently updated cloudflared byte-for-byte across upgrades.
     sentinel = b'independently-updated-cloudflared-test'
     (install/'cloudflared').write_bytes(sentinel)
     before_config = cfg_path.read_bytes()
@@ -247,15 +258,22 @@ def manager_smoke(stage, root):
     require((fresh/'cloudflared').read_bytes()==(stage/'cloudflared').read_bytes(),'fresh install failed to seed cloudflared')
     unit = subprocess.check_output(['bash',str(fresh/'install-service.sh'),'--print'],text=True)
     require('KillMode=control-group' in unit and 'ExecStart=' in unit,'systemd unit missing safe lifecycle settings')
-    print('PASS Linux installer: existing cloudflared/config/master key preserved; fresh install seeds runtime; systemd user unit generated')
+    print('PASS Linux installer: existing cloudflared/config/master key preserved; fresh install seeds runtime; systemd user unit generated',flush=True)
 
 
 def main():
     stage = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix='devdesk-linux-smoke-') as temp:
         root = Path(temp)
-        core_smoke(stage,root)
-        manager_smoke(stage,root)
+        try:
+            core_smoke(stage,root)
+            manager_smoke(stage,root)
+        except Exception:
+            for name in ('core.log','manager.log'):
+                path = root/name
+                if path.exists():
+                    print(name+':\n'+path.read_text(errors='replace')[-8000:],file=sys.stderr)
+            raise
     print('ALL LINUX BINARY ACCEPTANCE TESTS PASSED')
 
 
