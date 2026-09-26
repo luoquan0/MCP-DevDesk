@@ -427,18 +427,13 @@ func (m *Manager) stop(target *managedProcess) error {
 		return nil
 	}
 
-	kill := exec.Command("taskkill.exe", "/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F")
-	configureChildProcess(kill, true)
-	if output, err := kill.CombinedOutput(); err != nil {
-		text := strings.ToLower(string(output))
-		if !strings.Contains(text, "not found") && !strings.Contains(text, "no running instance") {
-			target.mu.Lock()
-			if target.cmd == cmd {
-				target.stopping = false
-			}
-			target.mu.Unlock()
-			return fmt.Errorf("stop PID %d: %w: %s", cmd.Process.Pid, err, strings.TrimSpace(string(output)))
+	if err := stopManagedCommand(cmd); err != nil {
+		target.mu.Lock()
+		if target.cmd == cmd {
+			target.stopping = false
 		}
+		target.mu.Unlock()
+		return err
 	}
 	return nil
 }

@@ -11,7 +11,10 @@ import (
 )
 
 func parseCloudflaredCommandLine(commandLine string) model.TunnelProcess {
-	args := splitWindowsCommandLine(commandLine)
+	return parseCloudflaredArguments(splitWindowsCommandLine(commandLine))
+}
+
+func parseCloudflaredArguments(args []string) model.TunnelProcess {
 	result := model.TunnelProcess{CommandLine: redactCloudflaredArguments(args)}
 	if len(args) == 0 {
 		return result

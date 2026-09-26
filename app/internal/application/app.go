@@ -149,6 +149,7 @@ func (a *App) TestUpdateProxy(ctx context.Context) (appupdater.ProxyTestResult, 
 }
 
 func (a *App) PrepareUpdate(ctx context.Context) (appupdater.PreparedUpdate, error) {
+	if runtime.GOOS == "linux" { return appupdater.PreparedUpdate{}, errors.New("Linux preview: stop the service and replace program files from the Linux tar.gz; preserve data, workspace and cloudflared") }
 	release, err := a.updates.Check(ctx)
 	if err != nil {
 		return appupdater.PreparedUpdate{}, err
@@ -160,6 +161,7 @@ func (a *App) PrepareUpdate(ctx context.Context) (appupdater.PreparedUpdate, err
 }
 
 func (a *App) LaunchPreparedUpdate(prepared appupdater.PreparedUpdate) error {
+	if runtime.GOOS == "linux" { return errors.New("Windows updater cannot be launched on Linux") }
 	currentExe, err := os.Executable()
 	if err != nil {
 		return err
