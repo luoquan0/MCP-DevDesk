@@ -1,0 +1,74 @@
+name: Finalize Linux source
+on:
+  push:
+    branches: [feature/linux-server]
+    paths: [.github/workflows/linux-finalize.yml]
+permissions:
+  contents: write
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/linux-server
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Finish source and documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import ast
+          p = Path('app/internal/process/tunnel_process.go')
+          s = p.read_text()
+          old = 'filepath.Base(strings.Trim(result.CredentialsPath, `"`))'
+          new = 'filepath.Base(strings.ReplaceAll(strings.Trim(result.CredentialsPath, `"`), `\u005c`, "/"))'
+          assert old in s
+          p.write_text(s.replace(old,new,1))
+          p = Path('app/cmd/mcp-devdesk-server/main_linux.go')
+          s = p.read_text()
+          old = 'resetFlag := flag.Bool('
+          assert old in s
+          s = s.replace(old, 'showFlag := flag.Bool("show-mcp-credentials", false, "print MCP OAuth credentials to a private local terminal")\n\tresetFlag := flag.Bool(',1)
+          old = 'lock, err := os.OpenFile('
+          assert old in s
+          s = s.replace(old, '''if *showFlag {
+              if _, err := os.Stat(filepath.Join(data, "secrets.json")); err != nil { return errors.New("initialize this installation first") }
+              values, err := secrets.NewStore(data).GetOrCreate()
+              if err != nil { return err }
+              fmt.Println("MCP owner password:", values.OwnerPassword)
+              fmt.Println("MCP client ID:", values.ClientID)
+              fmt.Println("MCP client secret:", values.ClientSecret)
+              return nil
+          }
+          lock, err := os.OpenFile(''',1)
+          p.write_text(s)
+          p = Path('docs/releases/v0.12.38-linux.1.md')
+          p.write_text(p.read_text().replace('persistent terminal sessions','long-running terminal sessions'))
+          sections = {
+            'README.md':'\n## Linux Server preview\n\nThe `feature/linux-server` branch provides native Linux Server v0.12.38-linux.1 (amd64/arm64), derived from Windows stable v0.12.37. It uses the same embedded browser UI without a desktop shell. See [Linux setup and security](docs/LINUX.md). This is a separate prerelease; Windows main/latest is unchanged.\n',
+            'docs/ARCHITECTURE.md':'\n## Linux Server preview architecture\n\nOn `feature/linux-server`, `cmd/mcp-devdesk-server` supplies a native headless entrypoint. It reuses application/web, serves authenticated Web Control on 17861, and manages native mcp-core/cloudflared children. Linux process groups and procfs replace Windows process/port enumeration; the Windows entrypoint is unchanged. See [LINUX.md](LINUX.md).\n',
+            'docs/SECURITY.md':'\n## Linux preview security\n\nThe Linux entrypoint initializes password-protected Web Control and owner-only data. Linux secret envelopes use AES-256-GCM and a private 0600 master key; Windows DPAPI envelopes are not portable. Missing decryption keys, symlink keys and unsafe key permissions are rejected. The local API remains loopback-only and is a trusted-host interface, not a multi-user authorization boundary. Public servers should use SSH forwarding rather than exposing either manager port. Key plus ciphertext theft, root and same-user code execution are outside this protection. See [LINUX.md](LINUX.md).\n',
+            'docs/CLOUDFLARE.md':'\n## Linux preview\n\nLinux packages use official cloudflared-linux-amd64/arm64 assets with verified official SHA256 digests and record the bundled provenance. The dedicated updater selects the native asset; Linux procfs provides process inventory. The manual Linux application upgrade helper preserves an existing cloudflared and all runtime data. Account authorization is still required; CI ships no credentials and does not create real account tunnels. See [LINUX.md](LINUX.md).\n',
+            'docs/DEVELOPMENT.md':'\n## Linux development branch\n\n`feature/linux-server` is derived from stable v0.12.37. Build frontend with `npm ci && npm run build`, then run `bash build-linux.sh` on native Linux with the repository Go toolchain, Python 3 and GitHub CLI. Both native amd64/arm64 tests and the existing full Windows build are release gates. See [LINUX.md](LINUX.md).\n',
+            'docs/RELEASE.md':'\n## Separate Linux preview channel\n\nThe Linux branch uses `.github/workflows/linux-server.yml` and Linux-specific `version_linux.go`. A `[linux release]` commit explicitly requests publishing only after native amd64/arm64 and Windows regression gates succeed. Artifacts are Linux tar.gz packages with SHA256 files and build manifests. The Release is prerelease=true and latest=false; no Windows stable tag is moved or replaced. Linux in-app binary installation is disabled for this preview; the manual helper preserves data and an existing cloudflared. See [LINUX.md](LINUX.md).\n',
+            'docs/ROADMAP.md':'\n## Linux Server preview\n\nFirst independent Linux branch: headless Web Control, native amd64/arm64 builds, encrypted local secret storage, process lifecycle and compiled-binary smoke tests. Linux desktop/Screen Vision and automatic in-app binary installation remain out of scope for this preview. No 0.13 AI Task/worktree/review architecture is introduced. See [LINUX.md](LINUX.md).\n'
+          }
+          for path, addition in sections.items():
+              p = Path(path); p.write_text(p.read_text().rstrip()+'\n'+addition)
+          ast.parse(Path('tools/smoke-linux.py').read_text())
+          PY
+          find app/cmd app/internal -type f \( -name '*_linux.go' -o -name '*_linux_test.go' \) -print0 | xargs -0 gofmt -w
+          gofmt -w app/internal/process/tunnel_process.go app/internal/process/stop_nonlinux.go
+          bash -n build-linux.sh tools/linux/install-service.sh tools/linux/install-linux.sh
+          git diff --check
+          rm .github/workflows/linux-finalize.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app README.md docs .github/workflows/linux-finalize.yml
+          git commit -m 'fix(linux): retain cross-platform path tests and finalize native source'
+          git push origin HEAD:feature/linux-server
