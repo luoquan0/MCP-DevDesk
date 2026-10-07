@@ -53,23 +53,44 @@ func (s *Store) GetOrCreate() (Values, error) {
 func (s *Store) getOrCreateLocked() (Values, error) {
 	if raw, err := os.ReadFile(s.path); err == nil {
 		var envelope secretEnvelope
-		if json.Unmarshal(raw, &envelope) == nil && envelope.Version == 2 && envelope.Data != "" {
+		if json.Unmarshal(raw, &envelope) == nil && envelope.Data != "" {
 			protected, decodeErr := base64.StdEncoding.DecodeString(envelope.Data)
 			if decodeErr != nil {
 				return Values{}, fmt.Errorf("decode stored secrets: %w", decodeErr)
 			}
-			plain, unprotectErr := unprotectData(protected)
-			if unprotectErr != nil {
-				return Values{}, fmt.Errorf("decrypt stored secrets: %w", unprotectErr)
+			var plain []byte
+			switch envelope.Version {
+			case portableSecretEnvelopeVersion:
+				if envelope.Protection != portableSecretProtection {
+					return Values{}, fmt.Errorf("unsupported portable secret protection %q", envelope.Protection)
+				}
+				plain, decodeErr = s.unprotectPortable(protected)
+				if decodeErr != nil {
+					return Values{}, fmt.Errorf("decrypt stored secrets: %w", decodeErr)
+				}
+			case 2:
+				plain, decodeErr = unprotectData(protected)
+				if decodeErr != nil {
+					return Values{}, fmt.Errorf("%w: decrypt stored secrets: %v", ErrLegacySecretsUnavailable, decodeErr)
+				}
+			default:
+				plain = nil
 			}
-			var values Values
-			if unmarshalErr := json.Unmarshal(plain, &values); unmarshalErr != nil {
-				return Values{}, fmt.Errorf("parse decrypted secrets: %w", unmarshalErr)
+			if plain != nil {
+				var values Values
+				if unmarshalErr := json.Unmarshal(plain, &values); unmarshalErr != nil {
+					return Values{}, fmt.Errorf("parse decrypted secrets: %w", unmarshalErr)
+				}
+				if validateErr := validate(values); validateErr != nil {
+					return Values{}, fmt.Errorf("validate decrypted secrets: %w", validateErr)
+				}
+				if envelope.Version == 2 {
+					if saveErr := s.saveLocked(values); saveErr != nil {
+						return Values{}, fmt.Errorf("migrate legacy protected secrets: %w", saveErr)
+					}
+				}
+				return values, nil
 			}
-			if validateErr := validate(values); validateErr != nil {
-				return Values{}, fmt.Errorf("validate decrypted secrets: %w", validateErr)
-			}
-			return values, nil
 		}
 		var values Values
 		if err := json.Unmarshal(raw, &values); err == nil && validate(values) == nil {
@@ -115,13 +136,13 @@ func (s *Store) saveLocked(values Values) error {
 	if err != nil {
 		return err
 	}
-	protected, err := protectData(plain)
+	protected, err := s.protectPortable(plain)
 	if err != nil {
 		return fmt.Errorf("encrypt secrets: %w", err)
 	}
 	envelope := secretEnvelope{
-		Version:    2,
-		Protection: protectionName(),
+		Version:    portableSecretEnvelopeVersion,
+		Protection: portableSecretProtection,
 		Data:       base64.StdEncoding.EncodeToString(protected),
 	}
 	raw, err := json.MarshalIndent(envelope, "", "  ")
