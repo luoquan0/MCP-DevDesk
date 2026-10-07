@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -56,7 +57,7 @@ func TestStoreGeneratesUpdatesAndPersistsSecrets(t *testing.T) {
 		t.Fatal("encrypted secrets file contains plaintext credential values")
 	}
 	var envelope secretEnvelope
-	if err := json.Unmarshal(stored, &envelope); err != nil || envelope.Version != 2 || envelope.Data == "" {
+	if err := json.Unmarshal(stored, &envelope); err != nil || envelope.Version != portableSecretEnvelopeVersion || envelope.Protection != portableSecretProtection || envelope.Data == "" {
 		t.Fatalf("unexpected secret envelope: %#v, %v", envelope, err)
 	}
 }
@@ -119,7 +120,7 @@ func TestPlaintextSecretsAreMigrated(t *testing.T) {
 		t.Fatal(err)
 	}
 	var envelope secretEnvelope
-	if err := json.Unmarshal(migrated, &envelope); err != nil || envelope.Version != 2 {
+	if err := json.Unmarshal(migrated, &envelope); err != nil || envelope.Version != portableSecretEnvelopeVersion {
 		t.Fatalf("plaintext file was not migrated: %s, %v", string(migrated), err)
 	}
 }
@@ -185,5 +186,98 @@ func TestUpdateRejectsInvalidTokenSecret(t *testing.T) {
 	invalid := "not-hex"
 	if _, err := store.Update(model.SecretUpdateRequest{TokenSecret: &invalid}); err == nil {
 		t.Fatal("expected invalid token secret to be rejected")
+	}
+}
+
+
+func TestPortableSecretsSurviveDirectoryCopy(t *testing.T) {
+	sourceDir := t.TempDir()
+	sourceStore := NewStore(sourceDir)
+	source, err := sourceStore.GetOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	password := "portable-web-password"
+	if err := sourceStore.SetWebControlPassword(password); err != nil {
+		t.Fatal(err)
+	}
+	source, err = sourceStore.GetOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetDir := t.TempDir()
+	for _, name := range []string{"secrets.json", portableMasterKeyName} {
+		raw, err := os.ReadFile(filepath.Join(sourceDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(targetDir, name), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	copied, err := NewStore(targetDir).GetOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(copied, source) {
+		t.Fatalf("portable copy changed secrets: got %#v want %#v", copied, source)
+	}
+	if copied.WebControlPassword != password {
+		t.Fatalf("portable web password = %q", copied.WebControlPassword)
+	}
+}
+
+func TestLegacyVersion2SecretsMigrateToPortableEnvelope(t *testing.T) {
+	dataDir := t.TempDir()
+	values := Values{
+		OwnerPassword: "legacy-owner-password",
+		ClientID: "legacy-client",
+		ClientSecret: "legacy-client-secret-value",
+		TokenSecret: strings.Repeat("ef", 32),
+		WebControlPassword: "legacy-web-password",
+	}
+	plain, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected, err := protectData(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.MarshalIndent(secretEnvelope{
+		Version: 2,
+		Protection: protectionName(),
+		Data: base64.StdEncoding.EncodeToString(protected),
+	}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dataDir, "secrets.json")
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := NewStore(dataDir).GetOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, values) {
+		t.Fatalf("legacy migration changed values: got %#v want %#v", loaded, values)
+	}
+	migratedRaw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope secretEnvelope
+	if err := json.Unmarshal(migratedRaw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Version != portableSecretEnvelopeVersion || envelope.Protection != portableSecretProtection {
+		t.Fatalf("legacy envelope was not migrated: %#v", envelope)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, portableMasterKeyName)); err != nil {
+		t.Fatalf("portable master key missing after migration: %v", err)
 	}
 }

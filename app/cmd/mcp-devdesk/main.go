@@ -237,17 +237,27 @@ func configureLogging(dataDir string, enabled devlogging.EnabledFunc) func() {
 }
 
 func locateRoot() (string, error) {
-	if configured := os.Getenv("MCP_DEVDESK_ROOT"); configured != "" {
+	configured := strings.TrimSpace(os.Getenv("MCP_DEVDESK_ROOT"))
+	if configured != "" {
 		return filepath.Abs(configured)
 	}
+	executable, _ := os.Executable()
+	cwd, _ := os.Getwd()
+	return locateRootFrom(executable, cwd)
+}
 
+// locateRootFrom deliberately prefers the executable directory over the
+// process working directory. Portable data lives under root/data/devdesk, so a
+// shortcut, terminal, or shell with a different CWD must not silently select a
+// different empty data directory.
+func locateRootFrom(executable, cwd string) (string, error) {
 	var candidates []string
-	if cwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, cwd, filepath.Dir(cwd))
-	}
-	if executable, err := os.Executable(); err == nil {
+	if strings.TrimSpace(executable) != "" {
 		dir := filepath.Dir(executable)
 		candidates = append(candidates, dir, filepath.Dir(dir))
+	}
+	if strings.TrimSpace(cwd) != "" {
+		candidates = append(candidates, cwd, filepath.Dir(cwd))
 	}
 
 	seen := map[string]bool{}
@@ -257,15 +267,33 @@ func locateRoot() (string, error) {
 			continue
 		}
 		seen[absolute] = true
-		if fileExists(filepath.Join(absolute, "coding-tools-mcp.exe")) && fileExists(filepath.Join(absolute, "cloudflared.exe")) {
+		if portableRootLooksValid(absolute) {
 			return absolute, nil
 		}
 	}
 
-	if len(candidates) > 0 {
-		return filepath.Abs(candidates[0])
+	if strings.TrimSpace(executable) != "" {
+		return filepath.Abs(filepath.Dir(executable))
+	}
+	if strings.TrimSpace(cwd) != "" {
+		return filepath.Abs(cwd)
 	}
 	return "", fmt.Errorf("cannot determine application root")
+}
+
+func portableRootLooksValid(root string) bool {
+	if info, err := os.Stat(filepath.Join(root, "data", "devdesk")); err == nil && info.IsDir() {
+		return true
+	}
+	if !fileExists(filepath.Join(root, "cloudflared.exe")) {
+		return false
+	}
+	for _, name := range []string{"mcp-core.exe", "mcp-core-amd64.exe", "mcp-core-arm64.exe", "coding-tools-mcp.exe"} {
+		if fileExists(filepath.Join(root, name)) {
+			return true
+		}
+	}
+	return false
 }
 
 func fileExists(path string) bool {

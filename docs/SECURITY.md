@@ -66,7 +66,7 @@ Go 核心会对直接文件工具实施同样的范围检查，并阻止通过 `
 - 未开启“允许局域网访问”时只监听 `127.0.0.1`；开启后监听 IPv4 网卡，但请求源仍必须是 loopback 或 RFC1918 私有地址。
 - 局域网请求的 Host 也必须是 localhost、loopback 或私有 IP；不接受公网 Host，降低 DNS rebinding 风险。
 - 完整管理 API 只在网页认证通过后可访问；未登录状态仅开放静态登录页与认证接口。若用户主动关闭网页密码认证，则同一局域网中的设备可直接使用完整管理界面，因此不建议在共享网络中关闭认证。
-- 可选密码认证的密码保存在 DPAPI 加密的 `secrets.json`；登录后使用 HttpOnly、SameSite=Strict Cookie，会话仅保存在内存并在进程重启、关闭网页控制、切换监听模式或修改密码后失效。
+- 可选密码认证的密码保存在 AES-256-GCM 加密的 `secrets.json`；密钥位于相对数据目录 `data/devdesk/master.key`。登录后使用 HttpOnly、SameSite=Strict Cookie，会话仅保存在内存并在进程重启、关闭网页控制、切换监听模式或修改密码后失效。
 - 网页控制登录按客户端 IP 限制连续失败次数；短时间内多次错误会返回 `429 Too Many Requests` 并临时锁定该 IP，降低局域网暴力破解风险。
 - 即使网页控制已经登录，OAuth owner password、client secret、Token signing secret 等原始凭据也只允许通过本机桌面管理接口读取、生成或修改；局域网页端不会暴露这些明文凭据。
 - 修改请求要求同源 Origin，避免其他网页借用浏览器会话跨站触发项目修改或服务操作。
@@ -75,14 +75,18 @@ Go 核心会对直接文件工具实施同样的范围检查，并阻止通过 `
 
 ## 4. 密钥存储
 
-Windows 正式版使用当前用户 DPAPI 加密 `secrets.json`：
+Windows 正式版从 v0.12.38 起使用 **AES-256-GCM + 相对数据目录主密钥**保护便携凭据。主密钥位于 `data/devdesk/master.key`，与 `secrets.json` 一起备份即可跨 Windows 重装迁移：
 
 - OAuth owner password
 - OAuth client secret
-- Cloudflare API Token
-- 其他长期凭证
+- Token signing secret
+- Web Control password
+- 动态注册的 OAuth 客户端
+- OAuth refresh tokens
 
-旧版明文 `secrets.json` 会在首次成功读取后自动迁移为加密信封。动态注册的 OAuth 客户端在 Windows 下同样使用当前用户 DPAPI 加密存储，因此轮换 Token 签名密钥不会导致客户端数据无法解密。
+旧版明文和当前 Windows 用户仍可解密的 DPAPI v2 文件会自动迁移。若 Windows 重装后旧 DPAPI 已不可解密，主 `secrets.json` 只会被隔离到 `data/devdesk/recovery/` 后重建凭据；项目、实例、外观和其他配置不会因此清空。旧动态 OAuth 客户端/刷新令牌遇到同样情况也会被隔离并要求客户端重新授权。
+
+`master.key` 与加密数据必须成套备份；只有 `secrets.json` 而丢失 `master.key` 时，新格式会失败关闭并要求恢复正确密钥，不会静默生成新密钥覆盖现有密文。Windows 代理密码仍使用当前用户 DPAPI；跨系统迁移后如无法解密，会清空该单个代理密码并要求重新输入。
 
 Cloudflare 凭据分两级处理：
 

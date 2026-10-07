@@ -50,7 +50,7 @@ func TestRefreshTokensAreEncryptedAndSurviveRestart(t *testing.T) {
 		t.Fatalf("refresh token file contains plaintext token: %s", string(stored))
 	}
 	var envelope oauthClientsEnvelope
-	if err := json.Unmarshal(stored, &envelope); err != nil || envelope.Version != 2 || envelope.Data == "" || envelope.Protection == "" {
+	if err := json.Unmarshal(stored, &envelope); err != nil || envelope.Version != 3 || envelope.Data == "" || envelope.Protection != "portable-aes256-gcm-v1" {
 		t.Fatalf("invalid encrypted refresh token envelope: %#v, %v", envelope, err)
 	}
 

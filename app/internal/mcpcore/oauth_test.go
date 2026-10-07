@@ -680,7 +680,7 @@ func TestDynamicOAuthClientsAreEncryptedAndReloaded(t *testing.T) {
 		t.Fatalf("OAuth client file contains plaintext credentials: %s", string(stored))
 	}
 	var envelope oauthClientsEnvelope
-	if err := json.Unmarshal(stored, &envelope); err != nil || envelope.Version != 2 || envelope.Data == "" || envelope.Protection == "" {
+	if err := json.Unmarshal(stored, &envelope); err != nil || envelope.Version != 3 || envelope.Data == "" || envelope.Protection != "portable-aes256-gcm-v1" {
 		t.Fatalf("invalid encrypted OAuth client envelope: %#v, %v", envelope, err)
 	}
 	reloaded, err := newOAuthServer(options)
