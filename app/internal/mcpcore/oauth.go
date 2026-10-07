@@ -24,6 +24,7 @@ import (
 	"time"
 
 	secretstore "mcp-devdesk/internal/secrets"
+	"mcp-devdesk/internal/statefiles"
 )
 
 const (
@@ -806,14 +807,33 @@ func (s *oauthServer) loadRefreshTokens() error {
 	var tokens map[string]refreshGrant
 	var envelope oauthClientsEnvelope
 	migrated := false
-	if json.Unmarshal(raw, &envelope) == nil && envelope.Version == 2 && envelope.Data != "" {
+	if json.Unmarshal(raw, &envelope) == nil && envelope.Data != "" {
 		ciphertext, decodeErr := base64.StdEncoding.DecodeString(envelope.Data)
 		if decodeErr != nil {
 			return fmt.Errorf("decode OAuth refresh token data: %w", decodeErr)
 		}
-		plain, unprotectErr := secretstore.UnprotectForCurrentUser(ciphertext)
-		if unprotectErr != nil {
-			return fmt.Errorf("decrypt OAuth refresh tokens: %w", unprotectErr)
+		var plain []byte
+		switch envelope.Version {
+		case secretstore.PortableEnvelopeVersion():
+			if envelope.Protection != secretstore.PortableProtectionName() {
+				return fmt.Errorf("unsupported OAuth refresh token protection %q", envelope.Protection)
+			}
+			plain, decodeErr = secretstore.UnprotectPortableForDir(filepath.Dir(s.refreshTokensPath), ciphertext)
+			if decodeErr != nil {
+				return fmt.Errorf("decrypt OAuth refresh tokens: %w", decodeErr)
+			}
+		case 2:
+			plain, decodeErr = secretstore.UnprotectForCurrentUser(ciphertext)
+			if decodeErr != nil {
+				if _, quarantineErr := statefiles.Quarantine(s.refreshTokensPath, "legacy-dpapi-unavailable"); quarantineErr != nil {
+					return fmt.Errorf("decrypt OAuth refresh tokens: %v; quarantine failed: %w", decodeErr, quarantineErr)
+				}
+				s.refreshTokens = make(map[string]refreshGrant)
+				return nil
+			}
+			migrated = true
+		default:
+			return fmt.Errorf("unsupported OAuth refresh token envelope version %d", envelope.Version)
 		}
 		if err := json.Unmarshal(plain, &tokens); err != nil {
 			return fmt.Errorf("parse decrypted OAuth refresh tokens: %w", err)
@@ -866,13 +886,13 @@ func (s *oauthServer) saveRefreshTokensLocked() error {
 	if err != nil {
 		return err
 	}
-	ciphertext, err := secretstore.ProtectForCurrentUser(plain)
+	ciphertext, err := secretstore.ProtectPortableForDir(filepath.Dir(s.refreshTokensPath), plain)
 	if err != nil {
 		return fmt.Errorf("encrypt OAuth refresh tokens: %w", err)
 	}
 	envelope := oauthClientsEnvelope{
-		Version:    2,
-		Protection: secretstore.ProtectionName(),
+		Version:    secretstore.PortableEnvelopeVersion(),
+		Protection: secretstore.PortableProtectionName(),
 		Data:       base64.StdEncoding.EncodeToString(ciphertext),
 	}
 	raw, err := json.MarshalIndent(envelope, "", "  ")
@@ -899,22 +919,42 @@ func (s *oauthServer) loadClients() error {
 	}
 	var clients []oauthClient
 	var envelope oauthClientsEnvelope
-	if json.Unmarshal(raw, &envelope) == nil && envelope.Version == 2 && envelope.Data != "" {
+	migrated := false
+	if json.Unmarshal(raw, &envelope) == nil && envelope.Data != "" {
 		ciphertext, decodeErr := base64.StdEncoding.DecodeString(envelope.Data)
 		if decodeErr != nil {
 			return fmt.Errorf("decode OAuth client data: %w", decodeErr)
 		}
-		plain, unprotectErr := secretstore.UnprotectForCurrentUser(ciphertext)
-		if unprotectErr != nil {
-			return fmt.Errorf("decrypt OAuth clients: %w", unprotectErr)
+		var plain []byte
+		switch envelope.Version {
+		case secretstore.PortableEnvelopeVersion():
+			if envelope.Protection != secretstore.PortableProtectionName() {
+				return fmt.Errorf("unsupported OAuth client protection %q", envelope.Protection)
+			}
+			plain, decodeErr = secretstore.UnprotectPortableForDir(filepath.Dir(s.clientsPath), ciphertext)
+			if decodeErr != nil {
+				return fmt.Errorf("decrypt OAuth clients: %w", decodeErr)
+			}
+		case 2:
+			plain, decodeErr = secretstore.UnprotectForCurrentUser(ciphertext)
+			if decodeErr != nil {
+				if _, quarantineErr := statefiles.Quarantine(s.clientsPath, "legacy-dpapi-unavailable"); quarantineErr != nil {
+					return fmt.Errorf("decrypt OAuth clients: %v; quarantine failed: %w", decodeErr, quarantineErr)
+				}
+				return nil
+			}
+			migrated = true
+		default:
+			return fmt.Errorf("unsupported OAuth client envelope version %d", envelope.Version)
 		}
 		if err := json.Unmarshal(plain, &clients); err != nil {
 			return fmt.Errorf("parse decrypted OAuth clients: %w", err)
 		}
 	} else if err := json.Unmarshal(raw, &clients); err != nil {
 		return fmt.Errorf("parse OAuth clients: %w", err)
+	} else {
+		migrated = true
 	}
-	migrated := envelope.Version != 2
 	if len(clients) > maxDynamicOAuthClients {
 		sort.Slice(clients, func(left, right int) bool {
 			return clients[left].CreatedAt > clients[right].CreatedAt
@@ -945,13 +985,13 @@ func (s *oauthServer) saveClientsLocked() error {
 	if err != nil {
 		return err
 	}
-	ciphertext, err := secretstore.ProtectForCurrentUser(plain)
+	ciphertext, err := secretstore.ProtectPortableForDir(filepath.Dir(s.clientsPath), plain)
 	if err != nil {
 		return fmt.Errorf("encrypt OAuth clients: %w", err)
 	}
 	envelope := oauthClientsEnvelope{
-		Version:    2,
-		Protection: secretstore.ProtectionName(),
+		Version:    secretstore.PortableEnvelopeVersion(),
+		Protection: secretstore.PortableProtectionName(),
 		Data:       base64.StdEncoding.EncodeToString(ciphertext),
 	}
 	raw, err := json.MarshalIndent(envelope, "", "  ")
