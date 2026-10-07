@@ -1,6 +1,7 @@
 package startup
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	instancestore "mcp-devdesk/internal/instances"
 	devlogging "mcp-devdesk/internal/logging"
 	projectstore "mcp-devdesk/internal/projects"
+	"mcp-devdesk/internal/secrets"
 	"mcp-devdesk/internal/statefiles"
 	appupdater "mcp-devdesk/internal/updater"
 )
@@ -32,6 +34,13 @@ func Prepare(rootDir, dataDir string) (Report, error) {
 		return report, err
 	}
 	cfg := cfgStore.Get()
+
+	if recovered, err := recoverSecrets(dataDir); err != nil {
+		return report, err
+	} else if recovered {
+		report.Recovered = append(report.Recovered, "旧 Windows DPAPI 凭据无法解密，已隔离旧 secrets.json 并重新生成便携凭据；项目和其他配置均已保留")
+	}
+
 	if !directoryExists(cfg.Workspace) {
 		oldWorkspace := cfg.Workspace
 		_, _ = statefiles.Backup(filepath.Join(dataDir, "config.json"), "workspace-missing")
@@ -77,6 +86,24 @@ func Prepare(rootDir, dataDir string) (Report, error) {
 		_ = devlogging.AppendLine(filepath.Join(dataDir, "logs", "recovery.log"), []byte(fmt.Sprintf("[%s] %s", time.Now().Format(time.RFC3339), message)))
 	}
 	return report, nil
+}
+
+func recoverSecrets(dataDir string) (bool, error) {
+	store := secrets.NewStore(dataDir)
+	if _, err := store.GetOrCreate(); err == nil {
+		return false, nil
+	} else if !errors.Is(err, secrets.ErrLegacySecretsUnavailable) {
+		return false, err
+	}
+
+	path := filepath.Join(dataDir, "secrets.json")
+	if _, err := statefiles.Quarantine(path, "legacy-dpapi-unavailable"); err != nil {
+		return false, fmt.Errorf("quarantine legacy secrets: %w", err)
+	}
+	if _, err := secrets.NewStore(dataDir).GetOrCreate(); err != nil {
+		return false, fmt.Errorf("create replacement portable secrets: %w", err)
+	}
+	return true, nil
 }
 
 func recoverAppearance(dataDir string) (bool, error) {
