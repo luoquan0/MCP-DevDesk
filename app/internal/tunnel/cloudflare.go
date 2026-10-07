@@ -19,7 +19,9 @@ import (
 
 var uuidPattern = regexp.MustCompile(`(?i)[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`)
 
-type Client struct{}
+type Client struct {
+	runOverride func(context.Context, model.Config, ...string) (string, error)
+}
 
 func NewClient() *Client { return &Client{} }
 
@@ -78,6 +80,7 @@ func (c *Client) Configure(ctx context.Context, cfg model.Config, request model.
 	}
 
 	credentials := ""
+	replacedMissingCredentials := false
 	if !found {
 		var createOutput string
 		tunnelID, credentials, createOutput, err = c.createTunnel(commandCtx, cfg, request.TunnelName)
@@ -86,6 +89,17 @@ func (c *Client) Configure(ctx context.Context, cfg model.Config, request model.
 		}
 	} else {
 		credentials = processmanager.CredentialsPath(tunnelID)
+		if _, statErr := os.Stat(credentials); statErr != nil {
+			if !errors.Is(statErr, os.ErrNotExist) {
+				return model.ConfigureTunnelResult{}, fmt.Errorf("检查 Tunnel 凭据文件失败: %s: %w", credentials, statErr)
+			}
+			staleTunnelID := tunnelID
+			tunnelID, credentials, _, err = c.replaceTunnelWithMissingCredentials(commandCtx, cfg, request.TunnelName, staleTunnelID)
+			if err != nil {
+				return model.ConfigureTunnelResult{}, err
+			}
+			replacedMissingCredentials = true
+		}
 	}
 
 	if credentials == "" {
@@ -105,6 +119,10 @@ func (c *Client) Configure(ctx context.Context, cfg model.Config, request model.
 		return model.ConfigureTunnelResult{}, routeErr
 	}
 
+	message := "Tunnel 和 DNS 已配置完成，公网 DNS 验证通过"
+	if replacedMissingCredentials {
+		message = "检测到同名 Tunnel 的本地凭据已丢失，已自动重建 Tunnel、生成新凭据并重新绑定 DNS"
+	}
 	return model.ConfigureTunnelResult{
 		TunnelID:        tunnelID,
 		TunnelName:      request.TunnelName,
@@ -112,7 +130,7 @@ func (c *Client) Configure(ctx context.Context, cfg model.Config, request model.
 		CredentialsPath: credentials,
 		RemoteMCPURL:    "https://" + request.Domain + "/mcp",
 		AuthorizeURL:    "https://" + request.Domain + "/oauth/authorize",
-		Message:         "Tunnel 和 DNS 已配置完成，公网 DNS 验证通过",
+		Message:         message,
 	}, nil
 }
 
@@ -136,6 +154,47 @@ func credentialsFileFlagUnsupported(output string, err error) bool {
 		strings.Contains(lower, "flag provided but not defined") ||
 		strings.Contains(lower, "unknown shorthand flag") ||
 		strings.Contains(lower, "no such flag")
+}
+
+func tunnelNameConflict(output string, err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "already exists") ||
+		strings.Contains(lower, "name already exists") ||
+		strings.Contains(lower, "already has a tunnel named") ||
+		strings.Contains(lower, "tunnel with name")
+}
+
+func (c *Client) replaceTunnelWithMissingCredentials(ctx context.Context, cfg model.Config, name, staleTunnelID string) (string, string, string, error) {
+	deleteOutput, err := c.deleteTunnelByID(ctx, cfg, staleTunnelID)
+	if err != nil {
+		return "", "", deleteOutput, fmt.Errorf("发现同名 Tunnel %q，但本地凭据已丢失；自动删除旧 Tunnel 失败: %w", name, err)
+	}
+
+	combinedOutput := strings.TrimSpace(deleteOutput)
+	for attempt := 0; attempt < 4; attempt++ {
+		tunnelID, credentials, createOutput, createErr := c.createTunnel(ctx, cfg, name)
+		if strings.TrimSpace(createOutput) != "" {
+			if combinedOutput != "" {
+				combinedOutput += "\n"
+			}
+			combinedOutput += createOutput
+		}
+		if createErr == nil {
+			return tunnelID, credentials, combinedOutput, nil
+		}
+		if !tunnelNameConflict(createOutput, createErr) || attempt == 3 {
+			return "", "", combinedOutput, fmt.Errorf("旧 Tunnel 已删除，但使用原名称 %q 重建失败，请再次点击自动配置: %w; %s", name, createErr, compactOutput(createOutput))
+		}
+		select {
+		case <-ctx.Done():
+			return "", "", combinedOutput, ctx.Err()
+		case <-time.After(750 * time.Millisecond):
+		}
+	}
+	return "", "", combinedOutput, errors.New("重建 Tunnel 失败")
 }
 
 func (c *Client) createTunnel(ctx context.Context, cfg model.Config, name string) (string, string, string, error) {
@@ -313,6 +372,18 @@ func deleteTunnelArguments(tunnelID string) []string {
 	return []string{"tunnel", "delete", "--force", tunnelID}
 }
 
+func (c *Client) deleteTunnelByID(ctx context.Context, cfg model.Config, tunnelID string) (string, error) {
+	output, err := c.run(ctx, cfg, deleteTunnelArguments(tunnelID)...)
+	if err != nil {
+		lower := strings.ToLower(output)
+		if !strings.Contains(lower, "not found") && !strings.Contains(lower, "does not exist") && !strings.Contains(lower, "no tunnel") && !strings.Contains(lower, "already been deleted") && !strings.Contains(lower, "already deleted") {
+			return output, fmt.Errorf("删除 Cloudflare Tunnel 失败: %w; %s", err, compactOutput(output))
+		}
+	}
+	_ = os.Remove(processmanager.CredentialsPath(tunnelID))
+	return output, nil
+}
+
 // Delete removes the named Tunnel from Cloudflare. DNS hostnames are managed
 // separately by Cloudflare, so callers must explicitly remove the DNS record first.
 func (c *Client) Delete(ctx context.Context, cfg model.Config) (string, error) {
@@ -328,15 +399,7 @@ func (c *Client) Delete(ctx context.Context, cfg model.Config) (string, error) {
 	}
 	commandCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	output, err := c.run(commandCtx, cfg, deleteTunnelArguments(tunnelID)...)
-	if err != nil {
-		lower := strings.ToLower(output)
-		if !strings.Contains(lower, "not found") && !strings.Contains(lower, "does not exist") && !strings.Contains(lower, "no tunnel") && !strings.Contains(lower, "already been deleted") && !strings.Contains(lower, "already deleted") {
-			return output, fmt.Errorf("删除 Cloudflare Tunnel 失败: %w; %s", err, compactOutput(output))
-		}
-	}
-	_ = os.Remove(processmanager.CredentialsPath(tunnelID))
-	return output, nil
+	return c.deleteTunnelByID(commandCtx, cfg, tunnelID)
 }
 
 func waitForDNS(ctx context.Context, domain string, timeout time.Duration) (bool, error) {
@@ -420,6 +483,9 @@ func (c *Client) findTunnel(ctx context.Context, cfg model.Config, name string) 
 }
 
 func (c *Client) run(ctx context.Context, cfg model.Config, args ...string) (string, error) {
+	if c.runOverride != nil {
+		return c.runOverride(ctx, cfg, args...)
+	}
 	cmd := exec.CommandContext(ctx, cfg.CloudflaredExecutable, args...)
 	cmd.Env = proxyEnvironment(cfg)
 	configureCommand(cmd)
