@@ -28,6 +28,19 @@ var (
 	ErrLegacySecretsUnavailable = errors.New("legacy platform-bound secrets are unavailable")
 )
 
+
+func PortableEnvelopeVersion() int { return portableSecretEnvelopeVersion }
+
+func PortableProtectionName() string { return portableSecretProtection }
+
+func ProtectPortableForDir(dataDir string, value []byte) ([]byte, error) {
+	return NewStore(dataDir).protectPortable(value)
+}
+
+func UnprotectPortableForDir(dataDir string, value []byte) ([]byte, error) {
+	return NewStore(dataDir).unprotectPortable(value)
+}
+
 func (s *Store) portableMasterKeyPath() string {
 	return filepath.Join(filepath.Dir(s.path), portableMasterKeyName)
 }
