@@ -263,3 +263,7 @@ MCP DevDesk 的更新源由正式构建内置，界面不再显示或编辑 GitH
 ### 代理连通性测试
 
 更新代理支持只填写 IP/主机名和端口，程序自动尝试 HTTP CONNECT 与无认证 SOCKS5。设置页提供“测试代理”，测试请求有独立短超时并显示识别到的协议与耗时；错误代理不会再让“检查更新”长时间看起来无响应。代理仅用于 GitHub Release 元数据、SHA256 和更新包下载。
+
+## Separate Linux preview channel
+
+The Linux branch uses `.github/workflows/linux-server.yml` and Linux-specific `version_linux.go`. A `[linux release]` commit explicitly requests publishing only after native amd64/arm64 and Windows regression gates succeed. Artifacts are Linux tar.gz packages with SHA256 files and build manifests. The Release is prerelease=true and latest=false; no Windows stable tag is moved or replaced. Linux in-app binary installation is disabled for this preview; the manual helper preserves data and an existing cloudflared. See [LINUX.md](LINUX.md).

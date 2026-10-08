@@ -196,3 +196,7 @@ docs/RELEASE.md
 ```
 
 没有用户明确发版指令时，只提交源码，不创建 Release。
+
+## Linux development branch
+
+`feature/linux-server` is derived from stable v0.12.37. Build frontend with `npm ci && npm run build`, then run `bash build-linux.sh` on native Linux with the repository Go toolchain, Python 3 and GitHub CLI. Both native amd64/arm64 tests and the existing full Windows build are release gates. See [LINUX.md](LINUX.md).
