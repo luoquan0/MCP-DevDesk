@@ -113,7 +113,7 @@ Go 核心还会过滤命令子进程继承的常见敏感环境变量，包括�
 
 ## 6. OAuth 与远程访问
 
-- 授权码流程必须使用 PKCE S256。
+- 授权码流程必须使用 PKCE S256。授权页面的表单使用配置的绝对 OAuth issuer 授权端点；CSP `form-action` 仅允许页面自身、已验证的 issuer origin 和已验证的回调 origin，以兼容跨实例登录入口及 Chrome 对表单 302 重定向的检查，禁止通配符。
 - 内置静态客户端允许基于 PKCE 的 public-client Token 交换；客户端如果主动提交 Client Secret，则仍必须与本机保存值一致。
 - 内置静态客户端允许两种受限的自动生成回调：`https://chatgpt.com/connector/oauth/<id>` 和 `https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-<hex-id>`。当用户已配置上述任一家族回调时，允许这两类生成式回调适配不同的 MCP 应用；任意第三方回调仍要求事先精确登记。Google 回调仅允许精确域名、HTTPS、无端口、无查询或片段，并验证生成 ID。动态注册客户端始终要求回调精确匹配其注册列表。
 - 授权服务器声明并接受 `offline_access`，继续为远程 MCP 会话签发可轮换 Refresh Token。

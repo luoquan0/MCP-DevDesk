@@ -377,8 +377,9 @@ func (s *oauthServer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", authorizationContentSecurityPolicy(request.redirectURI))
+		w.Header().Set("Content-Security-Policy", authorizationContentSecurityPolicy(s.issuer, request.redirectURI))
 		_ = authorizationPage.Execute(w, map[string]string{
+			"AuthorizeURL":        s.issuer + "/oauth/authorize",
 			"ClientName":          request.clientName,
 			"ClientID":            request.clientID,
 			"RedirectURI":         request.redirectURI,
@@ -427,14 +428,34 @@ func (s *oauthServer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirect.String(), http.StatusFound)
 }
 
-func authorizationContentSecurityPolicy(redirectURI string) string {
-	policy := "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
-	if validateRedirectURI(redirectURI) == nil {
-		if origin := normalizeOrigin(redirectURI); origin != "" {
-			policy += " " + origin
+func authorizationContentSecurityPolicy(issuer, redirectURI string) string {
+	sources := []string{"'self'"}
+	appendOrigin := func(value string) {
+		origin := normalizeOrigin(value)
+		if origin == "" {
+			return
 		}
+		for _, existing := range sources {
+			if existing == origin {
+				return
+			}
+		}
+		sources = append(sources, origin)
 	}
-	return policy + "; frame-ancestors 'none'; base-uri 'none'"
+
+	// The authorization page can be reached through a different public host
+	// than the OAuth issuer (for example, multiple MCP instances behind a
+	// shared login flow). Allow the configured issuer as the form POST target.
+	if _, err := canonicalBaseURL(issuer); err == nil {
+		appendOrigin(issuer)
+	}
+	// Chrome may enforce form-action on the 302 navigation after a form POST.
+	// Allow only the already-validated callback origin; never use a wildcard.
+	if validateRedirectURI(redirectURI) == nil {
+		appendOrigin(redirectURI)
+	}
+	return "default-src 'none'; style-src 'unsafe-inline'; form-action " +
+		strings.Join(sources, " ") + "; frame-ancestors 'none'; base-uri 'none'"
 }
 
 type validatedAuthorizationRequest struct {
@@ -1261,7 +1282,7 @@ main{width:min(430px,calc(100vw - 40px));padding:30px;border:1px solid #dddfe4;b
 h1{margin:0 0 8px;font-size:24px}p{color:#666;line-height:1.6}code{word-break:break-all;font-size:12px}label{display:grid;gap:8px;margin-top:22px;font-weight:600}
 input{height:44px;padding:0 13px;border:1px solid #cfd2d8;border-radius:12px;font:inherit}button{width:100%;height:46px;margin-top:18px;border:0;border-radius:12px;background:#111;color:#fff;font-weight:650;cursor:pointer}
 </style></head><body><main><h1>授权 MCP 连接</h1><p><strong>{{.ClientName}}</strong> 请求访问 MCP DevDesk。请输入设置页中的所有者密码。</p>
-<p>资源：<code>{{.Resource}}</code></p><form method="post" action="/oauth/authorize">
+<p>资源：<code>{{.Resource}}</code></p><form method="post" action="{{.AuthorizeURL}}">
 <input type="hidden" name="response_type" value="code"><input type="hidden" name="client_id" value="{{.ClientID}}"><input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
 <input type="hidden" name="state" value="{{.State}}"><input type="hidden" name="code_challenge" value="{{.CodeChallenge}}"><input type="hidden" name="code_challenge_method" value="{{.CodeChallengeMethod}}">
 <input type="hidden" name="resource" value="{{.Resource}}"><input type="hidden" name="scope" value="{{.Scope}}"><label>所有者密码<input type="password" name="owner_password" required autocomplete="current-password"></label><button type="submit">允许连接</button></form></main></body></html>`))
