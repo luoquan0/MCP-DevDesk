@@ -68,7 +68,7 @@ func TestOAuthPKCEAndProtectedMCP(t *testing.T) {
 		t.Fatalf("authorize page status = %d, body = %s", authorizePageRecorder.Code, authorizePageRecorder.Body.String())
 	}
 	authorizeCSP := authorizePageRecorder.Header().Get("Content-Security-Policy")
-	if !strings.Contains(authorizeCSP, "form-action 'self' http://127.0.0.1:43210") {
+	if !strings.Contains(authorizeCSP, "form-action 'self' http://127.0.0.1:18765 http://127.0.0.1:43210") {
 		t.Fatalf("authorize page CSP does not allow validated redirect origin: %q", authorizeCSP)
 	}
 
