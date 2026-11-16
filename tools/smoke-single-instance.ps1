@@ -64,6 +64,7 @@ try {
     $config.adminPort = 17999
     $configJSON = $config | ConvertTo-Json -Depth 20
     [IO.File]::WriteAllText($configPath, $configJSON, (New-Object Text.UTF8Encoding($false)))
+    $beforeHash = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $secondary = Start-TestManager
     if (-not $secondary.WaitForExit(8000)) {
@@ -72,6 +73,9 @@ try {
     }
     if ($secondary.ExitCode -ne 0) {
         throw "secondary manager exit code = $($secondary.ExitCode)"
+    }
+    if ((Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash -ne $beforeHash) {
+        throw 'secondary launch rewrote the active manager config.json'
     }
 
     $windowDeadline = (Get-Date).AddSeconds(15)

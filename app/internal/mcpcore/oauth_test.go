@@ -284,6 +284,65 @@ func TestOAuthStaticClientSupportsMultipleChatGPTInstances(t *testing.T) {
 	}
 }
 
+func TestGoogleGeneratedMCPCallbackForStaticClient(t *testing.T) {
+	const (
+		googleCallback = "https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-4ccdd936a638ba9e826c5355"
+		chatGPTCallback = "https://chatgpt.com/connector/oauth/first-app"
+	)
+	scenarios := []struct {
+		name       string
+		registered []string
+		callback   string
+		allowed    bool
+	}{
+		{"chatgpt-to-google", []string{chatGPTCallback}, googleCallback, true},
+		{"google-to-google", []string{googleCallback}, "https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-aabbccddeeff001122334455", true},
+		{"google-to-chatgpt", []string{googleCallback}, "https://chatgpt.com/connector/oauth/second-app", true},
+		{"exact-registration", []string{"https://example.test/callback"}, googleCallback, false},
+		{"wrong-host", []string{googleCallback}, "https://oauth-redirect.googleusercontent.com.evil.test/r/user_bound_custom-mcp-4ccdd936a638ba9e826c5355", false},
+		{"unexpected-path", []string{googleCallback}, "https://oauth-redirect.googleusercontent.com/r/unrelated-4ccdd936a638ba9e826c5355", false},
+		{"invalid-id", []string{googleCallback}, "https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-invalid!", false},
+		{"custom-port", []string{googleCallback}, "https://oauth-redirect.googleusercontent.com:444/r/user_bound_custom-mcp-4ccdd936a638ba9e826c5355", false},
+		{"query", []string{googleCallback}, googleCallback + "?next=evil", false},
+		{"fragment", []string{googleCallback}, googleCallback + "#fragment", false},
+		{"encoded-path", []string{googleCallback}, "https://oauth-redirect.googleusercontent.com/r/%75ser_bound_custom-mcp-4ccdd936a638ba9e826c5355", false},
+		{"unrelated-https", []string{googleCallback}, "https://attacker.test/callback", false},
+	}
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			server := &oauthServer{
+				staticClientID:     "mcp-devdesk",
+				staticRedirectURIs: scenario.registered,
+			}
+			client := oauthClient{ClientID: "mcp-devdesk", RedirectURIs: scenario.registered}
+			if got := server.redirectURIAllowed(client, scenario.callback); got != scenario.allowed {
+				t.Fatalf("redirectURIAllowed(%q) = %v, want %v", scenario.callback, got, scenario.allowed)
+			}
+			client.ClientID = "dynamic-client"
+			if server.redirectURIAllowed(client, scenario.callback) && !containsExact(client.RedirectURIs, scenario.callback) {
+				t.Fatal("dynamic client accepted an unregistered callback")
+			}
+		})
+	}
+}
+
+func TestGoogleMCPCallbackDynamicRegistration(t *testing.T) {
+	const callback = "https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-4ccdd936a638ba9e826c5355"
+	server := mustNewServer(t, Options{Workspace: t.TempDir(), OAuth: OAuthOptions{
+		Enabled: true, Issuer: "https://mcp.example.test", Resource: "https://mcp.example.test/mcp",
+		OwnerPassword: "owner-password-long-enough", ClientID: "mcp-devdesk",
+		TokenSecret: strings.Repeat("ab", 32), DataDir: t.TempDir(),
+	}})
+	body, _ := json.Marshal(map[string]any{"redirect_uris": []string{callback}, "token_endpoint_auth_method": "none"})
+	request := httptest.NewRequest(http.MethodPost, "/oauth/register", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated || !strings.Contains(recorder.Body.String(), callback) {
+		t.Fatalf("Google callback registration status %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestOAuthStaticClientRejectsWrongOptionalSecret(t *testing.T) {
 	const issuer = "http://127.0.0.1:18765"
 	server := mustNewServer(t, Options{

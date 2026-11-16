@@ -58,3 +58,33 @@ func TestLocateRootPrefersExistingPortableDataBesideExecutable(t *testing.T) {
 		t.Fatalf("root = %q, want data directory beside executable %q", got, exeRoot)
 	}
 }
+
+func TestExistingDashboardURLReadsConfigWithoutChangingIt(t *testing.T) {
+	dataDir := t.TempDir()
+	configPath := filepath.Join(dataDir, "config.json")
+	original := []byte("{\"adminHost\":\"127.0.0.1\",\"adminPort\":17999,\"workspace\":\"keep\"}\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := existingDashboardURL(dataDir); got != "http://127.0.0.1:17999" {
+		t.Fatalf("existing dashboard URL = %q", got)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(original) {
+		t.Fatalf("secondary launch modified config.json: %q", string(after))
+	}
+}
+
+func TestExistingDashboardURLFallsBackForBrokenConfig(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "config.json"), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := existingDashboardURL(dataDir); got != "http://127.0.0.1:17860" {
+		t.Fatalf("fallback dashboard URL = %q", got)
+	}
+}
+

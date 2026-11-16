@@ -4,6 +4,8 @@ package desktop
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 
 	"mcp-devdesk/internal/model"
@@ -21,6 +23,7 @@ func New(url, _, _ string, _ Callbacks) Controller {
 func AcquireSingleInstance() (bool, func(), error) { return false, func() {}, nil }
 func OpenDashboard(url string) error               { return exec.Command("xdg-open", url).Start() }
 func SignalExistingInstance() bool                 { return false }
+func ShowStartupError(message string)               { fmt.Fprintln(os.Stderr, message) }
 func (c *otherController) Start() error            { return nil }
 func (c *otherController) Open() error             { return OpenDashboard(c.url) }
 func (c *otherController) PickFolder(_, _ string) (string, bool, error) {
