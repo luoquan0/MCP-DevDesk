@@ -68,7 +68,7 @@ func TestOAuthPKCEAndProtectedMCP(t *testing.T) {
 		t.Fatalf("authorize page status = %d, body = %s", authorizePageRecorder.Code, authorizePageRecorder.Body.String())
 	}
 	authorizeCSP := authorizePageRecorder.Header().Get("Content-Security-Policy")
-	if !strings.Contains(authorizeCSP, "form-action 'self' http://127.0.0.1:43210") {
+	if !strings.Contains(authorizeCSP, "form-action 'self' http://127.0.0.1:18765 http://127.0.0.1:43210") {
 		t.Fatalf("authorize page CSP does not allow validated redirect origin: %q", authorizeCSP)
 	}
 
@@ -371,18 +371,87 @@ func TestOAuthStaticClientRejectsWrongOptionalSecret(t *testing.T) {
 	}
 }
 
-func TestAuthorizationContentSecurityPolicyUsesOnlyValidatedRedirectOrigin(t *testing.T) {
-	policy := authorizationContentSecurityPolicy("https://chatgpt.com/connector/oauth/callback?state=abc")
-	if !strings.Contains(policy, "form-action 'self' https://chatgpt.com") {
-		t.Fatalf("validated HTTPS redirect origin missing from policy: %q", policy)
+func TestAuthorizationContentSecurityPolicyAllowsIssuerAndOnlyValidatedRedirectOrigin(t *testing.T) {
+	issuer := "https://mcp1.by6.shop"
+	callback := "https://chatgpt.com/connector/oauth/callback?state=abc"
+	policy := authorizationContentSecurityPolicy(issuer, callback)
+	if !strings.Contains(policy, "form-action 'self' https://mcp1.by6.shop https://chatgpt.com") {
+		t.Fatalf("issuer or validated HTTPS redirect origin missing from policy: %q", policy)
 	}
 	if strings.Contains(policy, "/connector/oauth/callback") || strings.Contains(policy, "state=abc") || strings.Contains(policy, "*") {
 		t.Fatalf("policy contains redirect path/query or wildcard: %q", policy)
 	}
 
-	invalid := authorizationContentSecurityPolicy("javascript://example.invalid/callback")
-	if invalid != "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" {
-		t.Fatalf("invalid redirect URI weakened policy: %q", invalid)
+	invalid := authorizationContentSecurityPolicy(issuer, "javascript://example.invalid/callback")
+	want := "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://mcp1.by6.shop; frame-ancestors 'none'; base-uri 'none'"
+	if invalid != want {
+		t.Fatalf("invalid redirect URI weakened policy: got %q, want %q", invalid, want)
+	}
+}
+
+func TestGoogleAuthorizationPagePostsToConfiguredIssuerAndRedirectsBack(t *testing.T) {
+	const (
+		issuer        = "https://mcp1.by6.shop"
+		pageOrigin    = "https://mcp2.by6.shop"
+		resource      = issuer + "/mcp"
+		callback      = "https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-4ccdd936a638ba9e826c5355"
+		ownerPassword = "owner-password-long-enough"
+		state         = "google-oauth-state"
+	)
+	verifier := strings.Repeat("g", 43)
+	server := mustNewServer(t, Options{
+		Workspace: t.TempDir(),
+		OAuth: OAuthOptions{
+			Enabled:       true,
+			Issuer:        issuer,
+			Resource:      resource,
+			OwnerPassword: ownerPassword,
+			ClientID:      "mcp-devdesk",
+			RedirectURIs:  []string{callback},
+			TokenSecret:   strings.Repeat("ab", 32),
+			DataDir:       t.TempDir(),
+		},
+	})
+	values := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {"mcp-devdesk"},
+		"redirect_uri":          {callback},
+		"state":                 {state},
+		"code_challenge":        {pkceChallenge(verifier)},
+		"code_challenge_method": {"S256"},
+		"resource":              {resource},
+		"scope":                 {"mcp offline_access"},
+	}
+	page := httptest.NewRecorder()
+	pageRequest := httptest.NewRequest(http.MethodGet, pageOrigin+"/oauth/authorize?"+values.Encode(), nil)
+	server.Handler().ServeHTTP(page, pageRequest)
+	if page.Code != http.StatusOK {
+		t.Fatalf("authorization page = %d: %s", page.Code, page.Body.String())
+	}
+	policy := page.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "https://mcp1.by6.shop") || !strings.Contains(policy, "https://oauth-redirect.googleusercontent.com") {
+		t.Fatalf("CSP does not allow the configured issuer and validated Google callback: %q", policy)
+	}
+	if !strings.Contains(page.Body.String(), `action="https://mcp1.by6.shop/oauth/authorize"`) {
+		t.Fatalf("authorization form does not post to the configured issuer: %s", page.Body.String())
+	}
+
+	values.Set("owner_password", ownerPassword)
+	post := httptest.NewRecorder()
+	postRequest := httptest.NewRequest(http.MethodPost, issuer+"/oauth/authorize", strings.NewReader(values.Encode()))
+	postRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(post, postRequest)
+	if post.Code != http.StatusFound {
+		t.Fatalf("authorization POST = %d: %s", post.Code, post.Body.String())
+	}
+	redirect, err := url.Parse(post.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redirect.Scheme+"://"+redirect.Host != "https://oauth-redirect.googleusercontent.com" ||
+		redirect.Path != "/r/user_bound_custom-mcp-4ccdd936a638ba9e826c5355" ||
+		redirect.Query().Get("code") == "" || redirect.Query().Get("state") != state {
+		t.Fatalf("authorization did not redirect back with code and state: %s", redirect.String())
 	}
 }
 

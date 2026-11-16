@@ -188,8 +188,13 @@ try {
     $authorizePage = Send-Http -Method "GET" -Uri "$BaseUrl/oauth/authorize?$authorizeQuery"
     if ($authorizePage.Status -ne 200) { throw "Authorization page failed: $($authorizePage.Status) $($authorizePage.Body)" }
     $authorizeCsp = [string]::Join(",", $authorizePage.Response.Headers.GetValues("Content-Security-Policy"))
-    if ($authorizeCsp -notlike "*form-action 'self' http://127.0.0.1:43210*") {
-        throw "Authorization page CSP does not allow the validated callback origin: $authorizeCsp"
+    $expectedCspSources = "form-action 'self' $BaseUrl http://127.0.0.1:43210"
+    if ($authorizeCsp -notlike "*$expectedCspSources*") {
+        throw "Authorization page CSP does not allow the configured issuer and validated callback origins: $authorizeCsp"
+    }
+    $expectedFormAction = 'action="' + $BaseUrl + '/oauth/authorize"'
+    if ($authorizePage.Body -notlike "*$expectedFormAction*") {
+        throw "Authorization form does not post to the configured issuer: $($authorizePage.Body)"
     }
 
     $authorizeBody = Form-Encode @{
