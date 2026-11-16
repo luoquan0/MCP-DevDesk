@@ -115,10 +115,10 @@ Go 核心还会过滤命令子进程继承的常见敏感环境变量，包括�
 
 - 授权码流程必须使用 PKCE S256。
 - 内置静态客户端允许基于 PKCE 的 public-client Token 交换；客户端如果主动提交 Client Secret，则仍必须与本机保存值一致。
-- ChatGPT 为不同自定义 MCP 应用生成不同 `/connector/oauth/<id>` 回调路径；当用户已经登记过一个 ChatGPT 回调时，仅在同一 `https://chatgpt.com/connector/oauth/` 家族内允许新的生成式回调，其他已配置回调仍保持精确匹配。
+- 内置静态客户端允许两种受限的自动生成回调：`https://chatgpt.com/connector/oauth/<id>` 和 `https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-<hex-id>`。当用户已配置上述任一家族回调时，允许这两类生成式回调适配不同的 MCP 应用；任意第三方回调仍要求事先精确登记。Google 回调仅允许精确域名、HTTPS、无端口、无查询或片段，并验证生成 ID。动态注册客户端始终要求回调精确匹配其注册列表。
 - 授权服务器声明并接受 `offline_access`，继续为远程 MCP 会话签发可轮换 Refresh Token。
 - OAuth Token 绑定到精确的 MCP `resource` 受众。
-- 非 ChatGPT 回调以及不属于已登记 ChatGPT 回调家族的地址仍必须精确匹配；所有回调只允许 HTTPS 或本机回环 HTTP。
+- 未命中上述生成式回调家族的地址必须精确匹配；所有回调只允许 HTTPS 或本机回环 HTTP。
 - 刷新令牌使用一次后立即轮换，旧令牌不能重复使用。
 - MCP 未授权响应返回受保护资源元数据地址。
 - 浏览器 Origin 只允许本机或已配置的公开服务源，降低 DNS rebinding 风险。

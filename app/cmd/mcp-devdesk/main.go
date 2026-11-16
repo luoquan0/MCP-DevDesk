@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,9 +29,39 @@ func main() {
 	background := hasArgument("--background")
 	rootDir, err := locateRoot()
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("locate application root: %v", err)
+		desktop.ShowStartupError("无法找到 MCP DevDesk 程序目录：" + err.Error())
+		return
 	}
 	dataDir := filepath.Join(rootDir, "data", "devdesk")
+
+	// Check the Windows mutex before recovery or opening any stores. NewStore
+	// writes config.json even when unchanged; a second launch must never
+	// modify files used by the already-running manager.
+	alreadyRunning, releaseInstance, instanceErr := desktop.AcquireSingleInstance()
+	if instanceErr != nil {
+		log.Printf("single-instance protection unavailable: %v", instanceErr)
+		desktop.ShowStartupError("无法检查 MCP DevDesk 是否已运行：" + instanceErr.Error())
+		return
+	}
+	defer releaseInstance()
+	if alreadyRunning {
+		if desktop.SignalExistingInstance() {
+			return
+		}
+		dashboardURL := existingDashboardURL(dataDir)
+		if waitForHTTP(dashboardURL+"/api/health", 3*time.Second) {
+			if err := desktop.OpenDashboard(dashboardURL); err == nil {
+				return
+			} else {
+				log.Printf("open existing dashboard: %v", err)
+			}
+		}
+		message := "MCP DevDesk 已在运行，但旧进程的窗口和管理服务没有响应。请在 Windows 任务管理器中结束旧的 MCP-DevDesk.exe 进程，然后重新启动。用户配置不会被清理。"
+		log.Print(message)
+		desktop.ShowStartupError(message)
+		return
+	}
 
 	cleanupReport := maintenance.Cleanup(dataDir)
 	recoveryReport, recoveryErr := startup.Prepare(rootDir, dataDir)
@@ -39,7 +71,9 @@ func main() {
 
 	app, err := application.New(rootDir, dataDir)
 	if err != nil {
-		log.Fatalf("initialize application: %v", err)
+		log.Printf("initialize application: %v", err)
+		desktop.ShowStartupError("MCP DevDesk 初始化失败：" + err.Error())
+		return
 	}
 	closeLog := configureLogging(dataDir, func() bool { return app.Config().LoggingEnabled })
 	defer closeLog()
@@ -54,27 +88,6 @@ func main() {
 	cfg := app.Config()
 	address := cfg.AdminHost + ":" + strconv.Itoa(cfg.AdminPort)
 	dashboardURL := "http://" + address
-
-	alreadyRunning, releaseInstance, instanceErr := desktop.AcquireSingleInstance()
-	if instanceErr != nil {
-		log.Printf("single-instance protection unavailable: %v", instanceErr)
-	} else {
-		defer releaseInstance()
-	}
-	if alreadyRunning {
-		signaled := desktop.SignalExistingInstance()
-		if signaled {
-			return
-		}
-		if waitForHTTP(dashboardURL+"/api/health", 3*time.Second) {
-			if err := desktop.OpenDashboard(dashboardURL); err != nil {
-				log.Printf("open existing dashboard: %v", err)
-			}
-		} else {
-			log.Printf("existing instance did not expose its tray window or management endpoint")
-		}
-		return
-	}
 
 	executable, _ := os.Executable()
 	controller := desktop.New(dashboardURL, executable, dataDir, desktop.Callbacks{
@@ -107,7 +120,9 @@ func main() {
 
 	server, err := web.NewWithDesktop(app, address, controller)
 	if err != nil {
-		log.Fatalf("initialize web server: %v", err)
+		log.Printf("initialize web server: %v", err)
+		desktop.ShowStartupError("启动管理界面失败：" + err.Error())
+		return
 	}
 	exitRequested := make(chan struct{}, 1)
 	server.SetExitRequest(func() {
@@ -120,7 +135,9 @@ func main() {
 	server.SetControlServer(controlServer)
 	controlHandler, err := server.ControlHandler()
 	if err != nil {
-		log.Fatalf("initialize web control handler: %v", err)
+		log.Printf("initialize web control handler: %v", err)
+		desktop.ShowStartupError("启动网页管理接口失败：" + err.Error())
+		return
 	}
 	controlServer.SetHandler(controlHandler)
 	if err := controlServer.Apply(cfg.WebControlEnabled, cfg.WebControlPort, cfg.WebControlLANEnabled); err != nil {
@@ -225,6 +242,27 @@ func hasArgument(wanted string) bool {
 		}
 	}
 	return false
+}
+
+// existingDashboardURL reads only the minimal connection settings. A
+// secondary launch must not invoke config.NewStore, which rewrites config.json.
+func existingDashboardURL(dataDir string) string {
+	host, port := "127.0.0.1", 17860
+	if raw, err := os.ReadFile(filepath.Join(dataDir, "config.json")); err == nil {
+		var saved struct {
+			AdminHost string `json:"adminHost"`
+			AdminPort int    `json:"adminPort"`
+		}
+		if json.Unmarshal(raw, &saved) == nil {
+			if saved.AdminHost == "127.0.0.1" || saved.AdminHost == "localhost" || saved.AdminHost == "::1" {
+				host = saved.AdminHost
+			}
+			if saved.AdminPort >= 1 && saved.AdminPort <= 65535 {
+				port = saved.AdminPort
+			}
+		}
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func configureLogging(dataDir string, enabled devlogging.EnabledFunc) func() {

@@ -495,23 +495,45 @@ func (s *oauthServer) redirectURIAllowed(client oauthClient, redirectURI string)
 	if client.ClientID != s.staticClientID || validateRedirectURI(redirectURI) != nil {
 		return false
 	}
-	// The built-in MCP client is intentionally not pinned when no callbacks
-	// have been configured. ChatGPT also allocates a different callback path
-	// for each custom app. If the user explicitly registered one ChatGPT
-	// connector callback, keep the origin/path family pinned to ChatGPT while
-	// allowing another generated connector callback for a second MCP instance.
+	// Generated connector callbacks change per application. Keep exact
+	// matching for arbitrary URLs, but permit recognized ChatGPT and Google MCP
+	// callback families when a trusted connector callback was configured.
 	if len(s.staticRedirectURIs) == 0 {
 		return true
 	}
-	if !isChatGPTConnectorRedirect(redirectURI) {
+	if !isGeneratedConnectorRedirect(redirectURI) {
 		return false
 	}
 	for _, registered := range s.staticRedirectURIs {
-		if isChatGPTConnectorRedirect(registered) {
+		if isGeneratedConnectorRedirect(registered) {
 			return true
 		}
 	}
 	return false
+}
+
+func isGeneratedConnectorRedirect(value string) bool {
+	return isChatGPTConnectorRedirect(value) || isGoogleMCPConnectorRedirect(value)
+}
+
+func isGoogleMCPConnectorRedirect(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "oauth-redirect.googleusercontent.com") ||
+		parsed.Port() != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		parsed.EscapedPath() != parsed.Path {
+		return false
+	}
+	const prefix = "/r/user_bound_custom-mcp-"
+	id, ok := strings.CutPrefix(parsed.Path, prefix)
+	if !ok || len(id) < 16 || len(id) > 64 {
+		return false
+	}
+	for _, char := range id {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func isChatGPTConnectorRedirect(value string) bool {

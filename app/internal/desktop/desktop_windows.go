@@ -91,6 +91,7 @@ var (
 	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
 	procSetWindowPos        = user32.NewProc("SetWindowPos")
 	procFindWindowW         = user32.NewProc("FindWindowW")
+	procMessageBoxW         = user32.NewProc("MessageBoxW")
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	procCreateMutexW        = kernel32.NewProc("CreateMutexW")
 	procCloseHandle         = kernel32.NewProc("CloseHandle")
@@ -201,6 +202,13 @@ func AcquireSingleInstance() (alreadyRunning bool, release func(), err error) {
 	}
 	already := callErr == syscall.Errno(errorAlreadyExists)
 	return already, func() { procCloseHandle.Call(handle) }, nil
+}
+
+// ShowStartupError remains visible in -H=windowsgui builds without a console.
+func ShowStartupError(message string) {
+	body, _ := syscall.UTF16PtrFromString(message)
+	title, _ := syscall.UTF16PtrFromString("MCP DevDesk 启动失败")
+	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(body)), uintptr(unsafe.Pointer(title)), 0x10)
 }
 
 func OpenDashboard(url string) error {
@@ -371,11 +379,21 @@ func (c *windowsController) runTray() {
 		return
 	}
 	c.ready <- nil
+	defer func() {
+		c.hwndMu.Lock()
+		c.hwnd = 0
+		c.hwndMu.Unlock()
+		c.closeOnce.Do(func() { close(c.done) })
+	}()
 
 	var message msg
 	for {
-		result, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&message)), 0, 0, 0)
-		if int32(result) <= 0 {
+		result, _, messageErr := procGetMessageW.Call(uintptr(unsafe.Pointer(&message)), 0, 0, 0)
+		if int32(result) < 0 {
+			log.Printf("tray message loop failed: %v", messageErr)
+			break
+		}
+		if result == 0 {
 			break
 		}
 		procTranslateMessage.Call(uintptr(unsafe.Pointer(&message)))
