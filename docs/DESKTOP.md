@@ -44,6 +44,8 @@ MCP-DevDesk-amd64.exe
 
 双击托盘图标也会打开原生窗口。关闭窗口只关闭界面，后台管理器和服务继续运行；只有选择托盘“退出”才结束管理器。
 
+Windows 资源管理器（Explorer.exe）重启或任务栏重建时，原来的通知区域图标可能被系统清空。托盘隐藏窗口会通过 `RegisterWindowMessage("TaskbarCreated")` 接收任务栏重建通知，使用相同窗口句柄、图标 ID、回调和图标资源重新执行 `Shell_NotifyIcon(NIM_ADD)`；如果图标仍存在（例如 DPI 改变），则退回 `NIM_MODIFY` 更新。此恢复不重启 MCP Core 或 Tunnel，也不会把关闭主窗口当成退出程序。可在 Windows 实机通过任务管理器重启“Windows 资源管理器”，确认托盘图标恢复且双击、右键菜单继续工作；自动测试不能替代该实机验证。
+
 ## 4. 单实例
 
 程序通过 Windows 命名 Mutex：
