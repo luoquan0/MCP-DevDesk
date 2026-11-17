@@ -1,3 +1,5 @@
+//go:build !linux
+
 package buildinfo
 
 // Version is shared by the desktop manager and the Go MCP core.

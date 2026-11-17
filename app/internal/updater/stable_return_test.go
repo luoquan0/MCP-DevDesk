@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -15,7 +17,7 @@ func TestStableChannelAllowsPrereleaseReturn(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		fmt.Fprint(w, strings.ReplaceAll(`{
           "tag_name":"v0.12.33",
           "name":"MCP DevDesk v0.12.33",
           "body":"stable",
@@ -27,7 +29,7 @@ func TestStableChannelAllowsPrereleaseReturn(t *testing.T) {
             {"name":"MCP-DevDesk-Portable-amd64.zip","browser_download_url":"https://github.com/example/mcp-devdesk/releases/download/v0.12.33/MCP-DevDesk-Portable-amd64.zip"},
             {"name":"MCP-DevDesk-Portable-amd64.zip.sha256","browser_download_url":"https://github.com/example/mcp-devdesk/releases/download/v0.12.33/MCP-DevDesk-Portable-amd64.zip.sha256"}
           ]
-        }`)
+        }`, "amd64", runtime.GOARCH))
 	}))
 	defer server.Close()
 

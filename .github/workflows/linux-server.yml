@@ -1,0 +1,124 @@
+name: Linux Server
+on:
+  push:
+    branches: [feature/linux-server]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-server-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux:
+    name: linux-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify Linux Go formatting and script syntax
+        run: |
+          set -euo pipefail
+          bad=$(find app/cmd app/internal -type f \( -name '*_linux.go' -o -name '*_linux_test.go' \) -print0 | xargs -0 gofmt -l)
+          if [[ -n "$bad" ]]; then printf 'gofmt required:\n%s\n' "$bad"; exit 1; fi
+          bash -n build-linux.sh tools/linux/install-service.sh tools/linux/install-linux.sh
+          python3 -c "import ast,pathlib; ast.parse(pathlib.Path('tools/smoke-linux.py').read_text())"
+      - name: Frontend production build
+        run: cd frontend && npm ci && npm run build
+      - name: Native tests, binaries, verified runtime and acceptance tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash build-linux.sh
+      - name: Publish build evidence
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          arch = os.environ['ARCH']
+          stage = pathlib.Path('dist/MCP-DevDesk-Linux-'+arch)
+          value = {'commit':os.environ['GITHUB_SHA'],'architecture':arch,'runner':os.environ['RUNNER_OS'],'workflow_run':os.environ['GITHUB_RUN_ID'],'cloudflared':json.loads((stage/'cloudflared-source.json').read_text()),'checks':['full go test -mod=vendor -count=1 -timeout=120s ./...','frontend production build','compiled core JSON-RPC smoke','compiled headless manager HTTP/authentication smoke','real stdin/output/process-tree kill/timeout/idempotence','Go and Node validation','lexical navigation','manual upgrade cloudflared/config/key preservation']}
+          pathlib.Path('dist/linux-'+arch+'-build-manifest.json').write_text(json.dumps(value,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/MCP-DevDesk-Linux-${{ matrix.arch }}.tar.gz
+            dist/MCP-DevDesk-Linux-${{ matrix.arch }}.tar.gz.sha256
+            dist/linux-${{ matrix.arch }}-build-manifest.json
+  windows:
+    name: windows-regression
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Guard public repository secrets
+        shell: pwsh
+        run: ./tools/check-public-release.ps1
+      - name: Full Windows build and tests
+        shell: pwsh
+        env:
+          MCP_DEVDESK_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./build.ps1 -Arch amd64 -RunTests
+  publish:
+    name: publish-linux-preview
+    needs: [linux, windows]
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[linux release]')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          merge-multiple: true
+          path: release
+      - name: Verify all release artifacts
+        run: |
+          set -euo pipefail
+          cd release
+          test -s MCP-DevDesk-Linux-amd64.tar.gz
+          test -s MCP-DevDesk-Linux-arm64.tar.gz
+          sha256sum -c MCP-DevDesk-Linux-amd64.tar.gz.sha256
+          sha256sum -c MCP-DevDesk-Linux-arm64.tar.gz.sha256
+      - name: Publish separate Linux prerelease (never Windows latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^const Version = "\([^"]*\)"/\1/p' app/internal/buildinfo/version_linux.go)
+          [[ "$version" =~ ^0\.12\.[0-9]+-linux\.[0-9]+$ ]]
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists; refusing to overwrite a published release" >&2
+            exit 1
+          fi
+          gh release create "$tag" release/* --target "$GITHUB_SHA" --title "MCP DevDesk Linux Server $tag" --notes-file docs/releases/v0.12.38-linux.1.md --prerelease --latest=false

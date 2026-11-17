@@ -108,3 +108,7 @@ MCP 端口不再固定为 `8765`。用户在“项目与服务”页面修改端
 - cloudflared 的正常升级由“Cloudflare Tunnel 客户端”专用更新功能负责。该功能读取 Cloudflare 官方最新 Release，要求 Windows amd64 资产带有 `sha256:` digest，下载后再次计算 SHA256，校验通过才执行原子替换。
 - 专用更新会先暂停受影响的 Tunnel / Watchdog，替换完成后恢复原先需要运行的连接，避免同时占用正在更新的可执行文件。
 - 正式 Portable Release 内置的 cloudflared 版本由 `tools/cloudflared-release.json` 固定，并由 Release 工作流从 Cloudflare 官方 Release 下载和校验。这个内置版本服务于新安装、文件缺失恢复和旧更新器过渡兼容，不代表每次软件更新都要把本机 cloudflared 同步回该版本。
+
+## Linux preview
+
+Linux packages use official cloudflared-linux-amd64/arm64 assets with verified official SHA256 digests and record the bundled provenance. The dedicated updater selects the native asset; Linux procfs provides process inventory. The manual Linux application upgrade helper preserves an existing cloudflared and all runtime data. Account authorization is still required; CI ships no credentials and does not create real account tunnels. See [LINUX.md](LINUX.md).

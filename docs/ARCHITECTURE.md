@@ -97,3 +97,6 @@
 
 当前仍保留旧核心作为兼容回退，不会强制删除。后续版本会在更多真实客户端验证通过后再考虑把 Go 核心设为默认。
 
+## Linux Server preview architecture
+
+On `feature/linux-server`, `cmd/mcp-devdesk-server` supplies a native headless entrypoint. It reuses application/web, serves authenticated Web Control on 17861, and manages native mcp-core/cloudflared children. Linux process groups and procfs replace Windows process/port enumeration; the Windows entrypoint is unchanged. See [LINUX.md](LINUX.md).

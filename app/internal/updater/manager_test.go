@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -85,7 +86,7 @@ func TestCheckSelectsGitHubRelease(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		fmt.Fprint(w, strings.ReplaceAll(`{
           "tag_name":"v0.13.0",
           "name":"0.13.0",
           "body":"new update",
@@ -97,7 +98,7 @@ func TestCheckSelectsGitHubRelease(t *testing.T) {
             {"name":"MCP-DevDesk-Portable-amd64.zip","browser_download_url":"https://github.com/example/mcp-devdesk/releases/download/v0.13.0/MCP-DevDesk-Portable-amd64.zip"},
             {"name":"MCP-DevDesk-Portable-amd64.zip.sha256","browser_download_url":"https://github.com/example/mcp-devdesk/releases/download/v0.13.0/MCP-DevDesk-Portable-amd64.zip.sha256"}
           ]
-        }`)
+        }`, "amd64", runtime.GOARCH))
 	}))
 	defer server.Close()
 	manager, err := NewManager(t.TempDir(), "0.12.7")
@@ -113,7 +114,7 @@ func TestCheckSelectsGitHubRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !release.UpdateAvailable || release.LatestVersion != "0.13.0" || release.AssetName != "MCP-DevDesk-Portable-amd64.zip" {
+	if !release.UpdateAvailable || release.LatestVersion != "0.13.0" || release.AssetName != "MCP-DevDesk-Portable-"+runtime.GOARCH+".zip" {
 		t.Fatalf("unexpected release: %+v", release)
 	}
 }

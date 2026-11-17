@@ -11,7 +11,10 @@ import (
 )
 
 func parseCloudflaredCommandLine(commandLine string) model.TunnelProcess {
-	args := splitWindowsCommandLine(commandLine)
+	return parseCloudflaredArguments(splitWindowsCommandLine(commandLine))
+}
+
+func parseCloudflaredArguments(args []string) model.TunnelProcess {
 	result := model.TunnelProcess{CommandLine: redactCloudflaredArguments(args)}
 	if len(args) == 0 {
 		return result
@@ -36,7 +39,7 @@ func parseCloudflaredCommandLine(commandLine string) model.TunnelProcess {
 	}
 
 	if result.CredentialsPath != "" {
-		base := filepath.Base(strings.Trim(result.CredentialsPath, `"`))
+		base := filepath.Base(strings.ReplaceAll(strings.Trim(result.CredentialsPath, `"`), `\`, "/"))
 		result.TunnelID = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 	if runIndex >= 0 {

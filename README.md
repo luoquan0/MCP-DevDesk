@@ -191,3 +191,7 @@ Go 核心的 OAuth 模式还支持：
 - 刷新令牌加密持久化和重启续签
 
 命令工具不会隐式继承 OAuth Token、密码和其他常见敏感环境变量。安全模式完全拒绝命令和写入；信任模式允许工作区开发操作，但删除、覆盖和补丁删除仍要求明确确认。
+
+## Linux Server preview
+
+The `feature/linux-server` branch provides native Linux Server v0.12.38-linux.1 (amd64/arm64), derived from Windows stable v0.12.37. It uses the same embedded browser UI without a desktop shell. See [Linux setup and security](docs/LINUX.md). This is a separate prerelease; Windows main/latest is unchanged.
