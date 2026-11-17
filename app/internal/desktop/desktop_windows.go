@@ -65,6 +65,7 @@ var (
 	shell32                 = syscall.NewLazyDLL("shell32.dll")
 	kernel32                = syscall.NewLazyDLL("kernel32.dll")
 	procRegisterClassExW    = user32.NewProc("RegisterClassExW")
+	procRegisterWindowMsgW  = user32.NewProc("RegisterWindowMessageW")
 	procCreateWindowExW     = user32.NewProc("CreateWindowExW")
 	procDefWindowProcW      = user32.NewProc("DefWindowProcW")
 	procDestroyWindow       = user32.NewProc("DestroyWindow")
@@ -97,6 +98,7 @@ var (
 	procCloseHandle         = kernel32.NewProc("CloseHandle")
 	procShellNotifyIconW    = shell32.NewProc("Shell_NotifyIconW")
 	wndProcCallback         = syscall.NewCallback(windowProc)
+	taskbarCreatedMessage    uint32
 	activeControllerMu      sync.RWMutex
 	activeController        *windowsController
 )
@@ -328,6 +330,14 @@ func (c *windowsController) runTray() {
 		activeControllerMu.Unlock()
 	}()
 
+	messageName, _ := syscall.UTF16PtrFromString("TaskbarCreated")
+	registered, _, registerMsgErr := procRegisterWindowMsgW.Call(uintptr(unsafe.Pointer(messageName)))
+	if registered == 0 {
+		c.ready <- fmt.Errorf("register TaskbarCreated notification: %w", registerMsgErr)
+		return
+	}
+	taskbarCreatedMessage = uint32(registered)
+
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 	className, _ := syscall.UTF16PtrFromString("MCPDevDeskTrayWindow")
 	title, _ := syscall.UTF16PtrFromString("MCP DevDesk")
@@ -363,19 +373,9 @@ func (c *windowsController) runTray() {
 	c.hwnd = hwnd
 	c.hwndMu.Unlock()
 
-	iconData := notifyIconData{
-		CbSize:           uint32(unsafe.Sizeof(notifyIconData{})),
-		HWnd:             hwnd,
-		UID:              1,
-		UFlags:           nifMessage | nifIcon | nifTip,
-		UCallbackMessage: wmTray,
-		HIcon:            hIcon,
-	}
-	copyUTF16(iconData.SzTip[:], "MCP DevDesk - 本地开发网关")
-	result, _, notifyErr := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&iconData)))
-	if result == 0 {
+	if err := c.addTrayIcon(hwnd); err != nil {
 		procDestroyWindow.Call(hwnd)
-		c.ready <- fmt.Errorf("add tray icon: %w", notifyErr)
+		c.ready <- err
 		return
 	}
 	c.ready <- nil
@@ -401,10 +401,59 @@ func (c *windowsController) runTray() {
 	}
 }
 
+// Use the same window and icon ID when initially adding and restoring the
+// notification icon. Explorer discards notification icons when its taskbar is
+// recreated, even while this process is still running.
+func newTrayIconData(hwnd, icon uintptr) notifyIconData {
+	data := notifyIconData{
+		CbSize:           uint32(unsafe.Sizeof(notifyIconData{})),
+		HWnd:             hwnd,
+		UID:              1,
+		UFlags:           nifMessage | nifIcon | nifTip,
+		UCallbackMessage: wmTray,
+		HIcon:            icon,
+	}
+	copyUTF16(data.SzTip[:], "MCP DevDesk - 本地开发网关")
+	return data
+}
+
+func (c *windowsController) addTrayIcon(hwnd uintptr) error {
+	data := newTrayIconData(hwnd, c.applicationIcon())
+	result, _, err := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&data)))
+	if result == 0 {
+		return fmt.Errorf("add tray icon: %w", err)
+	}
+	return nil
+}
+
+func (c *windowsController) restoreTrayIcon(hwnd uintptr) error {
+	if err := c.addTrayIcon(hwnd); err == nil {
+		return nil
+	} else {
+		// TaskbarCreated is also broadcast for DPI changes on Windows 10.
+		// If the icon still exists, update it rather than adding a duplicate.
+		data := newTrayIconData(hwnd, c.applicationIcon())
+		result, _, modifyErr := procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&data)))
+		if result == 0 {
+			return fmt.Errorf("recreate icon: %v; modify existing icon: %w", err, modifyErr)
+		}
+	}
+	return nil
+}
+
 func windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	activeControllerMu.RLock()
 	controller := activeController
 	activeControllerMu.RUnlock()
+
+	if taskbarCreatedMessage != 0 && message == taskbarCreatedMessage {
+		if controller != nil {
+			if err := controller.restoreTrayIcon(hwnd); err != nil {
+				log.Printf("restore tray icon after taskbar recreation: %v", err)
+			}
+		}
+		return 0
+	}
 
 	switch message {
 	case wmOpenUI:
