@@ -29,6 +29,7 @@ const (
 	wmRButtonUp     = 0x0205
 
 	nimAdd     = 0x00000000
+	nimModify  = 0x00000001
 	nimDelete  = 0x00000002
 	nifMessage = 0x00000001
 	nifIcon    = 0x00000002
